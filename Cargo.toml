@@ -1,0 +1,52 @@
+
+[package]
+name = "ugl-rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = [ "MeiHui FAN <mhfan@ustc.edu>" ]
+repository  = "https://github.com/mhfan/ugl-rs"     # https://crates.io/category_slugs
+categories  = [ "rendering", "graphics", "rendering::engine", "rendering::graphics-api" ]
+description = "Fast, Super Slim, Embeddable, and Generic CPU vector graphics library in Rust"
+keywords = [ "ugl", "microgl", "vector-graphic" ]
+#exclude  = [ "examples" ]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = [ "fixed" ]
+
+[dependencies]
+serde = { version =  "1.0", optional = true }
+fixed = { version = "1.28", optional = true }
+nalgebra-glm = "0.19"
+#nalgebra = "0.33"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[build-dependencies]
+chrono = "0.4"
+#glob = "0.3"
+#walkdir = "2.4"
+
+[profile.dev]
+#incremental = false
+#debug = 'none'
+opt-level = 1   # Enable a small amount of optimization in debug mode
+
+[profile.dev.package."*"] # For any non-workspace member (all dependencies)
+strip = 'debuginfo'
+codegen-units = 1
+opt-level = 3
+
+[profile.release]
+codegen-units = 1   # Perform optimizations on all codegen units.
+strip = 'debuginfo' # keep 'symbols'
+panic = 'abort' # Do not perform backtrace for panic on release builds.
+#debug = 'full'  # for flamegraph
+#opt-level = 3   # default level
+lto = 'fat' # true
+
+[workspace]
+
