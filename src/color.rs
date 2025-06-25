@@ -18,46 +18,24 @@ pub type Color = RGBA<u8>;
     https://github.com/linebender/color */
 #[cfg(target_endian = "little")] #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-//#[repr(C)] pub struct RGBA<T> { pub r: T, pub g: T, pub b: T, pub a: T, }
 #[repr(C)] pub struct RGBA<T: ColorChannel> { pub b: T, pub g: T, pub r: T, pub a: T, }
+//#[repr(C)] pub struct RGBA<T: ColorChannel> { pub r: T, pub g: T, pub b: T, pub a: T, }
 #[cfg(target_endian =    "big")] #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)] pub struct RGBA<T: ColorChannel> { pub a: T, pub r: T, pub g: T, pub b: T, }
 
-pub trait ColorChannel: Copy { type T; const MAX: Self::T; const MIN: Self::T; }
-impl ColorChannel for u8  { type T = u8;  const MAX: u8  = u8 ::MAX; const MIN: u8  = 0; }
-impl ColorChannel for u16 { type T = u16; const MAX: u16 = u16::MAX; const MIN: u16 = 0; }
-impl ColorChannel for f32 { type T = f32; const MAX: f32 = 1.0; const MIN: f32 = 0.0; }
+pub trait ColorChannel: Copy { const MAX: Self; const MIN: Self; }
+impl ColorChannel for u8  { const MAX: Self = u8 ::MAX; const MIN: Self = 0; }
+impl ColorChannel for u16 { const MAX: Self = u16::MAX; const MIN: Self = 0; }
+impl ColorChannel for f32 { const MAX: Self = 1.0;      const MIN: Self = 0.0; }
 
 impl<T: ColorChannel> RGBA<T> {
     #[inline] pub fn new(r: T, g: T, b: T, a: T) -> Self { Self { r, g, b, a } }
 
     #[inline] pub fn to_arra3(self) -> [T; 3] { [self.r, self.g, self.b] }
-    #[inline] pub fn to_array(self) -> [T; 4] { [self.r, self.g, self.b, self.a]
+    #[inline] pub fn to_array(self) -> [T; 4] { [self.r, self.g, self.b, self.a] }
         //unsafe { core::mem::transmute(self) }   // [b, g, r, a] or [a, r, g, b]
-    }
-}
 
-impl<T: ColorChannel>  From<(T, T, T, T)> for RGBA<T> {
-    #[inline] fn from(rgba: (T, T, T, T)) -> Self {
-        //Self{ r: rgba.0, g: rgba.1, b: rgba.2, a: rgba.3 }
-        Self::new(rgba.0, rgba.1, rgba.2, rgba.3)
-        //unsafe { core::mem::transmute(rgba) }   // (b, g, r, a) or (a, r, g, b)
-    }
-}
-
-impl<T: ColorChannel>  From<[T; 4]> for RGBA<T> {   // [r, g, b, a]
-    #[inline] fn from(rgba: [T; 4]) -> Self {
-        Self { r: rgba[0], g: rgba[1], b: rgba[2], a: rgba[3] }
-        //unsafe { core::mem::transmute(rgba) }   // [b, g, r, a] or [a, r, g, b]
-    }
-}
-
-impl<T: ColorChannel<T = T>> Default for RGBA<T> {
-    #[inline] fn default() -> Self { Self::black() }
-}
-
-impl<T: ColorChannel<T = T>> RGBA<T> {
     #[inline] pub fn zeroed() -> Self { Self { r: T::MIN, g: T::MIN, b: T::MIN, a: T::MIN } }
     #[inline] pub fn white()  -> Self { Self { r: T::MAX, g: T::MAX, b: T::MAX, a: T::MAX } }
     #[inline] pub fn black()  -> Self { Self { r: T::MIN, g: T::MIN, b: T::MIN, a: T::MAX } }
@@ -69,15 +47,27 @@ impl<T: ColorChannel<T = T>> RGBA<T> {
     #[inline] pub fn purple() -> Self { Self { r: T::MAX, g: T::MIN, b: T::MAX, a: T::MAX } }
 }
 
-impl<T: ColorChannel<T = T>> From<(T, T, T)> for RGBA<T> {
-    #[inline] fn from(rgb: (T, T, T)) -> Self { Self { r: rgb.0, g: rgb.1, b: rgb.2, a: T::MAX } }
+impl<T: ColorChannel> Default for RGBA<T> { #[inline] fn default() -> Self { Self::black() } }
+
+impl<T: ColorChannel> From<(T, T, T, T)> for RGBA<T> {
+    #[inline] fn from((r, g, b,  a): (T, T, T, T)) -> Self { Self { r, g, b, a } }
+        //unsafe { core::mem::transmute(rgba) }   // (b, g, r, a) or (a, r, g, b)
 }
 
-impl<T: ColorChannel<T = T>> From<[T; 3]> for RGBA<T> {
-    #[inline] fn from(rgb: [T; 3]) -> Self { Self { r: rgb[0], g: rgb[1], b: rgb[2], a: T::MAX } }
+impl<T: ColorChannel> From<[T; 4]> for RGBA<T> {
+    #[inline] fn from([r, g, b, a]: [T; 4]) -> Self { Self { r, g, b, a } }
+        //unsafe { core::mem::transmute(rgba) }   // [b, g, r, a] or [a, r, g, b]
 }
 
-impl<T: ColorChannel<T = T>> From<&[T]> for RGBA<T> {
+impl<T: ColorChannel> From<(T, T, T)> for RGBA<T> {
+    #[inline] fn from((r, g, b): (T, T, T)) -> Self { Self { r, g, b, a: T::MAX } }
+}
+
+impl<T: ColorChannel> From<[T; 3]>    for RGBA<T> {
+    #[inline] fn from([r, g, b]: [T; 3])    -> Self { Self { r, g, b, a: T::MAX } }
+}
+
+impl<T: ColorChannel> From<&[T]> for RGBA<T> {
     #[inline] fn from(rgb: &[T]) -> Self {   let len = rgb.len();
         Self { r: rgb[0], g: rgb[1], b: rgb[2], a:
             if 3 < len { rgb[3] } else if 2 < len { T::MAX } else { unreachable!() } }
@@ -119,7 +109,7 @@ impl From<RGBA<u16>> for RGBA<u8> {
     }
 }
 
-impl From<RGBA<u8>> for RGBA<u16> {
+impl From<RGBA<u8>>  for RGBA<u16> {
     #[inline] fn from(clr: RGBA<u8>) -> Self {
         Self { r: (clr.r as u16) << 8, g: (clr.g as u16) << 8,
                b: (clr.b as u16) << 8, a: (clr.a as u16) << 8 }
