@@ -140,7 +140,7 @@ pub use crate::color::RGBA;
     assert_eq!(draw.plus(back), (0.5, 0.6, 0.8, 1.0).into());
     assert_eq!(draw.clear(),    (0.0, 0.0, 0.0, 0.0).into());
 ``` */
-impl RGBA<f32> {
+impl RGBA<f32> {    #![allow(unused)]
     /// (Alpha) Porter-Duff Compositing Operators:
     ///
     /// Composite: ao x Co = αs x Fa x Cs + αb x Fb x Cb, ao = αs x Fa + αb x Fb;
@@ -202,12 +202,12 @@ impl RGBA<f32> {
         let r = inv_a * self.r + drop.a * bop(drop.r, self.r);
         let g = inv_a * self.g + drop.a * bop(drop.g, self.g);
         let b = inv_a * self.b + drop.a * bop(drop.b, self.b);
-        Self { r, g, b,  a:  self.a }
+        Self { r, g, b,  a: inv_a * self.a + drop.a } // XXX: self.a
     }
 
     /// This is the default attribute which specifies no blending.
     /// The blending formula simply selects the source color.
-    #[inline] pub fn normal(self, _: Self) -> Self { self }
+    #[inline] pub fn normal(self, _: Self) -> Self { self } // XXX: self.blend(drop, |_, cs| cs)
 
     /// The source color is multiplied by the destination color and replaces the destination.
     /// The resultant color is always at least as dark as either the source or destination color.
@@ -278,7 +278,7 @@ impl RGBA<f32> {
 
     /// Produces an effect similar to that of the Difference mode but lower in contrast.
     /// Painting with white inverts the backdrop color; painting with black produces no change
-    #[inline] pub fn enclusion(self, drop: Self) -> Self {
+    #[inline] pub fn exclusion(self, drop: Self) -> Self {
         self.blend(drop, |cb, cs| cb + cs - 2. * cb * cs)
     }
 
@@ -298,7 +298,7 @@ impl RGBA<f32> {
     /// Creates a color with the hue and saturation of the source color and the luminosity
     /// of the backdrop color. This preserves the gray levels of the backdrop and is useful
     /// for coloring monochrome images or tinting color images.
-    #[inline] pub fn coloring(self, drop: Self) -> Self { self.set_lum(drop.to_lum()) }
+    #[inline] pub fn color(self, drop: Self) -> Self { self.set_lum(drop.to_lum()) }
 
     /// Creates a color with the luminosity of the source color and the hue and saturation
     /// of the backdrop color. This produces an inverse effect to that of the Color mode.
@@ -313,7 +313,7 @@ impl RGBA<f32> {
         self.r.max(self.g).max(self.b) - self.r.min(self.g).min(self.b)
     }
 
-    #[inline] fn set_sat(mut self, sat: f32) -> Self {
+    fn set_sat(mut self, sat: f32) -> Self {
         let (mut cmin, mut cmax) = if self.r < self.g {
             (&mut self.r, &mut self.g) } else { (&mut self.g, &mut self.r) };
 
@@ -326,7 +326,7 @@ impl RGBA<f32> {
         } else {     *cmid = 0.;    *cmax = 0.; }    *cmid = 0.;    self
     }
 
-    #[inline] fn set_lum(mut self, lum: f32) -> Self {
+    fn set_lum(mut self, lum: f32) -> Self {
         let l = self.to_sat();  let d = lum - l;
         let n = self.r.min(self.g).min(self.b) + d;
         let x = self.r.max(self.g).max(self.b) + d;
@@ -339,6 +339,95 @@ impl RGBA<f32> {
             let op = |c| l + (((c - l) * (1. - l)) / (x - l));
             self.r = op(self.r); self.g = op(self.g); self.b = op(self.b);
         }   self
+    }
+
+    fn to_hsl(self) -> (f32, f32, f32) {
+        let (r, g, b) = (self.r, self.g, self.b);
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let l = (max + min) / 2.0;  let (h, s);
+
+        if max == min { (h, s) = (0.0, 0.0); } else {   let d = max - min;
+            s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+
+            h =    if max == r { ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+            } else if max == g { ((b - r) / d + 2.0) / 6.0
+            } else {             ((r - g) / d + 4.0) / 6.0 };
+        }   (h, s, l)
+    }
+
+    fn from_hsl(h: f32, s: f32, l: f32, a: f32) -> Self {
+        fn hue_to_rgb(p: f32, q: f32, t: f32) -> f32 {
+            let mut t = t;
+            if t < 0.0 { t += 1.0; }
+            if t > 1.0 { t -= 1.0; }
+            if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
+            if t < 1.0 / 2.0 { return q; }
+            if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+            p
+        }
+
+        let (r, g, b) = if s == 0.0 { (l, l, l) } else {
+            let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+            let p = 2.0 * l - q;
+            (hue_to_rgb(p, q, h + 1.0 / 3.0), hue_to_rgb(p, q, h),
+             hue_to_rgb(p, q, h - 1.0 / 3.0))
+        };  Self { r, g, b, a }
+    }
+
+    #[inline] fn set_lum_hsl(self, lum: f32) -> Self {
+        let (h, s, _) = self.to_hsl();
+        Self::from_hsl(h, s, lum, self.a)
+    }
+
+    #[inline] fn set_sat_hsl(self, sat: f32) -> Self {
+        let (h, _, l) = self.to_hsl();
+        Self::from_hsl(h, sat, l, self.a)
+    }
+
+    #[inline] fn set_hue_hsl(self, hue: f32) -> Self {
+        let (_, s, l) = self.to_hsl();
+        Self::from_hsl(hue, s, l, self.a)
+    }
+
+    fn to_hsv(self) -> (f32, f32, f32) {
+        let (r, g, b) = (self.r, self.g, self.b);
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let (v, d) = (max, max - min);
+        let s = if max == 0.0 { 0.0 } else { d / max };
+        let h = if   d == 0.0 { 0.0
+        } else if max == r { ((g - b) / d).rem_euclid(6.0) / 6.0
+        } else if max == g { ((b - r) / d + 2.0) / 6.0
+        } else {             ((r - g) / d + 4.0) / 6.0 };
+        (h, s, v)
+    }
+
+    fn from_hsv(h: f32, s: f32, v: f32, a: f32) -> Self {
+        let h = h.fract();
+        let i = (h * 6.0).floor();
+        let f =  h * 6.0 - i;
+        let p = v * (1.0 - s);
+        let q = v * (1.0 - f * s);
+        let t = v * (1.0 - (1.0 - f) * s);
+
+        let (r, g, b) = match i as i32 % 6 {
+            0 => (v, t, p), 1 => (q, v, p), 2 => (p, v, t),
+            3 => (p, q, v), 4 => (t, p, v), _ => (v, p, q),
+        };  Self { r, g, b, a }
+    }
+
+    #[inline] fn set_val_hsv(self, val: f32) -> Self {
+        let (h, s, _) = self.to_hsv();
+        Self::from_hsv(h, s, val, self.a)
+    }
+
+    #[inline] fn set_sat_hsv(self, sat: f32) -> Self {
+        let (h, _, v) = self.to_hsv();
+        Self::from_hsv(h, sat, v, self.a)
+    }
+
+    #[inline] fn set_hue_hsv(self, hue: f32) -> Self {
+        let (_, s, v) = self.to_hsv();
+        Self::from_hsv(hue, s, v, self.a)
     }
 
     /// Simply divides pixel values of one layer with the other, but it's useful for
@@ -357,7 +446,7 @@ impl RGBA<f32> {
 
     /// Sums the value in the two layers and subtracts 1.
     /// Blending with white leaves the image unchanged.
-    #[inline] pub fn linear_burn(self, drop: Self) -> Self {    // same as inverse substract
+    #[inline] pub fn linear_burn(self, drop: Self) -> Self {    // same as inverse subtract
         self.blend(drop, |cb, cs| (cb + cs - 1.).max(0.))
     }
 
