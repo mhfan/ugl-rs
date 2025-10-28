@@ -18,12 +18,12 @@ default = [ "fixed" ]
 
 [dependencies]
 serde = { version =  "1.0", optional = true }
-fixed = { version = "1.28", optional = true }
-nalgebra-glm = "0.19"
+fixed = { version = "1.29", optional = true }
+nalgebra-glm = "0.20"
 #nalgebra = "0.33"
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.7"
 
 [build-dependencies]
 chrono = "0.4"

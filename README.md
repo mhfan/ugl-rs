@@ -17,4 +17,6 @@ Fast, Super Slim, Embeddable, and Generic CPU vector graphics library, that can 
 
 * <https://2d.graphics>
 * <https://github.com/savage13/agg>
+* <https://github.com/linebender/color>
+* <https://github.com/linebender/peniko>
 
