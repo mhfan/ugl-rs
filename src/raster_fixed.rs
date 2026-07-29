@@ -14,8 +14,11 @@ const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FixedRasterError {
     CoordinateOutOfRange, CrossingEdges, DimensionsOverflow, InvalidEdge, InvalidIntersectionOrder,
     InvalidSlab, InvalidSlabPartition, InvalidTrapezoid, UnbalancedWinding,
-    WorkspaceTooSmall { required: usize },
+    WorkspaceTooSmall { kind: FixedWorkspace, required: usize },
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FixedWorkspace { Lines, Segments, Trapezoids, RowArea, Intersections, Spans }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FixedRenderError<E> { Raster(FixedRasterError), Sink(E) }
@@ -73,16 +76,7 @@ impl FixedIntersection {
     pub fn floor_raw(self) -> i64 { self.num.div_euclid(self.den as i64) }
 
     /// Rounds to the nearest Q24.8 grid coordinate, with ties away from zero.
-    pub fn round_raw(self) -> i64 {
-        let denominator = self.den as i64;
-        let (floor, remainder) = (self.num.div_euclid(denominator),
-            self.num.rem_euclid(denominator));
-        match (remainder * 2).cmp(&denominator) {
-            Ordering::Equal if self.num >= 0 => floor + 1,
-            Ordering::Equal | Ordering::Less => floor,
-            Ordering::Greater => floor + 1,
-        }
-    }
+    pub fn round_raw(self) -> i64 { round_ratio(self.num, self.den as _) }
 
     pub fn cmp_x(&self, other: &Self) -> Ordering {
         let (left_divisor, right_divisor) = (self.den as i64, other.den as i64);
@@ -118,6 +112,18 @@ impl FixedSegment {
 pub struct FixedTrapezoid { pub left: FixedSegment, pub right: FixedSegment }
 
 impl FixedTrapezoid {
+    fn interior_pixel_range(self, width: u32) -> core::ops::Range<u32> {
+        let scale = SUBPIXEL_SCALE as i64;
+        let  left = self. left.top_x.round_raw().max(self. left.bottom_x.round_raw());
+        let right = self.right.top_x.round_raw().min(self.right.bottom_x.round_raw());
+        let (start, end): (u32, u32) = (
+            (left.div_euclid(scale) + (left.rem_euclid(scale) != 0) as i64)
+                .clamp(0, width as i64) as _,
+            right.div_euclid(scale).clamp(0, width as i64) as _,
+        );
+        start..end.max(start)
+    }
+
     /// Returns twice the Q24.8-grid area, avoiding a fractional division by two.
     pub fn area_twice_raw(self) -> Result<u64, FixedRasterError> {
         if  self.left.   top_y != self.right.   top_y ||
@@ -143,18 +149,11 @@ impl FixedTrapezoid {
     pub fn full_pixel_range(self, width: u32) ->
         Result<core::ops::Range<u32>, FixedRasterError> {
         self.area_twice_raw()?;
-        let scale = SUBPIXEL_SCALE as i64;
         if  self.left.top_y.rem_euclid(SUBPIXEL_SCALE as i32) != 0 ||
             self.left.bottom_y - self.left.top_y != SUBPIXEL_SCALE as i32 {
             return Ok(0..0);
         }
-
-        let  left = self. left.top_x.round_raw().max(self. left.bottom_x.round_raw());
-        let right = self.right.top_x.round_raw().min(self.right.bottom_x.round_raw());
-        let start = (left.div_euclid(scale) + (left.rem_euclid(scale) != 0) as i64)
-            .clamp(0, width as i64) as u32;
-        let end = right.div_euclid(scale).clamp(0, width as i64) as u32;
-        Ok(start..end.max(start))
+        Ok(self.interior_pixel_range(width))
     }
 
     /// Clips this row-local trapezoid to one pixel and returns doubled area.
@@ -225,15 +224,19 @@ fn intersect_vertical(from: PixelPoint, to: PixelPoint, x: i64) -> PixelPoint {
     let (mut numerator, mut denominator) =
         ((to.y - from.y) * (x - from.x), to.x - from.x);
     if denominator < 0 { numerator = -numerator; denominator = -denominator; }
+    PixelPoint { x, y: from.y + round_ratio(numerator, denominator) }
+}
+
+fn round_ratio(numerator: i64, denominator: i64) -> i64 {
+    debug_assert!(denominator > 0);
     let (floor, remainder) = (
         numerator.div_euclid(denominator), numerator.rem_euclid(denominator),
     );
-    let offset = match (remainder * 2).cmp(&denominator) {
+    match (remainder * 2).cmp(&denominator) {
         Ordering::Equal if numerator >= 0 => floor + 1,
         Ordering::Equal | Ordering::Less  => floor,
         Ordering::Greater => floor + 1,
-    };
-    PixelPoint { x, y: from.y + offset }
+    }
 }
 
 /// Maps a pixel-clipped doubled Q24.8 area to round-to-nearest 8-bit coverage.
@@ -249,7 +252,9 @@ pub fn accumulate_trapezoid_row(trapezoid: FixedTrapezoid, width: u32, y: u32,
     let width_usize = usize::try_from(width).map_err(|_|
         FixedRasterError::DimensionsOverflow)?;
     if row_area.len() < width_usize {
-        return Err(FixedRasterError::WorkspaceTooSmall { required: width_usize });
+        return Err(FixedRasterError::WorkspaceTooSmall {
+            kind: FixedWorkspace::RowArea, required: width_usize,
+        });
     }
     let scale = SUBPIXEL_SCALE as i64;
     let row_top = y as u64 * SUBPIXEL_SCALE as u64;
@@ -268,14 +273,11 @@ pub fn accumulate_trapezoid_row(trapezoid: FixedTrapezoid, width: u32, y: u32,
     let last = (maximum.div_euclid(scale) +
                (maximum.rem_euclid(scale) != 0) as i64).clamp(0, width as i64) as u32;
 
-    let (left, right) = (xs[0].max(xs[1]), xs[2].min(xs[3]));
-    let interior_start = (left.div_euclid(scale) +
-         (left.rem_euclid(scale) != 0) as i64).clamp(0, width as i64) as u32;
-    let interior_end = right.div_euclid(scale).clamp(0, width as i64) as u32;
+    let interior = trapezoid.interior_pixel_range(width);
     let interior_area = 2 * trapezoid.left.height_raw() as u64 * SUBPIXEL_SCALE as u64;
 
     for x in first..last {
-        let area = if interior_start <= x && x < interior_end { interior_area } else {
+        let area = if interior.contains(&x) { interior_area } else {
             trapezoid.pixel_area_twice_raw(x, y)?
         };
         let cell = &mut row_area[x as usize];
@@ -312,17 +314,29 @@ pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
     if extent(width) > DEVICE_RAW_LIMIT as u64 || extent(height) > DEVICE_RAW_LIMIT as u64 {
         return Err(FixedRenderError::Raster(FixedRasterError::CoordinateOutOfRange));
     }
-    for (available, required) in [
-        (workspace.  segments.len(), lines.len()),
-        (workspace.trapezoids.len(), lines.len().div_ceil(2)),
-        (workspace.  row_area.len(), width_usize)] {
+    for (kind, available, required) in [
+        (FixedWorkspace::Segments, workspace.  segments.len(), lines.len()),
+        (FixedWorkspace::Trapezoids, workspace.trapezoids.len(), lines.len().div_ceil(2)),
+        (FixedWorkspace::RowArea, workspace.  row_area.len(), width_usize)] {
         if available < required {
             return Err(FixedRenderError::Raster(
-                FixedRasterError::WorkspaceTooSmall { required }));
+                FixedRasterError::WorkspaceTooSmall { kind, required }));
         }
     }
 
-    for y in 0..height {
+    let Some((first_line, rest)) = lines.split_first() else { return Ok(()); };
+    let (mut minimum_y, mut maximum_y) =
+        (first_line.y0, first_line.y0 + first_line.dy as i32);
+    for line in rest {
+        minimum_y = minimum_y.min(line.y0);
+        maximum_y = maximum_y.max(line.y0 + line.dy as i32);
+    }
+    let scale = SUBPIXEL_SCALE as i32;
+    let first_row = minimum_y.div_euclid(scale).clamp(0, height as i32) as u32;
+    let last_row = (maximum_y.div_euclid(scale) +
+        (maximum_y.rem_euclid(scale) != 0) as i32).clamp(0, height as i32) as u32;
+
+    for y in first_row..last_row {
         let row = &mut workspace.row_area[..width_usize];  row.fill(0);
         let (mut top, bottom) = (FixedScalar::from_bits(extent(y)     as i32),
                                  FixedScalar::from_bits(extent(y + 1) as i32));
@@ -351,7 +365,9 @@ pub fn prepare_lines(edges: &[Edge<FixedScalar>], output: &mut [FixedLine]) ->
     Result<usize, FixedRasterError> {
     for edge in edges { FixedLine::new(*edge)?; }
     if output.len() < edges.len() {
-        return Err(FixedRasterError::WorkspaceTooSmall { required: edges.len() });
+        return Err(FixedRasterError::WorkspaceTooSmall {
+            kind: FixedWorkspace::Lines, required: edges.len(),
+        });
     }
     for (line, edge) in output.iter_mut().zip(edges) { *line = FixedLine::new(*edge)?; }
     Ok(edges.len())
@@ -363,12 +379,7 @@ pub fn prepare_lines(edges: &[Edge<FixedScalar>], output: &mut [FixedLine]) ->
 /// active segments share identical top and bottom coordinates.
 pub fn next_slab_boundary(lines: &[FixedLine], top: FixedScalar, bottom: FixedScalar) ->
     Result<FixedScalar, FixedRasterError> {
-    let (top, bottom) = (top.to_bits(), bottom.to_bits());
-    if top >= bottom { return Err(FixedRasterError::InvalidSlab); }
-    if [top,  bottom].iter().any(|value|
-        value.unsigned_abs() > DEVICE_RAW_LIMIT as u32) {
-        return Err(FixedRasterError::CoordinateOutOfRange);
-    }
+    let (top, bottom) = validate_slab(top, bottom)?;
 
     let mut boundary = bottom;
     for line in lines {
@@ -385,22 +396,30 @@ pub fn next_slab_boundary(lines: &[FixedLine], top: FixedScalar, bottom: FixedSc
 /// is modified.
 pub fn collect_segments(lines: &[FixedLine], top: FixedScalar, bottom: FixedScalar,
     output: &mut [FixedSegment]) -> Result<usize, FixedRasterError> {
-    let (top, bottom) = (top.to_bits(), bottom.to_bits());
-    if top >= bottom { return Err(FixedRasterError::InvalidSlab); }
-    if [top,  bottom].iter().any(|value|
-        value.unsigned_abs() > DEVICE_RAW_LIMIT as u32) {
-        return Err(FixedRasterError::CoordinateOutOfRange);
-    }
+    let (top, bottom) = validate_slab(top, bottom)?;
     let required = lines.iter()
         .filter(|line| line.segment_in_slab(top, bottom).is_some()).count();
     if output.len() < required {
-        return Err(FixedRasterError::WorkspaceTooSmall { required });
+        return Err(FixedRasterError::WorkspaceTooSmall {
+            kind: FixedWorkspace::Segments, required,
+        });
     }
 
     let mut    count = 0;
     for segment in lines.iter().filter_map(|line| line.segment_in_slab(top, bottom)) {
         output[count] = segment;  count += 1;
     }       Ok(count)
+}
+
+fn validate_slab(top: FixedScalar, bottom: FixedScalar) ->
+    Result<(i32, i32), FixedRasterError> {
+    let (top, bottom) = (top.to_bits(), bottom.to_bits());
+    if top >= bottom { return Err(FixedRasterError::InvalidSlab); }
+    if [top,  bottom].iter().any(|value|
+        value.unsigned_abs() > DEVICE_RAW_LIMIT as u32) {
+        return Err(FixedRasterError::CoordinateOutOfRange);
+    }
+    Ok((top, bottom))
 }
 
 /// Pairs a fully partitioned slab's directed segments into fill trapezoids.
@@ -425,7 +444,9 @@ pub fn collect_trapezoids(segments: &mut [FixedSegment], fill_rule: FillRule,
     let winding = walk_trapezoids(segments, fill_rule, |_, _| required += 1);
     if winding != 0 { return Err(FixedRasterError::UnbalancedWinding); }
     if output.len() < required {
-        return Err(FixedRasterError::WorkspaceTooSmall { required });
+        return Err(FixedRasterError::WorkspaceTooSmall {
+            kind: FixedWorkspace::Trapezoids, required,
+        });
     }
 
     let mut    count = 0;
@@ -461,7 +482,9 @@ pub fn collect_intersections(lines: &[FixedLine], y: FixedScalar,
     output: &mut [FixedIntersection]) -> Result<usize, FixedRasterError> {
     let required = lines.iter().filter(|line| line.contains_y(y)).count();
     if output.len() < required {
-        return Err(FixedRasterError::WorkspaceTooSmall { required });
+        return Err(FixedRasterError::WorkspaceTooSmall {
+            kind: FixedWorkspace::Intersections, required,
+        });
     }
 
     let mut count = 0;
@@ -486,7 +509,9 @@ pub fn collect_spans(intersections: &[FixedIntersection], fill_rule: FillRule,
     let final_winding = walk_spans(intersections, fill_rule, |_, _| required += 1);
     if  final_winding != 0 { return Err(FixedRasterError::UnbalancedWinding); }
     if output.len() < required {
-        return Err(FixedRasterError::WorkspaceTooSmall { required });
+        return Err(FixedRasterError::WorkspaceTooSmall {
+            kind: FixedWorkspace::Spans, required,
+        });
     }
 
     let mut    count = 0;
@@ -675,7 +700,9 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
             Err(FixedRasterError::InvalidEdge));
         assert_eq!(output, [sentinel; 2]);
         assert_eq!(prepare_lines(&[edge(0.0, 1), edge(1.0, -1)], &mut output[..1]),
-            Err(FixedRasterError::WorkspaceTooSmall { required: 2 }));
+            Err(FixedRasterError::WorkspaceTooSmall {
+                kind: FixedWorkspace::Lines, required: 2,
+            }));
         assert_eq!(output, [sentinel; 2]);
     }
 
@@ -713,11 +740,11 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
         let mut segments = [FixedSegment::default(); 1];
 
         assert_eq!(collect_segments(&[line], fixed(0.0), fixed(1.0), &mut segments), Ok(1));
-        assert_eq!((segments[0].top_y(), segments[0].bottom_y()),
-            (fixed(0.0), fixed(1.0)));
-        assert_eq!((segments[0].top_x.floor_raw(), segments[0].bottom_x.floor_raw()),
-            (0, 256));
-        assert_eq!(segments[0].height_raw(), 256);
+        assert_eq!((segments[0].top_y(),
+                    segments[0].bottom_y()), (fixed(0.0), fixed(1.0)));
+        assert_eq!((segments[0].top_x.floor_raw(),
+                    segments[0].bottom_x.floor_raw()), (0, 256));
+        assert_eq!( segments[0].height_raw(), 256);
         assert_eq!(collect_segments(&[line], fixed(3.0), fixed(4.0), &mut segments), Ok(0));
     }
 
@@ -735,7 +762,9 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
             Err(FixedRasterError::InvalidSlab));
         assert_eq!(output, [sentinel]);
         assert_eq!(collect_segments(&[line], fixed(0.0), fixed(1.0), &mut []),
-            Err(FixedRasterError::WorkspaceTooSmall { required: 1 }));
+            Err(FixedRasterError::WorkspaceTooSmall {
+                kind: FixedWorkspace::Segments, required: 1,
+            }));
         assert_eq!(output, [sentinel]);
     }
 
@@ -877,7 +906,9 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
                          PIXEL_AREA_TWICE, PIXEL_AREA_TWICE / 2]);
         assert_eq!(row.map(quantize_area_coverage), [128, 255, 255, 128]);
         assert_eq!(accumulate_trapezoid_row(trapezoid, 4, 0, &mut row[..3]),
-            Err(FixedRasterError::WorkspaceTooSmall { required: 4 }));
+            Err(FixedRasterError::WorkspaceTooSmall {
+                kind: FixedWorkspace::RowArea, required: 4,
+            }));
     }
 
     #[test] fn trapezoid_construction_rejects_crossings_and_unpartitioned_slabs() {
@@ -908,7 +939,9 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
         assert_eq!(collect_intersections(&lines, fixed(1.0), &mut intersections), Ok(1));
         assert_eq!(intersections[0].floor_raw(), 0);
         assert_eq!(collect_intersections(&lines, fixed(0.5), &mut intersections[..1]),
-            Err(FixedRasterError::WorkspaceTooSmall { required: 2 }));
+            Err(FixedRasterError::WorkspaceTooSmall {
+                kind: FixedWorkspace::Intersections, required: 2,
+            }));
     }
 
     #[test] fn crossing_events_form_exact_spans_for_both_fill_rules() {
@@ -938,6 +971,8 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
         assert_eq!(output, sentinel);
         assert_eq!(collect_spans(&[crossing(0, 1), crossing(1, -1), crossing(2, 1),
             crossing(3, -1)], FillRule::EvenOdd, &mut []),
-            Err(FixedRasterError::WorkspaceTooSmall { required: 2 }));
+            Err(FixedRasterError::WorkspaceTooSmall {
+                kind: FixedWorkspace::Spans, required: 2,
+            }));
     }
 }

@@ -4,9 +4,8 @@
 //! crossings. Inside each resulting slab, pixel overlap varies linearly in y,
 //! so trapezoidal integration is exact apart from `f32` arithmetic.
 //!
-//! This correctness-first implementation checks active-edge crossings pairwise
-//! in each slab (`O(A²)`). Production backends replace that quadratic search
-//! with persistent active-edge ordering or strip-local event queues.
+//! Active edges are ordered at each slab boundary. Only adjacent pairs need to
+//! be checked because the first future ordering change must occur between neighbors.
 
 use crate::{edge::Edge,
     raster::{checked_width, emit_coverage_runs, CoverageSink, FillRule, RasterError}
@@ -23,6 +22,7 @@ pub struct AnalyticWorkspace<'a> {
 pub fn rasterize_edges_analytic<S>(edges: &[Edge], width: u32, height: u32,
     fill_rule: FillRule, workspace: &mut AnalyticWorkspace<'_>, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {
+    if edges.iter().any(|edge| !edge.is_valid()) { return Err(RasterError::InvalidEdge); }
     let width = checked_width(width).ok_or(RasterError::DimensionsOverflow)?;
     if workspace.intersections.len() < edges.len() || workspace.row_coverage.len() < width {
         return Err(RasterError::WorkspaceTooSmall {
@@ -75,12 +75,13 @@ fn prepare_slab(edges: &[Edge], y0: f32, limit: f32,
         }
     }
     let intersections = &mut intersections[..count];
-    for (index, a) in intersections.iter().enumerate() {
-        for b in &intersections[index + 1..] {
-            if a.slope == b.slope { continue; }
-            let y = y0 + (b.x0 - a.x0) / (a.slope - b.slope);
-            if  y > y0 && y < next { next = y; }
-        }
+    intersections.sort_unstable_by(|a, b|
+        a.x0.total_cmp(&b.x0).then_with(|| a.slope.total_cmp(&b.slope)));
+    for pair in intersections.windows(2) {
+        let (a, b) = (&pair[0], &pair[1]);
+        if a.slope == b.slope { continue; }
+        let y = y0 + (b.x0 - a.x0) / (a.slope - b.slope);
+        if  y > y0 && y < next { next = y; }
     }
     let height = next - y0;
     for intersection in &mut *intersections {
@@ -161,29 +162,42 @@ fn integrate_span(left: &AnalyticIntersection,
     #[test] fn aligned_rectangle_has_exact_coverage() {
         let mut builder = PathBuilder::new();
         builder.move_to((1.0, 1.0)).line_to((3.0, 1.0)).unwrap()
-            .line_to((3.0, 3.0)).unwrap().line_to((1.0, 3.0)).unwrap();
+               .line_to((3.0, 3.0)).unwrap().line_to((1.0, 3.0)).unwrap();
         assert_eq!(render_analytic(&edges(builder), 4, 4, FillRule::NonZero),
             [0, 0, 0, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 0, 0, 0]);
+    }
+
+    #[test] fn invalid_public_edges_are_rejected_before_rasterization() {
+        let edges = [Edge {
+            upper: (0.0, 1.0).into(), lower: (0.0, 0.0).into(), winding: 1,
+        }];
+        let (mut intersections, mut row) =
+            ([AnalyticIntersection::default(); 1], [0.0; 1]);
+        let result = rasterize_edges_analytic(&edges, 1, 1, FillRule::NonZero,
+            &mut AnalyticWorkspace {
+                intersections: &mut intersections, row_coverage: &mut row,
+            }, &mut |_, _, _| Ok::<_, Infallible>(()));
+        assert_eq!(result, Err(RasterError::InvalidEdge));
     }
 
     #[test] fn diagonal_half_pixel_is_integrated_analytically() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0)).line_to((1.0, 0.0)).unwrap()
-            .line_to((0.0, 1.0)).unwrap();
+               .line_to((0.0, 1.0)).unwrap();
         assert_eq!(render_analytic(&edges(builder), 1, 1, FillRule::NonZero), [128]);
     }
 
     #[test] fn fractional_rectangle_has_exact_horizontal_area() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.25, 0.0)).line_to((1.75, 0.0)).unwrap()
-            .line_to((1.75, 1.0)).unwrap().line_to((0.25, 1.0)).unwrap();
+               .line_to((1.75, 1.0)).unwrap().line_to((0.25, 1.0)).unwrap();
         assert_eq!(render_analytic(&edges(builder), 2, 1, FillRule::NonZero), [191, 191]);
     }
 
     #[test] fn crossing_edges_are_split_inside_the_row() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0)).line_to((2.0, 2.0)).unwrap()
-            .line_to((0.0, 2.0)).unwrap().line_to((2.0, 0.0)).unwrap();
+               .line_to((0.0, 2.0)).unwrap().line_to((2.0, 0.0)).unwrap();
         assert_eq!(render_analytic(&edges(builder), 2, 2, FillRule::EvenOdd), [128; 4]);
     }
 
@@ -191,7 +205,7 @@ fn integrate_span(left: &AnalyticIntersection,
         let mut builder = PathBuilder::new();
         for (x0, y0, x1, y1) in [(0.0, 0.0, 3.0, 3.0), (1.0, 1.0, 2.0, 2.0)] {
             builder.move_to((x0, y0)).line_to((x1, y0)).unwrap()
-                .line_to((x1, y1)).unwrap().line_to((x0, y1)).unwrap();
+                   .line_to((x1, y1)).unwrap().line_to((x0, y1)).unwrap();
         }
         let edges = edges(builder);
         assert_eq!(render_analytic(&edges, 3, 3, FillRule::NonZero)[4], 255);
@@ -249,7 +263,7 @@ fn integrate_span(left: &AnalyticIntersection,
             };
             let points: Vec<_> = (0..3 + case % 4).map(|_| (point(), point())).collect();
             builder.move_to(points[0]).line_to(points[1]).unwrap()
-                .line_to(points[2]).unwrap();
+                   .line_to(points[2]).unwrap();
             for &point in &points[3..] { builder.line_to(point).unwrap(); }
             let edges = edges(builder);
             for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {

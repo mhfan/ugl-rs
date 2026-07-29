@@ -176,6 +176,15 @@ fn cubic_is_flat(curve: Cubic, tolerance: f32) -> bool {
 }
 
 fn control_is_flat(from: Point, to: Point, control: Point, tolerance: f32) -> bool {
+    let scale = [from.x, from.y, to.x, to.y, control.x, control.y, tolerance]
+        .iter().fold(0.0_f32, |scale, value| scale.max(value.abs()));
+    let normalize = |value: f32| value / scale;
+    let (from, to, control, tolerance) = (
+        Point::new(normalize(from.x), normalize(from.y)),
+        Point::new(normalize(to.x), normalize(to.y)),
+        Point::new(normalize(control.x), normalize(control.y)),
+        normalize(tolerance),
+    );
     let (dx, dy) = (to.x - from.x, to.y - from.y);
     let chord_len_sq = dx * dx + dy * dy;
     if chord_len_sq == 0.0 {
@@ -210,7 +219,7 @@ fn split_cubic(curve: Cubic) -> (Cubic, Cubic) {
 }
 
 fn midpoint(a: Point, b: Point) -> Point {
-    Point::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5)
+    Point::new(a.x * 0.5 + b.x * 0.5, a.y * 0.5 + b.y * 0.5)
 }
 
 #[cfg(test)] mod tests { use super::*;
@@ -268,6 +277,14 @@ fn midpoint(a: Point, b: Point) -> Point {
         assert_eq!(collect(&path, Affine::identity(), options).unwrap().len(), 1);
         assert!(collect(&path, Affine::new(10.0, 0.0, 0.0, 10.0, 0.0, 0.0), options)
             .unwrap().len() > 1);
+    }
+
+    #[test] fn finite_extreme_coordinates_do_not_overflow_midpoint_or_flatness() {
+        let large = 3.0e38;
+        let center = midpoint(Point::new(large, large), Point::new(large, large));
+        assert!(center.x.is_finite() && center.y.is_finite());
+        assert!(control_is_flat(Point::new(large, large), Point::new(large, large),
+            Point::new(large, large), 1.0));
     }
 
     #[test] fn invalid_options_depth_and_sink_fail_explicitly() {

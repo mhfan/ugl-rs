@@ -106,9 +106,18 @@ impl Default for RenderOptions { fn default() -> Self {
         }
 } }
 
+#[derive(Clone, Copy, Debug, PartialEq)] pub struct AnalyticRenderOptions {
+    pub fill_rule: FillRule,
+    pub flatten: FlattenOptions,
+}
+
+impl Default for AnalyticRenderOptions { fn default() -> Self {
+    Self { fill_rule: FillRule::NonZero, flatten: FlattenOptions::default() }
+} }
+
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RenderError {
     InvalidTolerance, InvalidDepth, NonFiniteCoordinate, FlattenDepthLimit,
-    DimensionsOverflow, InvalidSampleCount, InvalidPath(PathError),
+    DimensionsOverflow, InvalidEdge, InvalidSampleCount, InvalidPath(PathError),
     EdgeCapacity { needed_at_least: usize },
     RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
     #[cfg(feature = "fixed")] FixedRaster(FixedRasterError),
@@ -133,7 +142,7 @@ pub fn render_solid(path: &Path, transform: Affine, color: RGBA<u8>, options: Re
 
 /// Renders a solid color through the exact-area `f32` rasterizer.
 pub fn render_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
-    options: RenderOptions, target: &mut PixmapMut<'_>,
+    options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     let mut compositor = SolidCompositor { target, color: color.premul() };
@@ -198,6 +207,7 @@ fn map_flatten_error(error: FlattenError<EdgeCapacity>) -> RenderError {
 fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
     match error {
         RasterError::DimensionsOverflow => RenderError::DimensionsOverflow,
+        RasterError::InvalidEdge => RenderError::InvalidEdge,
         RasterError::InvalidSampleCount => RenderError::InvalidSampleCount,
         RasterError::WorkspaceTooSmall { intersections, row_coverage } =>
             RenderError::RasterWorkspaceTooSmall { intersections, row_coverage },
@@ -281,7 +291,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
         let (mut edges, mut intersections, mut row_coverage) = (
             [Edge::default(); 2], [AnalyticIntersection::default(); 2], [0.0]);
         render_solid_analytic(&builder.build(), Affine::identity(), RGBA::white(),
-            RenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
                 edges: &mut edges, intersections: &mut intersections,
                 row_coverage: &mut row_coverage,
             },

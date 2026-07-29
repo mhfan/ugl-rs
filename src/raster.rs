@@ -53,13 +53,14 @@ impl<E, F> CoverageSink for F where F: FnMut(u32, u32, u8) -> Result<(), E> {
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RasterError<E> {
     WorkspaceTooSmall { intersections: usize, row_coverage: usize },
-    DimensionsOverflow, InvalidSampleCount, Sink(E),
+    DimensionsOverflow, InvalidEdge, InvalidSampleCount, Sink(E),
 }
 
 pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32, fill_rule: FillRule,
     options: RasterOptions, workspace: &mut RasterWorkspace<'_>, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {
     if options.vertical_samples == 0 { return Err(RasterError::InvalidSampleCount); }
+    if edges.iter().any(|edge| !edge.is_valid()) { return Err(RasterError::InvalidEdge); }
     let width = checked_width(width).ok_or(RasterError::DimensionsOverflow)?;
     if workspace.intersections.len() < edges.len() || workspace.row_coverage.len() < width {
         return Err(RasterError::WorkspaceTooSmall {
@@ -183,6 +184,18 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
             .line_to((3.0, 3.0)).unwrap() .line_to((1.0, 3.0)).unwrap();
         assert_eq!(render(&path_edges(builder), 4, 4, FillRule::NonZero),
             [0, 0,   0,   0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 0,   0,   0]);
+    }
+
+    #[test] fn invalid_public_edges_are_rejected_before_rasterization() {
+        let edges = [Edge {
+            upper: (f32::NAN, 0.0).into(), lower: (0.0, 1.0).into(), winding: 1,
+        }];
+        let (mut intersections, mut row) = ([Intersection::default(); 1], [0.0; 1]);
+        let result = rasterize_edges(&edges, 1, 1, FillRule::NonZero,
+            RasterOptions::default(), &mut RasterWorkspace {
+                intersections: &mut intersections, row_coverage: &mut row,
+            }, &mut |_, _, _| Ok::<_, Infallible>(()));
+        assert_eq!(result, Err(RasterError::InvalidEdge));
     }
 
     #[test] fn fractional_rectangle_uses_exact_horizontal_span_overlap() {

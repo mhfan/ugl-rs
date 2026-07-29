@@ -25,6 +25,12 @@ impl<T> Edge<T> where T: Copy + PartialOrd {
 }
 
 impl Edge {
+    pub(crate) fn is_valid(&self) -> bool {
+        [self.upper.x, self.upper.y, self.lower.x, self.lower.y]
+            .iter().all(|value| value.is_finite()) &&
+            self.upper.y < self.lower.y && matches!(self.winding, -1 | 1)
+    }
+
     pub(crate) fn slope(&self) -> f32 {
         (self.lower.x - self.upper.x) / (self.lower.y - self.upper.y)
     }
