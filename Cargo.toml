@@ -26,6 +26,10 @@ libm = { version = "0.2", default-features = false }
 [dev-dependencies]
 criterion = "0.8"
 
+[[bench]]
+name = "raster"
+harness = false
+
 [profile.dev]
 #incremental = false
 #debug = 'none'
