@@ -55,10 +55,10 @@ impl FixedLine {
         self.y0 <= y && (y as i64) < self.y0 as i64 + self.dy as i64
     }
 
-    fn segment_in_slab(&self, top: i32, bottom: i32) -> Option<FixedSegment> {
+    fn segment_in_slab(&self, line_index: u32, top: i32, bottom: i32) -> Option<FixedSegment> {
         let (line_top, line_bottom) = (self.y0, self.y0 + self.dy as i32);
         let (top_y, bottom_y) = (top.max(line_top), bottom.min(line_bottom));
-        (top_y < bottom_y).then(|| FixedSegment { top_y, bottom_y,
+        (top_y < bottom_y).then(|| FixedSegment { line_index, top_y, bottom_y,
                top_x: self.intersection(FixedScalar::from_bits(top_y)),
             bottom_x: self.intersection(FixedScalar::from_bits(bottom_y)),
         })
@@ -97,7 +97,7 @@ pub struct FixedSpan { pub from: FixedIntersection, pub to: FixedIntersection }
 
 /// A directed edge fragment clipped to one horizontal slab.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct FixedSegment { top_y: i32, bottom_y: i32,
+pub struct FixedSegment { line_index: u32, top_y: i32, bottom_y: i32,
     pub top_x: FixedIntersection, pub bottom_x: FixedIntersection,
 }
 
@@ -239,6 +239,18 @@ fn round_ratio(numerator: i64, denominator: i64) -> i64 {
     }
 }
 
+fn round_ratio_i128(numerator: i128, denominator: i128) -> i128 {
+    debug_assert!(denominator > 0);
+    let (floor, remainder) = (
+        numerator.div_euclid(denominator), numerator.rem_euclid(denominator),
+    );
+    match (remainder * 2).cmp(&denominator) {
+        Ordering::Equal if numerator >= 0 => floor + 1,
+        Ordering::Equal | Ordering::Less  => floor,
+        Ordering::Greater => floor + 1,
+    }
+}
+
 /// Maps a pixel-clipped doubled Q24.8 area to round-to-nearest 8-bit coverage.
 pub fn quantize_area_coverage(area_twice_raw: u64) -> u8 {
     let area = area_twice_raw.min(PIXEL_AREA_TWICE);
@@ -305,6 +317,9 @@ pub struct FixedRasterWorkspace<'a> {
 }
 
 /// Rasterizes prepared fixed-point lines into anti-aliased coverage runs.
+///
+/// Edge crossings are located with exact `i128` rational arithmetic. Their
+/// coordinates are rounded only when they become Q24.8 trapezoid boundaries.
 pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
     fill_rule: FillRule, workspace: &mut FixedRasterWorkspace<'_>, sink: &mut S) ->
     Result<(), FixedRenderError<S::Error>> where S: CoverageSink {
@@ -341,13 +356,31 @@ pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
         let (mut top, bottom) = (FixedScalar::from_bits(extent(y)     as i32),
                                  FixedScalar::from_bits(extent(y + 1) as i32));
         while top < bottom {
-            let next = next_slab_boundary(lines, top, bottom)
+            let vertex_boundary = next_slab_boundary(lines, top, bottom)
                 .map_err(FixedRenderError::Raster)?;
-            let segment_count = collect_segments(lines, top, next, workspace.segments)
+            let mut segment_count =
+                collect_segments(lines, top, vertex_boundary, workspace.segments)
                 .map_err(FixedRenderError::Raster)?;
-            let trapezoid_count = collect_trapezoids(
-                &mut workspace.segments[..segment_count], fill_rule, workspace.trapezoids,
-            ).map_err(FixedRenderError::Raster)?;
+            let (next, snap_top, snap_bottom) = next_crossing_boundary(lines,
+                &mut workspace.segments[..segment_count], top, vertex_boundary)
+                .map_err(FixedRenderError::Raster)?;
+            if next != vertex_boundary {
+                segment_count = collect_segments(lines, top, next, workspace.segments)
+                    .map_err(FixedRenderError::Raster)?;
+            }
+            if snap_top {
+                snap_crossing_events(lines, top, &mut workspace.segments[..segment_count], true);
+            }
+            if snap_bottom {
+                snap_crossing_events(lines, next,
+                    &mut workspace.segments[..segment_count], false);
+            }
+            let segments = &mut workspace.segments[..segment_count];
+            let trapezoid_count = if next == vertex_boundary && !snap_top && !snap_bottom {
+                collect_ordered_trapezoids(segments, fill_rule, workspace.trapezoids)
+            } else {
+                collect_trapezoids(segments, fill_rule, workspace.trapezoids)
+            }.map_err(FixedRenderError::Raster)?;
             for trapezoid in workspace.trapezoids[..trapezoid_count].iter().copied() {
                 accumulate_trapezoid_row(trapezoid, width, y, row)
                     .map_err(FixedRenderError::Raster)?;
@@ -397,8 +430,9 @@ pub fn next_slab_boundary(lines: &[FixedLine], top: FixedScalar, bottom: FixedSc
 pub fn collect_segments(lines: &[FixedLine], top: FixedScalar, bottom: FixedScalar,
     output: &mut [FixedSegment]) -> Result<usize, FixedRasterError> {
     let (top, bottom) = validate_slab(top, bottom)?;
-    let required = lines.iter()
-        .filter(|line| line.segment_in_slab(top, bottom).is_some()).count();
+    if lines.len() > u32::MAX as usize { return Err(FixedRasterError::DimensionsOverflow); }
+    let required = lines.iter().enumerate()
+        .filter(|(index, line)| line.segment_in_slab(*index as _, top, bottom).is_some()).count();
     if output.len() < required {
         return Err(FixedRasterError::WorkspaceTooSmall {
             kind: FixedWorkspace::Segments, required,
@@ -406,9 +440,84 @@ pub fn collect_segments(lines: &[FixedLine], top: FixedScalar, bottom: FixedScal
     }
 
     let mut    count = 0;
-    for segment in lines.iter().filter_map(|line| line.segment_in_slab(top, bottom)) {
+    for segment in lines.iter().enumerate().filter_map(|(index, line)|
+        line.segment_in_slab(index as _, top, bottom)) {
         output[count] = segment;  count += 1;
     }       Ok(count)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FixedCrossing { y: i32, x: i64 }
+
+fn next_crossing_boundary(lines: &[FixedLine], segments: &mut [FixedSegment],
+    top: FixedScalar, bottom: FixedScalar) ->
+    Result<(FixedScalar, bool, bool), FixedRasterError> {
+    let (top, bottom) = validate_slab(top, bottom)?;
+    let (mut boundary, mut snap_top, mut snap_bottom) = (bottom, false, false);
+    segments.sort_unstable_by(|left, right| left.top_x.cmp_x(&right.top_x)
+        .then_with(|| left.bottom_x.cmp_x(&right.bottom_x)));
+    for pair in segments.windows(2) {
+        if !pair[0].bottom_x.cmp_x(&pair[1].bottom_x).is_gt() { continue; }
+        let (left, right) = (pair[0].line_index as usize, pair[1].line_index as usize);
+        let Some(event) = crossing_event(lines[left], lines[right]) else { continue; };
+        if event.y == top {
+            snap_top = true;
+        } else if top < event.y && event.y < boundary {
+            boundary = event.y;
+            snap_bottom = true;
+        } else if event.y == boundary {
+            snap_bottom = true;
+        }
+    }
+    Ok((FixedScalar::from_bits(boundary), snap_top, snap_bottom))
+}
+
+fn crossing_event(left: FixedLine, right: FixedLine) -> Option<FixedCrossing> {
+    let (left_dy, right_dy) = (left.dy as i128, right.dy as i128);
+    let (left_c, right_c) = (
+        left.x0 as i128 * left_dy - left.dx as i128 * left.y0 as i128,
+        right.x0 as i128 * right_dy - right.dx as i128 * right.y0 as i128,
+    );
+    let (mut denominator, mut numerator) = (
+        left.dx as i128 * right_dy - right.dx as i128 * left_dy,
+        right_c * left_dy - left_c * right_dy,
+    );
+    if denominator == 0 { return None; }
+    if denominator < 0 { denominator = -denominator; numerator = -numerator; }
+
+    let overlap_top = left.y0.max(right.y0) as i128;
+    let overlap_bottom = (left.y0 + left.dy as i32)
+        .min(right.y0 + right.dy as i32) as i128;
+    if numerator <= overlap_top * denominator ||
+       numerator >= overlap_bottom * denominator {
+        return None;
+    }
+
+    let x_numerator = left.dx as i128 * numerator + left_c * denominator;
+    let x_denominator = left_dy * denominator;
+    Some(FixedCrossing {
+        y: i32::try_from(round_ratio_i128(numerator, denominator)).ok()?,
+        x: i64::try_from(round_ratio_i128(x_numerator, x_denominator)).ok()?,
+    })
+}
+
+fn snap_crossing_events(lines: &[FixedLine], y: FixedScalar, segments: &mut [FixedSegment],
+    top: bool) {
+    let y = y.to_bits();
+    for left in 0..segments.len() {
+        for right in left + 1..segments.len() {
+            let (left_line, right_line) =
+                (segments[left].line_index as usize, segments[right].line_index as usize);
+            let Some(event) = crossing_event(lines[left_line], lines[right_line])
+                .filter(|event| event.y == y) else { continue; };
+            for (index, line) in [(left, lines[left_line]), (right, lines[right_line])] {
+                let intersection =
+                    FixedIntersection { num: event.x, den: 1, winding: line.winding };
+                if top { segments[index].top_x = intersection; }
+                else   { segments[index].bottom_x = intersection; }
+            }
+        }
+    }
 }
 
 fn validate_slab(top: FixedScalar, bottom: FixedScalar) ->
@@ -436,6 +545,11 @@ pub fn collect_trapezoids(segments: &mut [FixedSegment], fill_rule: FillRule,
     }
     segments.sort_unstable_by(|left, right| left.top_x.cmp_x(&right.top_x)
         .then_with(|| left.bottom_x.cmp_x(&right.bottom_x)));
+    collect_ordered_trapezoids(segments, fill_rule, output)
+}
+
+fn collect_ordered_trapezoids(segments: &[FixedSegment], fill_rule: FillRule,
+    output: &mut [FixedTrapezoid]) -> Result<usize, FixedRasterError> {
     if segments.windows(2).any(|pair| pair[0].bottom_x.cmp_x(&pair[1].bottom_x).is_gt()) {
         return Err(FixedRasterError::CrossingEdges);
     }
@@ -566,10 +680,11 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
         pixels
     }
 
-    fn render_analytic(edges: &[Edge], width: usize, height: usize) -> Vec<u8> {
+    fn render_analytic(edges: &[Edge], width: usize, height: usize,
+        fill_rule: FillRule) -> Vec<u8> {
         let (mut pixels, mut row) = (vec![0; width * height], vec![0.0; width]);
         let mut intersections = vec![AnalyticIntersection::default(); edges.len()];
-        rasterize_edges_analytic(edges, width as _, height as _, FillRule::NonZero,
+        rasterize_edges_analytic(edges, width as _, height as _, fill_rule,
             &mut AnalyticWorkspace {
                 intersections: &mut intersections, row_coverage: &mut row,
             }, &mut |x, y, coverage| {
@@ -637,12 +752,91 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
             }).collect();
             let (fixed_pixels, float_pixels) = (
                 render(&fixed_edges, 6, 6, FillRule::NonZero),
-                render_analytic(&float_edges, 6, 6),
+                render_analytic(&float_edges, 6, 6, FillRule::NonZero),
             );
             for (pixel, (fixed, reference)) in
                 fixed_pixels.iter().zip(&float_pixels).enumerate() {
                 assert!(fixed.abs_diff(*reference) <= 2,
                     "case {case}, pixel {pixel}: fixed={fixed}, f32={reference}");
+            }
+        }
+    }
+
+    #[test] fn fixed_self_intersections_track_the_f32_analytic_reference() {
+        let scenes = [
+            [(0, 0), (512, 512), (0, 512), (512, 0)],
+            [(32, 17), (737, 491), (61, 690), (689, 3)],
+            [(-64, 100), (800, 600), (0, 700), (720, -20)],
+        ];
+        for (case, points) in scenes.into_iter().enumerate() {
+            let points = points.map(|(x, y)|
+                (FixedScalar::from_bits(x), FixedScalar::from_bits(y)).into());
+            let mut fixed_edges = Vec::new();
+            for index in 0..points.len() {
+                if let Some(edge) = Edge::from_line(points[index], points[(index + 1) % points.len()])
+                {
+                    fixed_edges.push(edge);
+                }
+            }
+            let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
+                upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
+                lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
+                winding: edge.winding,
+            }).collect();
+            for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
+                let (fixed_pixels, float_pixels) = (
+                    render(&fixed_edges, 3, 3, fill_rule),
+                    render_analytic(&float_edges, 3, 3, fill_rule),
+                );
+                for (pixel, (fixed, reference)) in
+                    fixed_pixels.iter().zip(&float_pixels).enumerate() {
+                    assert!(fixed.abs_diff(*reference) <= 2,
+                        "case {case}, pixel {pixel}, {fill_rule:?}: \
+                         fixed={fixed}, f32={reference}");
+                }
+            }
+        }
+    }
+
+    #[test] fn rational_crossing_events_round_only_at_the_area_boundary() {
+        let line = |from, to| FixedLine::new(Edge::from_line(from, to).unwrap()).unwrap();
+        let left = line((fixed(0.0), fixed(0.0)).into(), (fixed(3.0), fixed(2.0)).into());
+        let right = line((fixed(2.0), fixed(0.0)).into(), (fixed(0.0), fixed(2.0)).into());
+        assert_eq!(crossing_event(left, right), Some(FixedCrossing { y: 205, x: 307 }));
+    }
+
+    #[test] fn randomized_fixed_quadrilaterals_track_the_f32_reference() {
+        let mut state = 0xd431_72a9_u32;
+        let mut coordinate = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            FixedScalar::from_bits((state % 2048) as i32 - 256)
+        };
+        for case in 0..256 {
+            let points: [Point<FixedScalar>; 4] =
+                core::array::from_fn(|_| (coordinate(), coordinate()).into());
+            let mut fixed_edges = Vec::new();
+            for index in 0..points.len() {
+                if let Some(edge) = Edge::from_line(points[index], points[(index + 1) % points.len()])
+                {
+                    fixed_edges.push(edge);
+                }
+            }
+            let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
+                upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
+                lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
+                winding: edge.winding,
+            }).collect();
+            for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
+                let (fixed_pixels, float_pixels) = (
+                    render(&fixed_edges, 6, 6, fill_rule),
+                    render_analytic(&float_edges, 6, 6, fill_rule),
+                );
+                for (pixel, (fixed, reference)) in
+                    fixed_pixels.iter().zip(&float_pixels).enumerate() {
+                    assert!(fixed.abs_diff(*reference) <= 2,
+                        "case {case}, pixel {pixel}, {fill_rule:?}, points={points:?}: \
+                         fixed={fixed}, f32={reference}");
+                }
             }
         }
     }
@@ -745,7 +939,7 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
     }
 
     #[test] fn slab_errors_do_not_modify_output() {
-        let sentinel = FixedSegment { top_y: 7, bottom_y: 9,
+        let sentinel = FixedSegment { line_index: 0, top_y: 7, bottom_y: 9,
                top_x: FixedIntersection::default(),
             bottom_x: FixedIntersection::default(),
         };
@@ -765,7 +959,8 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
     }
 
     #[test] fn slab_segments_form_rectangular_and_triangular_trapezoids() {
-        let segment = |top_x, bottom_x, winding| FixedSegment { top_y: 0, bottom_y: 256,
+        let segment = |top_x, bottom_x, winding| FixedSegment {
+            line_index: 0, top_y: 0, bottom_y: 256,
                top_x: FixedIntersection { num:    top_x, den: 1, winding },
             bottom_x: FixedIntersection { num: bottom_x, den: 1, winding },
         };
@@ -782,7 +977,8 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
     }
 
     #[test] fn trapezoid_area_quantizes_full_and_half_pixels_exactly() {
-        let segment = |top_x, bottom_x, winding| FixedSegment { top_y: 0, bottom_y: 256,
+        let segment = |top_x, bottom_x, winding| FixedSegment {
+            line_index: 0, top_y: 0, bottom_y: 256,
                top_x: FixedIntersection { num:    top_x, den: 1, winding },
             bottom_x: FixedIntersection { num: bottom_x, den: 1, winding },
         };
@@ -804,6 +1000,7 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
 
     #[test] fn trapezoid_extracts_only_guaranteed_full_pixel_runs() {
         let segment = |top_y, bottom_y, top_x, bottom_x, winding| FixedSegment {
+            line_index: 0,
                top_x: FixedIntersection { num:    top_x, den: 1, winding },
             bottom_x: FixedIntersection { num: bottom_x, den: 1, winding },
             top_y, bottom_y,
@@ -835,6 +1032,7 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
 
     #[test] fn trapezoid_clips_boundary_pixels_without_allocation() {
         let segment = |top_y, bottom_y, top_x, bottom_x, winding| FixedSegment {
+            line_index: 0,
                top_x: FixedIntersection { num:    top_x, den: 1, winding },
             bottom_x: FixedIntersection { num: bottom_x, den: 1, winding },
             top_y, bottom_y,
@@ -865,7 +1063,8 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
     }
 
     #[test] fn slab_areas_accumulate_before_quantization_and_emit_as_runs() {
-        let segment = |top_y, bottom_y, x, winding| FixedSegment { top_y, bottom_y,
+        let segment = |top_y, bottom_y, x, winding| FixedSegment {
+            line_index: 0, top_y, bottom_y,
                top_x: FixedIntersection { num: x, den: 1, winding },
             bottom_x: FixedIntersection { num: x, den: 1, winding },
         };
@@ -891,7 +1090,8 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
     }
 
     #[test] fn row_accumulation_combines_boundary_and_interior_pixels() {
-        let segment = |x, winding| FixedSegment { top_y: 0, bottom_y: 256,
+        let segment = |x, winding| FixedSegment {
+            line_index: 0, top_y: 0, bottom_y: 256,
                top_x: FixedIntersection { num: x, den: 1, winding },
             bottom_x: FixedIntersection { num: x, den: 1, winding },
         };
@@ -909,6 +1109,7 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
 
     #[test] fn trapezoid_construction_rejects_crossings_and_unpartitioned_slabs() {
         let segment = |top_y, bottom_y, top_x, bottom_x, winding| FixedSegment {
+            line_index: 0,
                top_x: FixedIntersection { num:    top_x, den: 1, winding },
             bottom_x: FixedIntersection { num: bottom_x, den: 1, winding },
             top_y, bottom_y,

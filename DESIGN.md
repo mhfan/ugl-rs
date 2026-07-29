@@ -288,9 +288,10 @@ only after this path is complete.
 - M0 is substantially complete; comprehensive golden scenes and benchmark
   baselines remain.
 - M1 has an allocation-free vertical slice from path segments through sampled
-  or analytic `f32` coverage to premultiplied source-over output.
+  or analytic `f32` coverage to premultiplied source-over output; the analytic
+  backend persists active edges and skips empty vertical ranges.
 - M4/M5 prototypes include generic fixed-point geometry, widened Q24.8
-  arithmetic, span/trapezoid area evaluation, caller-owned workspaces, and
-  differential/error-path tests.
-- Fixed crossing events, persistent active-edge storage, golden images,
-  fuzzing, benchmarks, gradients, clipping, and stroking remain future work.
+  arithmetic, rational crossing events, span/trapezoid area evaluation,
+  caller-owned workspaces, and differential/error-path tests.
+- Production fixed edge binning, broader golden scenes and benchmarks,
+  fuzzing, gradients, clipping, and stroking remain future work.

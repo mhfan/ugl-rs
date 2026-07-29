@@ -25,9 +25,9 @@ The intended niche is deliberately narrower than Blend2D, tiny-skia, Skia, or Ve
 
 The project now has an allocation-free path-to-pixel vertical slice with
 sampled and analytic `f32` rasterizers, premultiplied source-over, caller-owned
-scratch storage, and an early Q24.8 fixed-point backend. Fixed crossing events,
-production active-edge storage, golden images, fuzzing, and benchmarks are
-still under development, so it is not yet suitable as a production renderer.
+scratch storage, and an early Q24.8 fixed-point backend. Production fixed edge
+binning, fuzzing, and broader golden/benchmark scenes are still under
+development, so it is not yet suitable as a production renderer.
 
 The current MSRV is Rust 1.93. CI checks MSRV and stable builds, independent
 feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
