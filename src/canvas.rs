@@ -58,20 +58,21 @@ impl<'a> PixmapMut<'a> {
                        self.data[offset + 2], self.data[offset + 3]))
     }
 
-    fn blend_solid(&mut self, x: usize, y: usize, color: RGBA<u8>, coverage: u8) {
-        let offset = y * self.stride as usize + x * BYTES_PER_PIXEL as usize;
+    fn blend_solid_span(&mut self, x: u32, y: u32, len: u32, color: RGBA<u8>, coverage: u8) {
         let source_alpha = mul_div_255(color.a, coverage);
         let inverse_alpha = u8::MAX - source_alpha;
-        let source = [
-            mul_div_255(color.r, source_alpha),
-            mul_div_255(color.g, source_alpha),
-            mul_div_255(color.b, source_alpha),
-        ];
-        for (channel, source) in self.data[offset..offset + 3].iter_mut().zip(source) {
-            *channel = source.saturating_add(mul_div_255(*channel, inverse_alpha));
+        let source = [mul_div_255(color.r, source_alpha),
+                      mul_div_255(color.g, source_alpha),
+                      mul_div_255(color.b, source_alpha)];
+        let start = y as usize * self.stride as usize
+            + x as usize * BYTES_PER_PIXEL as usize;
+        let end = start + len as usize * BYTES_PER_PIXEL as usize;
+        for pixel in self.data[start..end].chunks_exact_mut(BYTES_PER_PIXEL as usize) {
+            for (channel, source) in pixel[..3].iter_mut().zip(source) {
+                *channel = source.saturating_add(mul_div_255(*channel, inverse_alpha));
+            }
+            pixel[3] = source_alpha.saturating_add(mul_div_255(pixel[3], inverse_alpha));
         }
-        self.data[offset + 3] = source_alpha.saturating_add(
-            mul_div_255(self.data[offset + 3], inverse_alpha));
     }
 }
 
@@ -121,9 +122,8 @@ pub fn render_solid(path: &Path, transform: Affine, color: RGBA<u8>, options: Re
     let edge_count = edge_sink.len;
 
     let mut compositor = SolidCompositor { target, color };
-    rasterize_edges(&workspace.edges[..edge_count], compositor.target.width as usize,
-        compositor.target.height as usize, options.fill_rule, options.raster,
-        &mut RasterWorkspace {
+    rasterize_edges(&workspace.edges[..edge_count], compositor.target.width,
+        compositor.target.height, options.fill_rule, options.raster, &mut RasterWorkspace {
             intersections: workspace.intersections,
             row_coverage: workspace.row_coverage,
         }, &mut compositor,
@@ -149,8 +149,10 @@ struct SolidCompositor<'a, 'b> { target: &'a mut PixmapMut<'b>, color: RGBA<u8> 
 
 impl CoverageSink for SolidCompositor<'_, '_> {
     type Error = Infallible;
-    fn pixel(&mut self, x: usize, y: usize, coverage: u8) -> Result<(), Self::Error> {
-        self.target.blend_solid(x, y, self.color, coverage);    Ok(())
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        self.target.blend_solid_span(x, y, len, self.color, coverage);
+        Ok(())
     }
 }
 
@@ -187,17 +189,18 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
         assert_eq!(PixmapMut::new(&mut data, 2, 1, 7).unwrap_err(),
             PixmapError::StrideTooSmall { minimum: 8, actual: 7 });
         let mut target = PixmapMut::new(&mut data, 2, 1, 11).unwrap();
-        target.blend_solid(0, 0, RGBA::red(), 255);
+        target.blend_solid_span(0, 0, 2, RGBA::red(), 255);
+        assert_eq!(target.pixel(1, 0), Some(RGBA::red()));
         assert_eq!(&target.data[8..], &[0, 0, 0]);
     }
 
     #[test] fn source_over_combines_coverage_alpha_and_premultiplied_destination() {
         let mut data = [0, 0, 255, 255];
         let mut target = PixmapMut::new(&mut data, 1, 1, 4).unwrap();
-        target.blend_solid(0, 0, RGBA::new(255, 0, 0, 128), 255);
+        target.blend_solid_span(0, 0, 1, RGBA::new(255, 0, 0, 128), 255);
         assert_eq!(target.pixel(0, 0), Some(RGBA::new(128, 0, 127, 255)));
         let before = target.pixel(0, 0);
-        target.blend_solid(0, 0, RGBA::new(1, 2, 3, 0), 255);
+        target.blend_solid_span(0, 0, 1, RGBA::new(1, 2, 3, 0), 255);
         assert_eq!(target.pixel(0, 0), before);
     }
 
@@ -222,10 +225,9 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
     }
 
     #[test] fn edge_capacity_failure_reports_required_lower_bound() {
-        let mut builder = PathBuilder::new();
+        let (mut builder, mut pixels) = (PathBuilder::new(), [0; 16]);
         builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).unwrap()
             .line_to((2.0, 0.0)).unwrap();
-        let mut pixels = [0; 16];
         let mut target = PixmapMut::new(&mut pixels, 2, 2, 8).unwrap();
         let (mut edges, mut intersections, mut row_coverage) = (
             [Edge::default(); 1], [Intersection::default(); 2], [0.0; 2]);

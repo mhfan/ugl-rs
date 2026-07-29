@@ -23,30 +23,38 @@ pub struct RasterWorkspace<'a> {
 }
 
 pub trait CoverageSink {    type Error;
-    fn pixel(&mut self, x: usize, y: usize, coverage: u8) -> Result<(), Self::Error>;
-}
+    /// Receives a non-empty horizontal run with uniform non-zero coverage.
+    ///
+    /// Producers guarantee that `x + len` is representable and lies inside the
+    /// target row. Consumers may therefore stream the run without clipping.
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error>;
 
-impl<E, F> CoverageSink for F where F: FnMut(usize, usize, u8) -> Result<(), E> {
-    type Error = E;
-
-    fn pixel(&mut self, x: usize, y: usize, coverage: u8) -> Result<(), Self::Error> {
-        self(x, y, coverage)
+    fn pixel(&mut self, x: u32, y: u32, coverage: u8) -> Result<(), Self::Error> {
+        self.span(x, y, 1, coverage)
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)] pub enum RasterError<E> {
-    InvalidSampleCount, Sink(E),
-    WorkspaceTooSmall { intersections: usize, row_coverage: usize },
+impl<E, F> CoverageSink for F where F: FnMut(u32, u32, u8) -> Result<(), E> {
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        for x in x..x + len { self(x, y, coverage)?; }  Ok(())
+    }   type Error = E;
 }
 
-pub fn rasterize_edges<S>(edges: &[Edge], width: usize, height: usize, fill_rule: FillRule,
+#[derive(Clone, Copy, Debug, PartialEq)] pub enum RasterError<E> {
+    WorkspaceTooSmall { intersections: usize, row_coverage: usize },
+    InvalidSampleCount, Sink(E),
+}
+
+pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32, fill_rule: FillRule,
     options: RasterOptions, workspace: &mut RasterWorkspace<'_>, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {
     if options.vertical_samples == 0 { return Err(RasterError::InvalidSampleCount); }
+    let (width, height) = (width as usize, height as usize);
     if workspace.intersections.len() < edges.len() || workspace.row_coverage.len() < width {
         return Err(RasterError::WorkspaceTooSmall {
-            intersections: edges.len(),
-            row_coverage: width,
+            intersections: edges.len(), row_coverage: width,
         });
     }
 
@@ -66,14 +74,23 @@ pub fn rasterize_edges<S>(edges: &[Edge], width: usize, height: usize, fill_rule
             accumulate_spans(intersections, width, fill_rule, sample_scale, row);
         }
 
-        for (x, coverage) in row.iter().copied().enumerate() {
-            let coverage = (coverage.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-            if coverage != 0 {
-                sink.pixel(x, y, coverage).map_err(RasterError::Sink)?;
-            }
-        }
+        emit_coverage_runs(row, y as u32, sink)?;
     }   Ok(())
 }
+
+fn emit_coverage_runs<S>(row: &[f32], y: u32, sink: &mut S) ->
+    Result<(), RasterError<S::Error>> where S: CoverageSink {
+    let mut x = 0;
+    while x < row.len() {
+        let coverage = quantize_coverage(row[x]);
+        if  coverage == 0 { x += 1; continue; }
+        let start = x;      x += 1;
+        while x < row.len() && quantize_coverage(row[x]) == coverage { x += 1; }
+        sink.span(start as u32, y, (x - start) as u32, coverage).map_err(RasterError::Sink)?;
+    }   Ok(())
+}
+
+fn quantize_coverage(coverage: f32) -> u8 { (coverage.clamp(0.0, 1.0) * 255.0 + 0.5) as u8 }
 
 fn collect_intersections(edges: &[Edge], y: f32, output: &mut [Intersection]) -> usize {
     let mut count = 0;
@@ -122,12 +139,10 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
     use alloc::vec;
     use alloc::vec::Vec;
     use core::convert::Infallible;
-    use super::{rasterize_edges, FillRule, Intersection, RasterError, RasterOptions,
-        RasterWorkspace,
-    };
-    use crate::edge::{build_fill_edges, Edge};
-    use crate::flatten::FlattenOptions;
-    use crate::geometry::{Affine, PathBuilder};
+    use super::{rasterize_edges, CoverageSink, FillRule, Intersection, RasterError,
+        RasterOptions, RasterWorkspace};
+    use crate::{edge::{build_fill_edges, Edge}, flatten::FlattenOptions,
+        geometry::{Affine, PathBuilder}};
 
     fn path_edges(builder: PathBuilder) -> Vec<Edge> {
         let mut edges = Vec::new();
@@ -140,18 +155,26 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
         let mut pixels = vec![0; width * height];
         let mut intersections = vec![Intersection::default(); edges.len()];
         let mut row_coverage = vec![0.0; width];
-        rasterize_edges(
-            edges, width, height, rule, RasterOptions::default(),
+        rasterize_edges(edges, width as u32, height as u32, rule, RasterOptions::default(),
             &mut RasterWorkspace {
                 intersections: &mut intersections,
                 row_coverage: &mut row_coverage,
             },
             &mut |x, y, coverage| {
-                pixels[y * width + x] = coverage;
+                pixels[y as usize * width + x as usize] = coverage;
                 Ok::<_, Infallible>(())
             },
         ).unwrap();
         pixels
+    }
+
+    #[derive(Default)] struct SpanRecorder(Vec<(u32, u32, u32, u8)>);
+
+    impl CoverageSink for SpanRecorder {    type Error = Infallible;
+        fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+            Result<(), Self::Error> {
+            self.0.push((x, y, len, coverage));     Ok(())
+        }
     }
 
     #[test] fn aligned_rectangle_has_exact_full_coverage() {
@@ -167,6 +190,23 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
         builder.move_to((0.5, 0.0))      .line_to((1.5, 0.0)).unwrap()
             .line_to((1.5, 1.0)).unwrap().line_to((0.5, 1.0)).unwrap();
         assert_eq!(render(&path_edges(builder), 2, 1, FillRule::NonZero), [128, 128]);
+    }
+
+    #[test] fn equal_non_zero_coverage_is_coalesced_into_spans() {
+        let mut builder = PathBuilder::new();
+        builder.move_to((1.0, 0.0)).line_to((4.0, 0.0)).unwrap()
+            .line_to((4.0, 1.0)).unwrap().line_to((1.0, 1.0)).unwrap();
+        let edges = path_edges(builder);
+        let (mut intersections, mut row) = (
+            vec![Intersection::default(); edges.len()], [0.0; 5]);
+        let mut spans = SpanRecorder::default();
+        rasterize_edges(&edges, 5, 1, FillRule::NonZero, RasterOptions::default(),
+            &mut RasterWorkspace {
+                intersections: &mut intersections,
+                row_coverage: &mut row,
+            }, &mut spans,
+        ).unwrap();
+        assert_eq!(spans.0, [(1, 0, 3, 255)]);
     }
 
     #[test] fn non_zero_and_even_odd_differ_for_nested_same_direction_subpaths() {
