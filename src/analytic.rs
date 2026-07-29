@@ -95,8 +95,8 @@ fn integrate_spans(intersections: &[AnalyticIntersection], height: f32,
     fill_rule: FillRule, row: &mut [f32]) {
     let (mut winding, mut left) = (0_i32, None);
     for right in intersections {
-        if let Some(left) = left {
-            if fill_rule.contains(winding) { integrate_span(left, right, height, row); }
+        if let Some(left) = left && fill_rule.contains(winding) {
+            integrate_span(left, right, height, row);
         }
         winding += right.winding as i32;
         left = Some(right);

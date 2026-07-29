@@ -117,10 +117,8 @@ fn accumulate_spans(intersections: &[Intersection], width: usize, fill_rule: Fil
     sample_weight: f32, row: &mut [f32]) {
     let (mut winding, mut previous_x) = (0_i32, None);
     for intersection in intersections {
-        if let Some(from) = previous_x {
-            if fill_rule.contains(winding) {
-                accumulate_span(from, intersection.x, width, sample_weight, row);
-            }
+        if let Some(from) = previous_x && fill_rule.contains(winding) {
+            accumulate_span(from, intersection.x, width, sample_weight, row);
         }
         winding += intersection.winding as i32;
         previous_x = Some(intersection.x);
