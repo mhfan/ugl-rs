@@ -14,6 +14,20 @@ use core::ops::{Add, Mul};
 /// Coordinate type used by the reference renderer.
 pub type Scalar = f32;
 
+/// Q24.8 device coordinate used by the fixed-point reference backend.
+///
+/// Raster products and areas must use widened intermediates rather than this
+/// 32-bit storage type.
+#[cfg(feature = "fixed")] pub type FixedScalar = fixed::types::I24F8;
+
+pub trait ScalarConstants { const ZERO: Self; const ONE: Self; }
+impl ScalarConstants for f32 { const ZERO: Self = 0.0; const ONE: Self = 1.0; }
+
+#[cfg(feature = "fixed")] impl ScalarConstants for FixedScalar {
+    const ZERO: Self = Self::ZERO;
+    const  ONE: Self = Self::ONE;
+}
+
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Point<T = Scalar> { pub x: T, pub y: T, }
@@ -46,17 +60,17 @@ impl<T> Affine<T> {
     }
 }
 
-impl<T> Affine<T> where T: Copy + From<i8> {
+impl<T> Affine<T> where T: Copy + ScalarConstants {
     pub fn identity() -> Self {
-        Self::new(1.into(), 0.into(), 0.into(), 1.into(), 0.into(), 0.into())
+        Self::new(T::ONE, T::ZERO, T::ZERO, T::ONE, T::ZERO, T::ZERO)
     }
 
     pub fn translate(x: T, y: T) -> Self {
-        Self::new(1.into(), 0.into(), 0.into(), 1.into(), x, y)
+        Self::new(T::ONE, T::ZERO, T::ZERO, T::ONE, x, y)
     }
 }
 
-impl<T> Default for Affine<T> where T: Copy + From<i8> {
+impl<T> Default for Affine<T> where T: Copy + ScalarConstants {
     fn default() -> Self { Self::identity() }
 }
 
@@ -224,5 +238,18 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0)).line_to((f32::INFINITY, 1.0)).unwrap();
         assert_eq!(builder.build_checked().unwrap_err(), PathError::NonFiniteCoordinate);
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_geometry_reuses_generic_point_path_and_affine_types() {
+        let (one, half) = (FixedScalar::from_num(1), FixedScalar::from_num(0.5));
+        let transform = Affine::<FixedScalar>::translate(half, one);
+        assert_eq!(transform.transform_point(Point::new(one, half)),
+            Point::new(FixedScalar::from_num(1.5), FixedScalar::from_num(1.5)));
+
+        let mut builder = PathBuilder::<FixedScalar>::new();
+        builder.move_to((FixedScalar::ZERO, FixedScalar::ZERO))
+            .line_to((one, half)).unwrap();
+        assert_eq!(builder.build().len(), 2);
     }
 }

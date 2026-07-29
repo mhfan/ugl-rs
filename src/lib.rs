@@ -14,6 +14,7 @@ pub mod geometry;   // shape, curve, free path
 pub mod raster;
 pub mod flatten;
 pub mod analytic;
+#[cfg(feature = "fixed")] pub mod raster_fixed;
 pub mod canvas;
 pub mod edge;
 

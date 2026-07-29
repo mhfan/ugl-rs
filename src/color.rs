@@ -114,7 +114,7 @@ impl From<RGBA<u16>> for RGBA<u8> {
 
 impl From<RGBA<u8>>  for RGBA<u16> {
     fn from(clr: RGBA<u8>) -> Self {
-        let expand = |channel| u16::from(channel) * 0x0101;
+        let expand = |channel| channel as u16 * 0x0101;
         Self { r: expand(clr.r), g: expand(clr.g), b: expand(clr.b), a: expand(clr.a) }
     }
 }
@@ -200,14 +200,14 @@ impl RGBA<f32> {    #![allow(unused)]
     }
 
     #[test] fn integer_conversions_preserve_channel_extrema() {
-        let white8 = RGBA::<u8>::white();
+        let white8  = RGBA::<u8> ::white();
         let white16 = RGBA::<u16>::white();
         assert_eq!(RGBA::<u16>::from(white8), white16);
         assert_eq!(RGBA::<u8>::from(white16), white8);
     }
 
     #[test] fn premultiplication_preserves_opaque_channels() {
-        assert_eq!(RGBA::<u8>::white().mula(), RGBA::<u8>::white());
+        assert_eq!(RGBA::<u8> ::white().mula(), RGBA::<u8> ::white());
         assert_eq!(RGBA::<u16>::white().mula(), RGBA::<u16>::white());
         assert_eq!(RGBA::<u8>::new(255, 127, 1, 0).mula(), RGBA::zeroed());
         assert_eq!(RGBA::<u16>::new(65535, 32767, 1, 0).mula(), RGBA::zeroed());

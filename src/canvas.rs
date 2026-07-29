@@ -8,6 +8,9 @@ use crate::{color::RGBA, edge::{build_fill_edges, Edge, EdgeSink},
         RasterWorkspace, rasterize_edges,
     }
 };
+#[cfg(feature = "fixed")] use crate::raster_fixed::{
+    FixedLine, FixedRasterError, FixedRasterWorkspace, FixedRenderError, rasterize_lines,
+};
 
 const BYTES_PER_PIXEL: u32 = 4;
 
@@ -60,7 +63,7 @@ impl<'a> PixmapMut<'a> {
 
     fn blend_solid_span(&mut self, x: u32, y: u32, len: u32, color: RGBA<u8>, coverage: u8) {
         let mul_div_255 = |a: u8, b: u8| {
-            (u16::from(a) * u16::from(b) + 127).div_euclid(255) as u8
+            (a as u16 * b as u16 + 127).div_euclid(255) as u8
         };
         let source_alpha = mul_div_255(color.a, coverage);
         let inverse_alpha = u8::MAX - source_alpha;
@@ -109,6 +112,7 @@ impl Default for RenderOptions { fn default() -> Self {
     DimensionsOverflow, InvalidSampleCount, InvalidPath(PathError),
     EdgeCapacity { needed_at_least: usize },
     RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
+    #[cfg(feature = "fixed")] FixedRaster(FixedRasterError),
 }
 
 /// Renders a solid straight-alpha color through the reference rasterizer.
@@ -140,6 +144,16 @@ pub fn render_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
              row_coverage: workspace.row_coverage,
         }, &mut compositor,
     ).map_err(map_raster_error)
+}
+
+/// Renders prepared Q24.8 lines through the allocation-free fixed backend.
+#[cfg(feature = "fixed")]
+pub fn render_solid_fixed(lines: &[FixedLine], color: RGBA<u8>, fill_rule: FillRule,
+    target: &mut PixmapMut<'_>, workspace: &mut FixedRasterWorkspace<'_>) ->
+    Result<(), RenderError> {
+    let mut compositor = SolidCompositor { target, color };
+    rasterize_lines(lines, compositor.target.width, compositor.target.height,
+        fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
 }
 
 fn build_edges(path: &Path, transform: Affine, options: FlattenOptions, edges: &mut [Edge]) ->
@@ -189,6 +203,14 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
         RasterError::WorkspaceTooSmall { intersections, row_coverage } =>
             RenderError::RasterWorkspaceTooSmall { intersections, row_coverage },
         RasterError::Sink(error) => match error {},
+    }
+}
+
+#[cfg(feature = "fixed")]
+fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
+    match error {
+        FixedRenderError::Raster(error) => RenderError::FixedRaster(error),
+        FixedRenderError::Sink(error) => match error {},
     }
 }
 
@@ -266,5 +288,33 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
             },
         ).unwrap();
         assert_eq!(target.pixel(0, 0), Some(RGBA::new(128, 128, 128, 128)));
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_solid_rendering_uses_the_shared_compositor() {
+        use crate::{geometry::{FixedScalar, Point}, raster_fixed::{
+            FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines,
+        }};
+
+        let fixed = FixedScalar::from_num;
+        let edges = [
+            Edge { upper: Point::new(fixed(0.5), fixed(0.0)),
+                   lower: Point::new(fixed(0.5), fixed(1.0)), winding:  1 },
+            Edge { upper: Point::new(fixed(1.5), fixed(0.0)),
+                   lower: Point::new(fixed(1.5), fixed(1.0)), winding: -1 },
+        ];
+        let (mut lines, mut segments, mut trapezoids, mut row_area) = (
+            [FixedLine::default(); 2], [FixedSegment::default(); 2],
+            [FixedTrapezoid::default(); 1], [0; 2],
+        );
+        prepare_lines(&edges, &mut lines).unwrap();
+        let mut pixels = [0; 8];
+        let mut target = PixmapMut::new(&mut pixels, 2, 1, 8).unwrap();
+        render_solid_fixed(&lines, RGBA::white(), FillRule::NonZero, &mut target,
+            &mut FixedRasterWorkspace { segments: &mut segments,
+                trapezoids: &mut trapezoids, row_area: &mut row_area,
+            }).unwrap();
+        assert_eq!(target.pixel(0, 0), Some(RGBA::new(128, 128, 128, 128)));
+        assert_eq!(target.pixel(1, 0), Some(RGBA::new(128, 128, 128, 128)));
     }
 }

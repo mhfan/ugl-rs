@@ -118,6 +118,17 @@ and SIMD layouts do not enter the common `Edge` representation.
   error rather than panic or silently emit geometry.
 - The fixed-point backend must document its Q format, intermediate widths,
   rounding, saturation, and accepted device-coordinate range before release.
+- The initial device-coordinate reference format is signed Q24.8
+  (`fixed::types::I24F8`): 8 fractional bits align with 8-bit coverage and its
+  integer range accommodates large device surfaces. It is a storage and API
+  reference, not permission to evaluate transforms, slopes, cross-products, or
+  accumulated area in 32 bits. Those operations require at least 64-bit widened
+  intermediates and explicit narrowing behavior.
+- Fixed raster intersections remain exact rationals while sorting and forming
+  topology. At the analytic-area boundary they are rounded to the nearest
+  Q24.8 subpixel, with exact half-way cases rounded away from zero. Trapezoid
+  area uses a doubled 64-bit integer representation; pixel-clipped area is
+  saturated and rounded to the nearest 8-bit coverage value.
 
 ## Paths and filling
 

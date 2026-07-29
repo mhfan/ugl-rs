@@ -1,5 +1,6 @@
 //! Directed fill edges produced from flattened paths.
 
+use core::cmp::Ordering;
 use crate::{geometry::{Affine, Path, Point, Scalar},
     flatten::{flatten_path, FlattenError, FlattenOptions, LineSink}};
 
@@ -11,6 +12,16 @@ use crate::{geometry::{Affine, Path, Point, Scalar},
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq)] pub struct Edge<T = Scalar> {
     pub upper: Point<T>, pub lower: Point<T>, pub winding: i8,
+}
+
+impl<T> Edge<T> where T: Copy + PartialOrd {
+    pub(crate) fn from_line(from: Point<T>, to: Point<T>) -> Option<Self> {
+        match from.y.partial_cmp(&to.y)? {
+            Ordering::Less => Some(Self { upper: from, lower: to, winding: 1 }),
+            Ordering::Greater => Some(Self { upper: to, lower: from, winding: -1 }),
+            Ordering::Equal => None,
+        }
+    }
 }
 
 impl Edge {
@@ -73,12 +84,7 @@ impl<S> LineSink for FillEdgeBuilder<'_, S> where S: EdgeSink {
 
 impl<S> FillEdgeBuilder<'_, S> where S: EdgeSink {
     fn emit(&mut self, from: Point, to: Point) -> Result<(), S::Error> {
-        if from.y == to.y { return Ok(()); }
-        let edge = if from.y < to.y {
-            Edge { upper: from, lower: to, winding: 1 }
-        } else {
-            Edge { upper: to, lower: from, winding: -1 }
-        };  self.sink.edge(edge)
+        if let Some(edge) = Edge::from_line(from, to) { self.sink.edge(edge) } else { Ok(()) }
     }
 }
 
@@ -131,5 +137,17 @@ impl<S> FillEdgeBuilder<'_, S> where S: EdgeSink {
         let result = build_fill_edges(&builder.build(), Affine::identity(),
             FlattenOptions::default(), &mut |_| Err("full"));
         assert_eq!(result, Err(FlattenError::Sink("full")));
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_lines_share_edge_normalization_and_winding() {
+        use crate::geometry::FixedScalar;
+
+        let (zero, one) = (FixedScalar::ZERO, FixedScalar::ONE);
+        assert_eq!(Edge::from_line(Point::new(zero, one), Point::new(one, zero)),
+            Some(Edge { upper: Point::new(one, zero),
+                        lower: Point::new(zero, one), winding: -1,
+            }));
+        assert_eq!(Edge::from_line(Point::new(zero, one), Point::new(one, one)), None);
     }
 }
