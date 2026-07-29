@@ -580,32 +580,29 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
     }
 
     #[test] fn diagonal_intersection_is_exact_in_raw_subpixels() {
-        let edge = Edge::from_line(Point::new(fixed(0.0), fixed(0.0)),
-            Point::new(fixed(1.0), fixed(1.0))).unwrap();
+        let edge = Edge::from_line((fixed(0.0), fixed(0.0)).into(),
+                                   (fixed(1.0), fixed(1.0)).into()).unwrap();
         let intersection = FixedLine::new(edge).unwrap().intersection(fixed(0.5));
         assert_eq!(intersection.floor_raw(), 128);
     }
 
     #[test] fn fixed_rasterizer_renders_aligned_and_fractional_rectangles() {
         let rectangle = |left, right| [
-            Edge {
-                upper: Point::new(fixed(left), fixed(0.0)),
-                lower: Point::new(fixed(left), fixed(1.0)), winding: 1,
+            Edge { upper: (fixed(left), fixed(0.0)).into(),
+                   lower: (fixed(left), fixed(1.0)).into(), winding: 1,
             },
-            Edge {
-                upper: Point::new(fixed(right), fixed(0.0)),
-                lower: Point::new(fixed(right), fixed(1.0)), winding: -1,
+            Edge { upper: (fixed(right), fixed(0.0)).into(),
+                   lower: (fixed(right), fixed(1.0)).into(), winding: -1,
             },
         ];
-        assert_eq!(render(&rectangle(1.0, 3.0), 4, 1, FillRule::NonZero),
-            [0, 255, 255, 0]);
+        assert_eq!(render(&rectangle(1.0, 3.0), 4, 1, FillRule::NonZero), [0, 255, 255, 0]);
         assert_eq!(render(&rectangle(0.5, 1.5), 2, 1, FillRule::NonZero), [128, 128]);
     }
 
     #[test] fn fixed_rasterizer_supports_both_fill_rules_end_to_end() {
         let edge = |x, winding| Edge {
-            upper: Point::new(fixed(x), fixed(0.0)),
-            lower: Point::new(fixed(x), fixed(1.0)), winding,
+            upper: (fixed(x), fixed(0.0)).into(),
+            lower: (fixed(x), fixed(1.0)).into(), winding,
         };
         let edges = [edge(0.0, 1), edge(4.0, -1), edge(1.0, 1), edge(3.0, -1)];
         assert_eq!(render(&edges, 4, 1, FillRule::NonZero), [255; 4]);
@@ -620,12 +617,12 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
         };
         for case in 0..512 {
             let points = [
-                Point::new(FixedScalar::from_bits(random_raw()),
-                           FixedScalar::from_bits(random_raw())),
-                Point::new(FixedScalar::from_bits(random_raw()),
-                           FixedScalar::from_bits(random_raw())),
-                Point::new(FixedScalar::from_bits(random_raw()),
-                           FixedScalar::from_bits(random_raw())),
+                (FixedScalar::from_bits(random_raw()),
+                 FixedScalar::from_bits(random_raw())).into(),
+                (FixedScalar::from_bits(random_raw()),
+                 FixedScalar::from_bits(random_raw())).into(),
+                (FixedScalar::from_bits(random_raw()),
+                 FixedScalar::from_bits(random_raw())).into(),
             ];
             let mut fixed_edges = Vec::new();
             for index in 0..3 {
@@ -634,8 +631,8 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
                 }
             }
             let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
-                upper: Point::new(edge.upper.x.to_num(), edge.upper.y.to_num()),
-                lower: Point::new(edge.lower.x.to_num(), edge.lower.y.to_num()),
+                upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
+                lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
                 winding: edge.winding,
             }).collect();
             let (fixed_pixels, float_pixels) = (
@@ -672,23 +669,23 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
 
     #[test] fn coordinate_limit_is_explicit() {
         let outside = FixedScalar::from_bits(DEVICE_RAW_LIMIT + 1);
-        let edge = Edge::from_line(Point::new(FixedScalar::ZERO, FixedScalar::ZERO),
-            Point::new(outside, FixedScalar::ONE)).unwrap();
+        let edge = Edge::from_line((FixedScalar::ZERO, FixedScalar::ZERO).into(),
+            (outside, FixedScalar::ONE).into()).unwrap();
         assert_eq!(FixedLine::new(edge), Err(FixedRasterError::CoordinateOutOfRange));
     }
 
     #[test] fn manually_constructed_invalid_edges_are_rejected() {
         let edge = Edge {
-            upper: Point::new(FixedScalar::ZERO, FixedScalar::ONE),
-            lower: Point::new(FixedScalar::ONE, FixedScalar::ZERO), winding: 1,
+            upper: (FixedScalar::ZERO, FixedScalar::ONE).into(),
+            lower: (FixedScalar::ONE, FixedScalar::ZERO).into(), winding: 1,
         };
         assert_eq!(FixedLine::new(edge), Err(FixedRasterError::InvalidEdge));
     }
 
     #[test] fn line_preparation_is_bounded_and_transactional() {
         let edge = |x, winding| Edge {
-            upper: Point::new(fixed(x), fixed(0.0)),
-            lower: Point::new(fixed(x), fixed(1.0)), winding,
+            upper: (fixed(x), fixed(0.0)).into(),
+            lower: (fixed(x), fixed(1.0)).into(), winding,
         };
         let sentinel = FixedLine::new(edge(7.0, 1)).unwrap();
         let mut output = [sentinel; 2];
@@ -708,8 +705,8 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
 
     #[test] fn slab_boundaries_advance_through_edge_vertices() {
         let edge = |x, top, bottom, winding| Edge {
-            upper: Point::new(fixed(x), fixed(top)),
-            lower: Point::new(fixed(x), fixed(bottom)), winding,
+            upper: (fixed(x), fixed(top)).into(),
+            lower: (fixed(x), fixed(bottom)).into(), winding,
         };
         let edges = [
             edge(0.0, 0.0, 2.0, 1), edge(2.0, 0.0, 2.0, -1),
@@ -735,13 +732,12 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
 
     #[test] fn slab_clipping_preserves_exact_boundary_intersections() {
         let line = FixedLine::new(Edge::from_line(
-            Point::new(fixed(-1.0), fixed(-1.0)),
-            Point::new(fixed(2.0),  fixed(2.0))).unwrap()).unwrap();
+            (fixed(-1.0), fixed(-1.0)).into(),
+            (fixed(2.0),  fixed(2.0) ).into()).unwrap()).unwrap();
         let mut segments = [FixedSegment::default(); 1];
 
         assert_eq!(collect_segments(&[line], fixed(0.0), fixed(1.0), &mut segments), Ok(1));
-        assert_eq!((segments[0].top_y(),
-                    segments[0].bottom_y()), (fixed(0.0), fixed(1.0)));
+        assert_eq!((segments[0].top_y(), segments[0].bottom_y()), (fixed(0.0), fixed(1.0)));
         assert_eq!((segments[0].top_x.floor_raw(),
                     segments[0].bottom_x.floor_raw()), (0, 256));
         assert_eq!( segments[0].height_raw(), 256);
@@ -754,8 +750,8 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
             bottom_x: FixedIntersection::default(),
         };
         let line = FixedLine::new(Edge::from_line(
-            Point::new(fixed(0.0), fixed(0.0)),
-            Point::new(fixed(1.0), fixed(1.0))).unwrap()).unwrap();
+            (fixed(0.0), fixed(0.0)).into(),
+            (fixed(1.0), fixed(1.0)).into()).unwrap()).unwrap();
         let mut output = [sentinel];
 
         assert_eq!(collect_segments(&[line], fixed(1.0), fixed(1.0), &mut output),
@@ -929,8 +925,8 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
     #[test] fn scanline_collection_is_half_open_sorted_and_bounded() {
         let line = |from, to| FixedLine::new(Edge::from_line(from, to).unwrap()).unwrap();
         let lines = [
-            line(Point::new(fixed(2.0), fixed(0.0)), Point::new(fixed(1.0), fixed(1.0))),
-            line(Point::new(fixed(0.0), fixed(0.0)), Point::new(fixed(0.0), fixed(2.0))),
+            line((fixed(2.0), fixed(0.0)).into(), (fixed(1.0), fixed(1.0)).into()),
+            line((fixed(0.0), fixed(0.0)).into(), (fixed(0.0), fixed(2.0)).into()),
         ];
         let mut intersections = [FixedIntersection::default(); 2];
 

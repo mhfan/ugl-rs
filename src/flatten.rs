@@ -219,7 +219,7 @@ fn split_cubic(curve: Cubic) -> (Cubic, Cubic) {
 }
 
 fn midpoint(a: Point, b: Point) -> Point {
-    Point::new(a.x * 0.5 + b.x * 0.5, a.y * 0.5 + b.y * 0.5)
+    (a.x * 0.5 + b.x * 0.5, a.y * 0.5 + b.y * 0.5).into()
 }
 
 #[cfg(test)] mod tests { use super::*;
@@ -244,8 +244,8 @@ fn midpoint(a: Point, b: Point) -> Point {
             .cubic_to((3.0, 3.0), (4.0, 4.0), (5.0, 5.0));
         let lines = collect(&builder.build(), Affine::identity(),
             FlattenOptions::default()).unwrap();
-        assert_eq!(lines, [(Point::new(0.0, 0.0), Point::new(2.0, 2.0)),
-                           (Point::new(2.0, 2.0), Point::new(5.0, 5.0))]);
+        assert_eq!(lines, [((0.0, 0.0).into(), (2.0, 2.0).into()),
+                           ((2.0, 2.0).into(), (5.0, 5.0).into())]);
     }
 
     #[test] fn curved_segments_preserve_order_and_exact_endpoints() {
@@ -255,8 +255,8 @@ fn midpoint(a: Point, b: Point) -> Point {
         let lines = collect(&builder.build(), Affine::identity(),
             FlattenOptions { tolerance: 0.1, max_depth: 16 }).unwrap();
         assert!(lines.len() > 1);
-        assert_eq!(lines.first().unwrap().0, Point::new(0.0, 0.0));
-        assert_eq!(lines.last().unwrap().1, Point::new(10.0, 0.0));
+        assert_eq!(lines.first().unwrap().0, (0.0, 0.0).into());
+        assert_eq!(lines.last().unwrap().1, (10.0, 0.0).into());
         assert!(lines.windows(2).all(|pair| pair[0].1 == pair[1].0));
     }
 
@@ -281,10 +281,10 @@ fn midpoint(a: Point, b: Point) -> Point {
 
     #[test] fn finite_extreme_coordinates_do_not_overflow_midpoint_or_flatness() {
         let large = 3.0e38;
-        let center = midpoint(Point::new(large, large), Point::new(large, large));
+        let center =   midpoint((large, large).into(), (large, large).into());
         assert!(center.x.is_finite() && center.y.is_finite());
-        assert!(control_is_flat(Point::new(large, large), Point::new(large, large),
-            Point::new(large, large), 1.0));
+        assert!(control_is_flat((large, large).into(), (large, large).into(),
+                                (large, large).into(), 1.0));
     }
 
     #[test] fn invalid_options_depth_and_sink_fail_explicitly() {

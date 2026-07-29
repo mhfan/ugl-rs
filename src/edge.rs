@@ -96,7 +96,7 @@ impl<S> FillEdgeBuilder<'_, S> where S: EdgeSink {
 
 #[cfg(test)] mod tests { use super::*;
     use crate::{flatten::{FlattenError, FlattenOptions},
-        geometry::{Affine, PathBuilder, Point, Path}};
+        geometry::{Affine, PathBuilder, Path}};
     use core::convert::Infallible;
     use alloc::vec::Vec;
 
@@ -113,10 +113,10 @@ impl<S> FillEdgeBuilder<'_, S> where S: EdgeSink {
                .line_to((5.0, 7.0)).line_to((1.0, 7.0));
         assert_eq!(collect(&builder.build()).unwrap(), [
             Edge {
-                upper: Point::new(5.0, 2.0), lower: Point::new(5.0, 7.0), winding: 1,
+                upper: (5.0, 2.0).into(), lower: (5.0, 7.0).into(), winding: 1,
             },
             Edge {
-                upper: Point::new(1.0, 2.0), lower: Point::new(1.0, 7.0), winding: -1,
+                upper: (1.0, 2.0).into(), lower: (1.0, 7.0).into(), winding: -1,
             },
         ]);
     }
@@ -149,10 +149,10 @@ impl<S> FillEdgeBuilder<'_, S> where S: EdgeSink {
         use crate::geometry::FixedScalar;
 
         let (zero, one) = (FixedScalar::ZERO, FixedScalar::ONE);
-        assert_eq!(Edge::from_line(Point::new(zero, one), Point::new(one, zero)),
-            Some(Edge { upper: Point::new(one, zero),
-                        lower: Point::new(zero, one), winding: -1,
+        assert_eq!(Edge::from_line((zero, one).into(), (one, zero).into()),
+            Some(Edge { upper: (one, zero).into(),
+                        lower: (zero, one).into(), winding: -1,
             }));
-        assert_eq!(Edge::from_line(Point::new(zero, one), Point::new(one, one)), None);
+        assert_eq!(Edge::from_line((zero, one).into(), (one, one).into()), None);
     }
 }

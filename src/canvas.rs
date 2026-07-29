@@ -299,16 +299,16 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
 
     #[cfg(feature = "fixed")]
     #[test] fn fixed_solid_rendering_uses_the_shared_compositor() {
-        use crate::{geometry::{FixedScalar, Point}, raster_fixed::{
+        use crate::{geometry::FixedScalar, raster_fixed::{
             FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines,
         }};
 
         let fixed = FixedScalar::from_num;
         let edges = [
-            Edge { upper: Point::new(fixed(0.5), fixed(0.0)),
-                   lower: Point::new(fixed(0.5), fixed(1.0)), winding:  1 },
-            Edge { upper: Point::new(fixed(1.5), fixed(0.0)),
-                   lower: Point::new(fixed(1.5), fixed(1.0)), winding: -1 },
+            Edge { upper: (fixed(0.5), fixed(0.0)).into(),
+                   lower: (fixed(0.5), fixed(1.0)).into(), winding:  1 },
+            Edge { upper: (fixed(1.5), fixed(0.0)).into(),
+                   lower: (fixed(1.5), fixed(1.0)).into(), winding: -1 },
         ];
         let (mut lines, mut segments, mut trapezoids, mut row_area) = (
             [FixedLine::default(); 2], [FixedSegment::default(); 2],

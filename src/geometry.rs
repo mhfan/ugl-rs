@@ -53,10 +53,10 @@ impl<T> Affine<T> {
 
     pub fn transform_point(&self, point: Point<T>) -> Point<T>
         where T: Copy + Add<Output = T> + Mul<Output = T> {
-        Point::new(
+        (
             self.a * point.x + self.c * point.y + self.e,
             self.b * point.x + self.d * point.y + self.f,
-        )
+        ).into()
     }
 }
 
@@ -206,37 +206,37 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
 #[cfg(test)] mod tests { use super::*;
     #[test] fn affine_uses_documented_column_vector_convention() {
         let transform = Affine::new(2.0, 0.5, -1.0, 3.0, 4.0, -2.0);
-        assert_eq!(transform.transform_point(Point::new(3.0, 2.0)), Point::new(8.0, 5.5));
+        assert_eq!(transform.transform_point((3.0, 2.0).into()), (8.0, 5.5).into());
     }
 
     #[test] fn path_builder_starts_missing_subpaths_and_closes_idempotently() {
         let mut builder = PathBuilder::<f32>::new();
         builder.close().line_to((1.0, 2.0));
         assert_eq!(builder.build().segments(),
-            &[PathSegment::MoveTo(Point::new(1.0, 2.0))]);
+            &[PathSegment::MoveTo((1.0, 2.0).into())]);
 
         let mut builder = PathBuilder::<f32>::new();
         builder.move_to((0.0, 0.0)).line_to((1.0, 0.0));
         builder.close().close();
         assert_eq!(builder.build().segments(), &[
-            PathSegment::MoveTo(Point::new(0.0, 0.0)),
-            PathSegment::LineTo(Point::new(1.0, 0.0)),
+            PathSegment::MoveTo((0.0, 0.0).into()),
+            PathSegment::LineTo((1.0, 0.0).into()),
             PathSegment::Close,
         ]);
 
         let mut quad = PathBuilder::<f32>::new();
         quad.quad_to((1.0, 1.0), (2.0, 2.0));
-        assert_eq!( quad.build().segments(), &[PathSegment::MoveTo(Point::new(2.0, 2.0))]);
+        assert_eq!(quad.build().segments(), &[PathSegment::MoveTo((2.0, 2.0).into())]);
 
         let mut cubic = PathBuilder::<f32>::new();
         cubic.cubic_to((1.0, 1.0), (2.0, 2.0), (3.0, 3.0));
-        assert_eq!(cubic.build().segments(), &[PathSegment::MoveTo(Point::new(3.0, 3.0))]);
+        assert_eq!(cubic.build().segments(), &[PathSegment::MoveTo((3.0, 3.0).into())]);
     }
 
     #[test] fn path_can_borrow_static_or_fixed_capacity_segments() {
         let segments = [
-            PathSegment::MoveTo(Point::new(0_i32, 0_i32)),
-            PathSegment::LineTo(Point::new(256, 0)),
+            PathSegment::MoveTo((0_i32, 0_i32).into()),
+            PathSegment::LineTo((256, 0).into()),
             PathSegment::Close,
         ];
         assert_eq!(segments.len(), 3);
@@ -253,8 +253,8 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
     #[test] fn fixed_geometry_reuses_generic_point_path_and_affine_types() {
         let (one, half) = (FixedScalar::from_num(1), FixedScalar::from_num(0.5));
         let transform = Affine::<FixedScalar>::translate(half, one);
-        assert_eq!(transform.transform_point(Point::new(one, half)),
-            Point::new(FixedScalar::from_num(1.5), FixedScalar::from_num(1.5)));
+        assert_eq!(transform.transform_point((one, half).into()),
+            (FixedScalar::from_num(1.5), FixedScalar::from_num(1.5)).into());
 
         let mut builder = PathBuilder::<FixedScalar>::new();
         builder.move_to((FixedScalar::ZERO, FixedScalar::ZERO))
