@@ -237,3 +237,71 @@ The first required records are:
 3. Coverage algorithm: active edges, trapezoids, or sparse strips.
 4. Clip semantics and winding preservation.
 5. Coverage run representation and paint/compositor boundary.
+
+## Decision record 1: reference curve flattening
+
+### Problem and contract
+
+Quadratic and cubic Bézier segments must become directed device-space lines.
+The maximum accepted geometric deviation is controlled by a positive finite
+tolerance measured in device pixels. Path transforms therefore happen before
+flatness evaluation. The stage must not require allocation and must have a
+bounded failure mode for pathological curves.
+
+### Designs studied
+
+- micro{gl}'s configurable curve division and fixed-number approach.
+- Blend2D recursive subdivision, approximation options, and research on
+  simplifying/offsetting Bézier curves within error limits.
+- Analytic quadratic flattening and curve work by Raph Levien/kurbo.
+- Uniform parameter stepping and forward differencing.
+- Segment-count estimation followed by direct evaluation.
+
+### Decision
+
+The first `f32` reference uses iterative de Casteljau subdivision with a fixed
+explicit stack:
+
+- control points are transformed to device space first;
+- flatness compares squared control-point distance from the endpoint chord with
+  squared tolerance, avoiding a square root;
+- degenerate chords compare controls with the endpoint directly;
+- subdivision occurs at `t = 0.5`;
+- right halves are pushed before left halves to preserve path order;
+- recursion depth is caller-configurable up to a compile-time bound;
+- directed lines are emitted through a fallible sink, so a caller can use a
+  `Vec`, fixed-capacity buffer, streaming edge builder, or direct raster stage.
+
+### Why this is the reference
+
+It is simple, deterministic, auditable, invariant under affine transformation
+when evaluated after that transformation, and has an obvious fixed-point
+migration path based on midpoint averages and widened cross products. The
+explicit stack bounds memory and avoids recursion on small embedded stacks.
+
+### Deferred alternatives
+
+- Analytic quadratic flattening may reduce segment count and branches.
+- Wang-style or other segment-count estimates may vectorize better.
+- Blend2D-style specialized flatteners may reduce dispatch and improve curve
+  throughput.
+- Stroke construction may offset curves directly rather than flattening first.
+
+These remain production candidates, but replacing the reference requires
+equivalent-output tests and measurements for line count, time, workspace, and
+fixed-point intermediate range.
+
+### Fixed-point implications
+
+Midpoint subdivision needs one extra fractional bit or an explicit rounding
+rule. Squared cross products can need roughly twice the coordinate width, and
+the comparison against squared chord length and tolerance may require wider
+intermediates again. The fixed backend must establish its device-coordinate
+range and use widened integer products before sharing this implementation.
+
+### Falsification
+
+Tests cover straight and degenerate curves, transformed tolerance, output
+order, exact endpoints, invalid tolerances, non-finite transformed values,
+depth exhaustion, and sink capacity errors. Random curves will later compare
+maximum sampled deviation and output with the reference renderer.
