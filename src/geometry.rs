@@ -155,6 +155,7 @@ impl<T> PathBuilder<T> {
 
 impl Path<f32> {
     pub fn validate_finite(&self) -> Result<(), PathError> {
+        let point_is_finite = |point: Point<f32>| point.x.is_finite() && point.y.is_finite();
         for segment in   &self.segments {
             let finite = match segment {
                 PathSegment::MoveTo(p) | PathSegment::LineTo(p) => point_is_finite(*p),
@@ -177,8 +178,6 @@ impl PathBuilder<f32> {
         Ok(path)
     }
 }
-
-fn point_is_finite(point: Point<f32>) -> bool { point.x.is_finite() && point.y.is_finite() }
 
 fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
     let mut has_current_subpath = false;

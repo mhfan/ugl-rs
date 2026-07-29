@@ -10,9 +10,17 @@ use crate::geometry::{Affine, Path, Point, Scalar};
 /// edge because they contribute no winding crossing.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq)] pub struct Edge<T = Scalar> {
-    pub upper: Point<T>,
-    pub lower: Point<T>,
-    pub winding: i8,
+    pub upper: Point<T>, pub lower: Point<T>, pub winding: i8,
+}
+
+impl Edge {
+    pub(crate) fn slope(&self) -> f32 {
+        (self.lower.x - self.upper.x) / (self.lower.y - self.upper.y)
+    }
+
+    pub(crate) fn x_at(&self, y: f32) -> f32 {
+        self.upper.x + self.slope() * (y - self.upper.y)
+    }
 }
 
 pub trait EdgeSink {    type Error;
@@ -20,8 +28,8 @@ pub trait EdgeSink {    type Error;
 }
 
 impl<E, F> EdgeSink for F where F: FnMut(Edge) -> Result<(), E> {
-    type Error = E;
     fn edge(&mut self, edge: Edge) -> Result<(), Self::Error> { self(edge) }
+    type Error = E;
 }
 
 /// Flattens a path and emits edges suitable for filling.
@@ -34,9 +42,7 @@ pub fn build_fill_edges<S>(path: &Path, transform: Affine, options: FlattenOptio
 }
 
 struct FillEdgeBuilder<'a, S> {
-    sink: &'a mut S,
-    start: Option<Point>,
-    current: Option<Point>,
+    sink: &'a mut S, start: Option<Point>, current: Option<Point>,
 }
 
 impl<'a, S> FillEdgeBuilder<'a, S> {
@@ -47,24 +53,21 @@ impl<S> LineSink for FillEdgeBuilder<'_, S> where S: EdgeSink {
     type Error = S::Error;
 
     fn begin_subpath(&mut self, at: Point) -> Result<(), Self::Error> {
-        self.start = Some(at);
-        self.current = Some(at);
-        Ok(())
+        self.start   = Some(at);
+        self.current = Some(at);    Ok(())
     }
 
     fn line(&mut self, from: Point, to: Point) -> Result<(), Self::Error> {
         self.emit(from, to)?;
-        self.current = Some(to);
-        Ok(())
+        self.current = Some(to);    Ok(())
     }
 
     fn end_subpath(&mut self) -> Result<(), Self::Error> {
         if let (Some(from), Some(to)) = (self.current, self.start) {
             self.emit(from, to)?;
         }
-        self.start = None;
-        self.current = None;
-        Ok(())
+        self.start   = None;
+        self.current = None;        Ok(())
     }
 }
 
@@ -126,10 +129,8 @@ impl<S> FillEdgeBuilder<'_, S> where S: EdgeSink {
     #[test] fn edge_sink_capacity_error_propagates() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).unwrap();
-        let result = build_fill_edges(
-            &builder.build(), Affine::identity(), FlattenOptions::default(),
-            &mut |_| Err("full"),
-        );
+        let result = build_fill_edges(&builder.build(), Affine::identity(),
+            FlattenOptions::default(), &mut |_| Err("full"));
         assert_eq!(result, Err(FlattenError::Sink("full")));
     }
 }

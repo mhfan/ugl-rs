@@ -8,6 +8,15 @@ use crate::edge::Edge;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FillRule { NonZero, EvenOdd }
 
+impl FillRule {
+    pub(crate) fn contains(self, winding: i32) -> bool {
+        match self {
+            Self::NonZero => winding != 0,
+            Self::EvenOdd => winding & 1 != 0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct RasterOptions {
     /// Number of deterministic vertical samples per pixel row.
     pub vertical_samples: u16,
@@ -51,7 +60,7 @@ pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32, fill_rule: Fi
     options: RasterOptions, workspace: &mut RasterWorkspace<'_>, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {
     if options.vertical_samples == 0 { return Err(RasterError::InvalidSampleCount); }
-    let (width, height) = (width as usize, height as usize);
+    let (width, height) = (width as _, height as _);
     if workspace.intersections.len() < edges.len() || workspace.row_coverage.len() < width {
         return Err(RasterError::WorkspaceTooSmall {
             intersections: edges.len(), row_coverage: width,
@@ -74,36 +83,31 @@ pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32, fill_rule: Fi
             accumulate_spans(intersections, width, fill_rule, sample_scale, row);
         }
 
-        emit_coverage_runs(row, y as u32, sink)?;
+        emit_coverage_runs(row, y as _, sink)?;
     }   Ok(())
 }
 
-fn emit_coverage_runs<S>(row: &[f32], y: u32, sink: &mut S) ->
+pub(crate) fn emit_coverage_runs<S>(row: &[f32], y: u32, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {
+    let quantize = |coverage: f32| (coverage.clamp(0.0, 1.0) * 255.0 + 0.5) as _;
     let mut x = 0;
     while x < row.len() {
-        let coverage = quantize_coverage(row[x]);
+        let coverage = quantize(row[x]);
         if  coverage == 0 { x += 1; continue; }
         let start = x;      x += 1;
-        while x < row.len() && quantize_coverage(row[x]) == coverage { x += 1; }
-        sink.span(start as u32, y, (x - start) as u32, coverage).map_err(RasterError::Sink)?;
+        while x < row.len() && quantize(row[x]) == coverage { x += 1; }
+        sink.span(start as _, y, (x - start) as _, coverage).map_err(RasterError::Sink)?;
     }   Ok(())
 }
-
-fn quantize_coverage(coverage: f32) -> u8 { (coverage.clamp(0.0, 1.0) * 255.0 + 0.5) as u8 }
 
 fn collect_intersections(edges: &[Edge], y: f32, output: &mut [Intersection]) -> usize {
     let mut count = 0;
     for edge in edges {
         if edge.upper.y <= y && y < edge.lower.y {
-            let dy = edge.lower.y - edge.upper.y;
-            let t = (y - edge.upper.y) / dy;
-            output[count] = Intersection {
-                x: edge.upper.x + (edge.lower.x - edge.upper.x) * t,
-                winding: edge.winding,
-            };  count += 1;
+            output[count] = Intersection { x: edge.x_at(y), winding: edge.winding };
+            count += 1;
         }
-    }           count
+    }       count
 }
 
 fn accumulate_spans(intersections: &[Intersection], width: usize, fill_rule: FillRule,
@@ -111,11 +115,9 @@ fn accumulate_spans(intersections: &[Intersection], width: usize, fill_rule: Fil
     let (mut winding, mut previous_x) = (0_i32, None);
     for intersection in intersections {
         if let Some(from) = previous_x {
-            let inside = match fill_rule {
-                FillRule::NonZero => winding != 0,
-                FillRule::EvenOdd => winding & 1 != 0,
-            };
-            if inside { accumulate_span(from, intersection.x, width, sample_weight, row); }
+            if fill_rule.contains(winding) {
+                accumulate_span(from, intersection.x, width, sample_weight, row);
+            }
         }
         winding += intersection.winding as i32;
         previous_x = Some(intersection.x);
@@ -123,11 +125,11 @@ fn accumulate_spans(intersections: &[Intersection], width: usize, fill_rule: Fil
 }
 
 fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32]) {
-    let start = from.clamp(0.0, width as f32);
-    let end = to.clamp(0.0, width as f32);
+    let start = from.clamp(0.0, width as _);
+    let end = to.clamp(0.0, width as _);
     if  end <= start { return; }
 
-    let first = libm::floorf(start) as usize;
+    let first = libm::floorf(start) as _;
     let last = (libm::ceilf(end) as usize).min(width);
     for (x, coverage) in row.iter_mut().enumerate().take(last).skip(first) {
         let overlap = end.min(x as f32 + 1.0) - start.max(x as f32);
@@ -155,7 +157,7 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
         let mut pixels = vec![0; width * height];
         let mut intersections = vec![Intersection::default(); edges.len()];
         let mut row_coverage = vec![0.0; width];
-        rasterize_edges(edges, width as u32, height as u32, rule, RasterOptions::default(),
+        rasterize_edges(edges, width as _, height as _, rule, RasterOptions::default(),
             &mut RasterWorkspace {
                 intersections: &mut intersections,
                 row_coverage: &mut row_coverage,
@@ -164,8 +166,7 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
                 pixels[y as usize * width + x as usize] = coverage;
                 Ok::<_, Infallible>(())
             },
-        ).unwrap();
-        pixels
+        ).unwrap();     pixels
     }
 
     #[derive(Default)] struct SpanRecorder(Vec<(u32, u32, u32, u8)>);

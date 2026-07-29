@@ -13,5 +13,6 @@ pub mod geometry;   // shape, curve, free path
 pub mod flatten;
 pub mod edge;
 pub mod raster;
+pub mod analytic;
 pub mod canvas;
 pub mod math;

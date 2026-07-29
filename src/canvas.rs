@@ -11,8 +11,7 @@ use crate::{color::RGBA, edge::{build_fill_edges, Edge, EdgeSink},
 const BYTES_PER_PIXEL: u32 = 4;
 
 #[derive(Debug)] pub struct PixmapMut<'a> {
-    width: u32, height: u32, stride: u32,
-    data: &'a mut [u8],
+    data: &'a mut [u8], width: u32, height: u32, stride: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum PixmapError {
@@ -59,6 +58,9 @@ impl<'a> PixmapMut<'a> {
     }
 
     fn blend_solid_span(&mut self, x: u32, y: u32, len: u32, color: RGBA<u8>, coverage: u8) {
+        let mul_div_255 = |a: u8, b: u8| {
+            (u16::from(a) * u16::from(b) + 127).div_euclid(255) as u8
+        };
         let source_alpha = mul_div_255(color.a, coverage);
         let inverse_alpha = u8::MAX - source_alpha;
         let source = [mul_div_255(color.r, source_alpha),
@@ -67,17 +69,13 @@ impl<'a> PixmapMut<'a> {
         let start = y as usize * self.stride as usize
             + x as usize * BYTES_PER_PIXEL as usize;
         let end = start + len as usize * BYTES_PER_PIXEL as usize;
-        for pixel in self.data[start..end].chunks_exact_mut(BYTES_PER_PIXEL as usize) {
+        for pixel in self.data[start..end].chunks_exact_mut(BYTES_PER_PIXEL as _) {
             for (channel, source) in pixel[..3].iter_mut().zip(source) {
                 *channel = source.saturating_add(mul_div_255(*channel, inverse_alpha));
             }
             pixel[3] = source_alpha.saturating_add(mul_div_255(pixel[3], inverse_alpha));
         }
     }
-}
-
-fn mul_div_255(a: u8, b: u8) -> u8 {
-    (u16::from(a) * u16::from(b) + 127).div_euclid(255) as u8
 }
 
 pub struct RenderWorkspace<'a> {
@@ -89,18 +87,15 @@ pub struct RenderWorkspace<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct RenderOptions {
     pub fill_rule: FillRule,
     pub flatten: FlattenOptions,
-    pub raster: RasterOptions,
+    pub  raster:  RasterOptions,
 }
 
-impl Default for RenderOptions {
-    fn default() -> Self {
-        Self {
-            fill_rule: FillRule::NonZero,
+impl Default for RenderOptions { fn default() -> Self {
+        Self { fill_rule: FillRule::NonZero,
             flatten: FlattenOptions::default(),
-            raster: RasterOptions::default(),
+             raster:  RasterOptions::default(),
         }
-    }
-}
+} }
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RenderError {
     InvalidTolerance, InvalidDepth, NonFiniteCoordinate, FlattenDepthLimit,
@@ -139,9 +134,7 @@ impl EdgeSink for EdgeSliceSink<'_> {
     fn edge(&mut self, edge: Edge) -> Result<(), Self::Error> {
         let slot = self.edges.get_mut(self.len)
             .ok_or(EdgeCapacity { needed_at_least: self.len + 1 })?;
-        *slot = edge;
-        self.len += 1;
-        Ok(())
+        *slot = edge;   self.len += 1;  Ok(())
     }
 }
 
@@ -151,8 +144,7 @@ impl CoverageSink for SolidCompositor<'_, '_> {
     type Error = Infallible;
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
         Result<(), Self::Error> {
-        self.target.blend_solid_span(x, y, len, self.color, coverage);
-        Ok(())
+        self.target.blend_solid_span(x, y, len, self.color, coverage);  Ok(())
     }
 }
 
