@@ -1,7 +1,7 @@
 //! Borrowed pixel targets and the first complete reference rendering path.
 
 use core::convert::Infallible;
-use crate::{color::RGBA, edge::{build_fill_edges, Edge, EdgeSink},
+use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticIntersection, AnalyticWorkspace, rasterize_edges_analytic},
     flatten::{FlattenError, FlattenOptions}, geometry::{Affine, Path, PathError},
     raster::{CoverageSink, FillRule, Intersection, RasterError, RasterOptions,
@@ -53,23 +53,22 @@ impl<'a> PixmapMut<'a> {
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
 
-    pub fn pixel(&self, x: u32, y: u32) -> Option<RGBA<u8>> {
+    pub fn pixel(&self, x: u32, y: u32) -> Option<PremulRGBA<u8>> {
         if x >= self.width || y >= self.height { return None; }
-        let offset = y as usize * self.stride as usize
-            + x as usize * BYTES_PER_PIXEL as usize;
-        Some(RGBA::new(self.data[offset], self.data[offset + 1],
-                       self.data[offset + 2], self.data[offset + 3]))
+        let offset = y as usize * self.stride as usize +
+                     x as usize * BYTES_PER_PIXEL as usize;
+        Some((self.data[offset], self.data[offset + 1],
+              self.data[offset + 2], self.data[offset + 3]).into())
     }
 
-    fn blend_solid_span(&mut self, x: u32, y: u32, len: u32, color: RGBA<u8>, coverage: u8) {
-        let mul_div_255 = |a: u8, b: u8| {
-            (a as u16 * b as u16 + 127).div_euclid(255) as u8
-        };
-        let source_alpha = mul_div_255(color.a, coverage);
+    fn blend_solid_span(&mut self, x: u32, y: u32, len: u32,
+        color: PremulRGBA<u8>, coverage: u8) {
+        let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
+        let [r, g, b, a] = color.to_array();
+        let source_alpha = mul_div_255(a, coverage);
         let inverse_alpha = u8::MAX - source_alpha;
-        let source = [mul_div_255(color.r, source_alpha),
-                      mul_div_255(color.g, source_alpha),
-                      mul_div_255(color.b, source_alpha)];
+        let source = [mul_div_255(r, coverage), mul_div_255(g, coverage),
+                      mul_div_255(b, coverage)];
         let start = y as usize * self.stride as usize
             + x as usize * BYTES_PER_PIXEL as usize;
         let end = start + len as usize * BYTES_PER_PIXEL as usize;
@@ -123,7 +122,7 @@ pub fn render_solid(path: &Path, transform: Affine, color: RGBA<u8>, options: Re
     target: &mut PixmapMut<'_>, workspace: &mut RenderWorkspace<'_>) ->
     Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    let mut compositor = SolidCompositor { target, color };
+    let mut compositor = SolidCompositor { target, color: color.premul() };
     rasterize_edges(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, options.raster, &mut RasterWorkspace {
             intersections: workspace.intersections,
@@ -137,7 +136,7 @@ pub fn render_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
     options: RenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    let mut compositor = SolidCompositor { target, color };
+    let mut compositor = SolidCompositor { target, color: color.premul() };
     rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
             intersections: workspace.intersections,
@@ -151,7 +150,7 @@ pub fn render_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
 pub fn render_solid_fixed(lines: &[FixedLine], color: RGBA<u8>, fill_rule: FillRule,
     target: &mut PixmapMut<'_>, workspace: &mut FixedRasterWorkspace<'_>) ->
     Result<(), RenderError> {
-    let mut compositor = SolidCompositor { target, color };
+    let mut compositor = SolidCompositor { target, color: color.premul() };
     rasterize_lines(lines, compositor.target.width, compositor.target.height,
         fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
 }
@@ -175,7 +174,7 @@ impl EdgeSink for EdgeSliceSink<'_> {
     }   type Error = EdgeCapacity;
 }
 
-struct SolidCompositor<'a, 'b> { target: &'a mut PixmapMut<'b>, color: RGBA<u8> }
+struct SolidCompositor<'a, 'b> { target: &'a mut PixmapMut<'b>, color: PremulRGBA<u8> }
 
 impl CoverageSink for SolidCompositor<'_, '_> {
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
@@ -224,18 +223,18 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
         assert_eq!(PixmapMut::new(&mut data, 2, 1, 7).unwrap_err(),
             PixmapError::StrideTooSmall { minimum: 8, actual: 7 });
         let mut target = PixmapMut::new(&mut data, 2, 1, 11).unwrap();
-        target.blend_solid_span(0, 0, 2, RGBA::red(), 255);
-        assert_eq!(target.pixel(1, 0), Some(RGBA::red()));
+        target.blend_solid_span(0, 0, 2, RGBA::<u8>::red().premul(), 255);
+        assert_eq!(target.pixel(1, 0), Some(RGBA::<u8>::red().premul()));
         assert_eq!(&target.data[8..], &[0, 0, 0]);
     }
 
     #[test] fn source_over_combines_coverage_alpha_and_premultiplied_destination() {
         let mut data = [0, 0, 255, 255];
         let mut target = PixmapMut::new(&mut data, 1, 1, 4).unwrap();
-        target.blend_solid_span(0, 0, 1, RGBA::new(255, 0, 0, 128), 255);
-        assert_eq!(target.pixel(0, 0), Some(RGBA::new(128, 0, 127, 255)));
+        target.blend_solid_span(0, 0, 1, RGBA::<u8>::new(255, 0, 0, 128).premul(), 255);
+        assert_eq!(target.pixel(0, 0), Some((128, 0, 127, 255).into()));
         let before = target.pixel(0, 0);
-        target.blend_solid_span(0, 0, 1, RGBA::new(1, 2, 3, 0), 255);
+        target.blend_solid_span(0, 0, 1, RGBA::<u8>::new(1, 2, 3, 0).premul(), 255);
         assert_eq!(target.pixel(0, 0), before);
     }
 
@@ -253,10 +252,10 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
                 row_coverage: &mut row_coverage,
             },
         ).unwrap();
-        assert_eq!(target.pixel(0, 0), Some(RGBA::zeroed()));
-        assert_eq!(target.pixel(1, 1), Some(RGBA::new(128, 0, 0, 128)));
-        assert_eq!(target.pixel(2, 2), Some(RGBA::new(128, 0, 0, 128)));
-        assert_eq!(target.pixel(3, 3), Some(RGBA::zeroed()));
+        assert_eq!(target.pixel(0, 0), Some(PremulRGBA::zeroed()));
+        assert_eq!(target.pixel(1, 1), Some((128, 0, 0, 128).into()));
+        assert_eq!(target.pixel(2, 2), Some((128, 0, 0, 128).into()));
+        assert_eq!(target.pixel(3, 3), Some(PremulRGBA::zeroed()));
     }
 
     #[test] fn edge_capacity_failure_reports_required_lower_bound() {
@@ -287,7 +286,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
                 row_coverage: &mut row_coverage,
             },
         ).unwrap();
-        assert_eq!(target.pixel(0, 0), Some(RGBA::new(128, 128, 128, 128)));
+        assert_eq!(target.pixel(0, 0), Some((128, 128, 128, 128).into()));
     }
 
     #[cfg(feature = "fixed")]
@@ -314,7 +313,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
             &mut FixedRasterWorkspace { segments: &mut segments,
                 trapezoids: &mut trapezoids, row_area: &mut row_area,
             }).unwrap();
-        assert_eq!(target.pixel(0, 0), Some(RGBA::new(128, 128, 128, 128)));
-        assert_eq!(target.pixel(1, 0), Some(RGBA::new(128, 128, 128, 128)));
+        assert_eq!(target.pixel(0, 0), Some((128, 128, 128, 128).into()));
+        assert_eq!(target.pixel(1, 0), Some((128, 128, 128, 128).into()));
     }
 }
