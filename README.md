@@ -16,16 +16,21 @@ testable rendering semantics rather than as a line-by-line port.
 The intended niche is deliberately narrower than Blend2D, tiny-skia, Skia, or Vello:
 
 - CPU-only rendering without requiring a GPU or FPU;
-- a `no_std` core with optional allocation and a future no-allocation mode;
+- a `no_std` core with optional allocation and no-allocation rasterization;
 - caller-provided destination and scratch memory;
-- a floating-point reference backend followed by a bounded fixed-point backend;
+- a floating-point reference backend and a bounded fixed-point backend;
 - deterministic output, bounded resource use, and no data-dependent panics;
 - high-quality path filling, stroking, clipping, gradients, sampling, blending,
   and alpha compositing.
 
-The project is currently in its foundation phase. Color primitives and blending
-exist, while the path-to-pixel rasterization pipeline is under construction.
-It is not yet suitable as a production renderer.
+The project now has an allocation-free path-to-pixel vertical slice with
+sampled and analytic `f32` rasterizers, premultiplied source-over, caller-owned
+scratch storage, and an early Q24.8 fixed-point backend. Fixed crossing events,
+production active-edge storage, golden images, fuzzing, and benchmarks are
+still under development, so it is not yet suitable as a production renderer.
+
+The current MSRV is Rust 1.93. CI checks MSRV and stable builds, independent
+feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 
 ## Direction
 

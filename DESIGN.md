@@ -65,14 +65,14 @@ The architecture separates representation from execution:
 - Owned `Path<T>` uses `alloc`; renderers consume segment slices so static and
   fixed-capacity storage can avoid it.
 - The reference geometry and rasterizer algorithms use `f32`.
-- A fixed-point backend will be introduced only after the reference behavior
-  and intermediate numeric ranges are measured.
+- The Q24.8 fixed-point backend follows the reference behavior with widened
+  intermediates and explicit overflow and rounding rules.
 
 This deliberately avoids a broad `Scalar` trait at the start. Such a trait
 would either expose too little for efficient algorithms or encode guessed
-requirements. When the fixed backend is implemented, common operations can be
-extracted from evidence. Fixed-point support must not be achieved by silently
-changing overflow, rounding, or degeneracy behavior.
+requirements. Common operations are extracted only when both backends provide
+evidence for them. Fixed-point support must not silently change overflow,
+rounding, or degeneracy behavior.
 
 The core layers are:
 
@@ -132,10 +132,11 @@ and SIMD layouts do not enter the common `Edge` representation.
 
 ## Paths and filling
 
-- A subpath starts with `MoveTo`; drawing commands without a current subpath
-  are rejected by `PathBuilder`.
+- A subpath normally starts with `MoveTo`; the first drawing command without a
+  current subpath implicitly inserts a `MoveTo` to that command's endpoint.
 - A subsequent `MoveTo` starts a new subpath.
-- `Close` connects the current point to the subpath start and is idempotent.
+- `Close` connects the current point to the subpath start and is idempotent;
+  without a current subpath it is a no-op.
 - Zero-length edges are accepted but contribute no winding or coverage.
 - Both non-zero winding and even-odd fill rules will be supported.
 - Open subpaths are implicitly closed for filling, but not for stroking.
@@ -160,7 +161,7 @@ and SIMD layouts do not enter the common `Edge` representation.
 - Library code must not panic for data-dependent input.
 - The initial owned `Path` uses `alloc::vec::Vec`; rasterization consumes a
   segment slice so fixed-capacity and static paths require no owned `Path`.
-- A later no-allocation renderer will accept caller-provided edge and coverage
+- Allocation-free rasterizers accept caller-provided edge and coverage
   workspaces and report the required capacity when they are too small.
 
 ## Determinism and quality
@@ -187,7 +188,8 @@ Every rendering stage is tested at three levels:
 
 Feature combinations are compiled independently so dev-dependency feature
 unification cannot hide broken `no_std`, `serde`, fixed-point, or allocation
-configurations.
+configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
+32-bit Linux, and a Cortex-M target without an FPU.
 
 ## Implementation rules
 
@@ -283,9 +285,12 @@ only after this path is complete.
 
 ## Current status
 
-- M0 is in progress.
-- The crate boundary and geometry representation have been introduced.
-- Existing floating-point color code still uses math operations not available
-  directly in `core`; the `no_std` math policy must be resolved before M0 is
-  complete.
-- Rasterization, golden images, and benchmark harnesses have not started.
+- M0 is substantially complete; comprehensive golden scenes and benchmark
+  baselines remain.
+- M1 has an allocation-free vertical slice from path segments through sampled
+  or analytic `f32` coverage to premultiplied source-over output.
+- M4/M5 prototypes include generic fixed-point geometry, widened Q24.8
+  arithmetic, span/trapezoid area evaluation, caller-owned workspaces, and
+  differential/error-path tests.
+- Fixed crossing events, persistent active-edge storage, golden images,
+  fuzzing, benchmarks, gradients, clipping, and stroking remain future work.
