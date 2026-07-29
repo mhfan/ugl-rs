@@ -63,5 +63,6 @@ integration layers after the 2D rasterization core is correct and stable.
 
 * <https://2d.graphics>
 * <https://github.com/savage13/agg>
+* <https://github.com/blend2d/blend2d>
 * <https://github.com/linebender/color>
 * <https://github.com/linebender/peniko>

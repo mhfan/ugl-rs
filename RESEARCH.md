@@ -424,3 +424,18 @@ clipping to the target, workspace errors, and deterministic quantization.
 Analytic implementations are compared both against this reference and exact
 area fixtures; disagreement is not automatically an analytic-backend bug when
 the reference sampling error explains it.
+
+## Architecture decision: two production backend families
+
+The production roadmap is not a single compromise rasterizer:
+
+- Desktop/mobile targets pursue sparse strips or tiles combined with analytic
+  cells and optional SIMD, using Blend2D and Vello CPU as major references.
+- MCU and fixed-memory targets pursue trapezoids or scanline spans combined
+  with fixed-point analytic boundary area, using micro{gl}, AGG, and FreeType
+  techniques as references.
+
+Shared contracts end at directed edges on input and coverage runs/pixels on
+output. Paint sampling and compositing do not depend on how coverage was
+generated. This permits differential testing across all backends and prevents
+desktop scheduling/layout decisions from increasing MCU memory requirements.

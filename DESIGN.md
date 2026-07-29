@@ -89,6 +89,22 @@ geometry representation
 Dependencies point downward only. Color and geometry do not depend on canvas
 or a renderer. Parsing, codecs, text, and platform integration stay outside.
 
+### Production backend families
+
+The project targets two optimized execution families behind the same Path,
+Edge, Paint, CoverageSink, and borrowed Target contracts:
+
+- **Desktop/mobile high performance:** sparse strips or tiles for locality and
+  empty/full rejection, analytic cell coverage at active boundaries, and
+  optional ahead-of-time SIMD specialization.
+- **MCU/fixed memory:** scanline spans or trapezoid decomposition, fixed-point
+  analytic boundary area, caller-owned bounded workspace, and streaming
+  compositing without a full intermediate mask.
+
+Both may share edge preparation, area formulas, fill semantics, paint sampling,
+and compositing. Backend-specific inverse slopes, cell accumulators, strip IDs,
+and SIMD layouts do not enter the common `Edge` representation.
+
 ## Coordinates and transforms
 
 - User space is Cartesian with increasing `x` to the right and increasing `y`
