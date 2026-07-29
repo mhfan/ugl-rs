@@ -161,8 +161,8 @@ fn integrate_span(left: &AnalyticIntersection,
 
     #[test] fn aligned_rectangle_has_exact_coverage() {
         let mut builder = PathBuilder::new();
-        builder.move_to((1.0, 1.0)).line_to((3.0, 1.0)).unwrap()
-               .line_to((3.0, 3.0)).unwrap().line_to((1.0, 3.0)).unwrap();
+        builder.move_to((1.0, 1.0)).line_to((3.0, 1.0))
+               .line_to((3.0, 3.0)).line_to((1.0, 3.0));
         assert_eq!(render_analytic(&edges(builder), 4, 4, FillRule::NonZero),
             [0, 0, 0, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 0, 0, 0]);
     }
@@ -182,30 +182,29 @@ fn integrate_span(left: &AnalyticIntersection,
 
     #[test] fn diagonal_half_pixel_is_integrated_analytically() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((1.0, 0.0)).unwrap()
-               .line_to((0.0, 1.0)).unwrap();
+        builder.move_to((0.0, 0.0)).line_to((1.0, 0.0)).line_to((0.0, 1.0));
         assert_eq!(render_analytic(&edges(builder), 1, 1, FillRule::NonZero), [128]);
     }
 
     #[test] fn fractional_rectangle_has_exact_horizontal_area() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.25, 0.0)).line_to((1.75, 0.0)).unwrap()
-               .line_to((1.75, 1.0)).unwrap().line_to((0.25, 1.0)).unwrap();
+        builder.move_to((0.25, 0.0)).line_to((1.75, 0.0))
+               .line_to((1.75, 1.0)).line_to((0.25, 1.0));
         assert_eq!(render_analytic(&edges(builder), 2, 1, FillRule::NonZero), [191, 191]);
     }
 
     #[test] fn crossing_edges_are_split_inside_the_row() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((2.0, 2.0)).unwrap()
-               .line_to((0.0, 2.0)).unwrap().line_to((2.0, 0.0)).unwrap();
+        builder.move_to((0.0, 0.0)).line_to((2.0, 2.0))
+               .line_to((0.0, 2.0)).line_to((2.0, 0.0));
         assert_eq!(render_analytic(&edges(builder), 2, 2, FillRule::EvenOdd), [128; 4]);
     }
 
     #[test] fn nested_contours_distinguish_non_zero_and_even_odd() {
         let mut builder = PathBuilder::new();
         for (x0, y0, x1, y1) in [(0.0, 0.0, 3.0, 3.0), (1.0, 1.0, 2.0, 2.0)] {
-            builder.move_to((x0, y0)).line_to((x1, y0)).unwrap()
-                   .line_to((x1, y1)).unwrap().line_to((x0, y1)).unwrap();
+            builder.move_to((x0, y0)).line_to((x1, y0))
+                   .line_to((x1, y1)).line_to((x0, y1));
         }
         let edges = edges(builder);
         assert_eq!(render_analytic(&edges, 3, 3, FillRule::NonZero)[4], 255);
@@ -262,9 +261,8 @@ fn integrate_span(left: &AnalyticIntersection,
                 (state >> 8) as f32 * (10.0 / 16_777_216.0) - 1.0
             };
             let points: Vec<_> = (0..3 + case % 4).map(|_| (point(), point())).collect();
-            builder.move_to(points[0]).line_to(points[1]).unwrap()
-                   .line_to(points[2]).unwrap();
-            for &point in &points[3..] { builder.line_to(point).unwrap(); }
+            builder.move_to(points[0]).line_to(points[1]).line_to(points[2]);
+            for &point in &points[3..] { builder.line_to(point); }
             let edges = edges(builder);
             for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
                 let (analytic, sampled) = (

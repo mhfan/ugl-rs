@@ -132,39 +132,36 @@ impl<T> PathBuilder<T> {
         self
     }
 
-    pub fn line_to(&mut self, point: impl Into<Point<T>>) -> Result<&mut Self, PathError> {
-        self.require_subpath()?;
-        self.segments.push(PathSegment::LineTo(point.into()));
-        Ok(self)
+    /// Adds a line, or starts a subpath at `point` when the path is empty.
+    pub fn line_to(&mut self, point: impl Into<Point<T>>) -> &mut Self {
+        let point = point.into();
+        if !self.has_current_subpath { return self.move_to(point); }
+        self.segments.push(PathSegment::LineTo(point));     self
     }
 
     pub fn quad_to(&mut self, ctrl: impl Into<Point<T>>, to: impl Into<Point<T>>) ->
-        Result<&mut Self, PathError> {
-        self.require_subpath()?;
-        self.segments.push(PathSegment::QuadTo { ctrl: ctrl.into(), to: to.into() });
-        Ok(self)
+        &mut Self {
+        let (ctrl, to) = (ctrl.into(), to.into());
+        if !self.has_current_subpath { return self.move_to(to); }
+        self.segments.push(PathSegment::QuadTo { ctrl, to });   self
     }
 
     pub fn cubic_to(&mut self, ctrl1: impl Into<Point<T>>, ctrl2: impl Into<Point<T>>,
-        to: impl Into<Point<T>>) -> Result<&mut Self, PathError> {
-        self.require_subpath()?;
-        self.segments.push(PathSegment::CubicTo {
-            ctrl1: ctrl1.into(), ctrl2: ctrl2.into(), to: to.into(),
-        }); Ok(self)
+        to: impl Into<Point<T>>) -> &mut Self {
+        let (ctrl1, ctrl2, to) = (ctrl1.into(), ctrl2.into(), to.into());
+        if !self.has_current_subpath { return self.move_to(to); }
+        self.segments.push(PathSegment::CubicTo { ctrl1, ctrl2, to, });     self
     }
 
-    pub fn close(&mut self) -> Result<&mut Self, PathError> {
-        self.require_subpath()?;
+    /// Closes the active subpath; an empty path is unchanged.
+    pub fn close(&mut self) -> &mut Self {
+        if !self.has_current_subpath { return self; }
         if !matches!(self.segments.last(), Some(PathSegment::Close)) {
             self.segments.push(PathSegment::Close);
-        }   Ok(self)
+        }   self
     }
 
     pub fn build(self) -> Path<T> { Path { segments: self.segments } }
-
-    fn require_subpath(&self) -> Result<(), PathError> {
-        self.has_current_subpath.then_some(()).ok_or(PathError::MissingMoveTo)
-    }
 }
 
 impl Path<f32> {
@@ -212,16 +209,28 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
         assert_eq!(transform.transform_point(Point::new(3.0, 2.0)), Point::new(8.0, 5.5));
     }
 
-    #[test] fn path_builder_enforces_subpath_start_and_idempotent_close() {
+    #[test] fn path_builder_starts_missing_subpaths_and_closes_idempotently() {
         let mut builder = PathBuilder::<f32>::new();
-        assert_eq!(builder.line_to((1.0, 2.0)).unwrap_err(), PathError::MissingMoveTo);
-        builder.move_to((0.0, 0.0)).line_to((1.0, 0.0)).unwrap();
-        builder.close().unwrap().close().unwrap();
+        builder.close().line_to((1.0, 2.0));
+        assert_eq!(builder.build().segments(),
+            &[PathSegment::MoveTo(Point::new(1.0, 2.0))]);
+
+        let mut builder = PathBuilder::<f32>::new();
+        builder.move_to((0.0, 0.0)).line_to((1.0, 0.0));
+        builder.close().close();
         assert_eq!(builder.build().segments(), &[
             PathSegment::MoveTo(Point::new(0.0, 0.0)),
             PathSegment::LineTo(Point::new(1.0, 0.0)),
             PathSegment::Close,
         ]);
+
+        let mut quad = PathBuilder::<f32>::new();
+        quad.quad_to((1.0, 1.0), (2.0, 2.0));
+        assert_eq!( quad.build().segments(), &[PathSegment::MoveTo(Point::new(2.0, 2.0))]);
+
+        let mut cubic = PathBuilder::<f32>::new();
+        cubic.cubic_to((1.0, 1.0), (2.0, 2.0), (3.0, 3.0));
+        assert_eq!(cubic.build().segments(), &[PathSegment::MoveTo(Point::new(3.0, 3.0))]);
     }
 
     #[test] fn path_can_borrow_static_or_fixed_capacity_segments() {
@@ -236,7 +245,7 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
 
     #[test] fn checked_reference_path_rejects_non_finite_coordinates() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((f32::INFINITY, 1.0)).unwrap();
+        builder.move_to((0.0, 0.0)).line_to((f32::INFINITY, 1.0));
         assert_eq!(builder.build_checked().unwrap_err(), PathError::NonFiniteCoordinate);
     }
 
@@ -249,7 +258,7 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
 
         let mut builder = PathBuilder::<FixedScalar>::new();
         builder.move_to((FixedScalar::ZERO, FixedScalar::ZERO))
-            .line_to((one, half)).unwrap();
+            .line_to((one, half));
         assert_eq!(builder.build().len(), 2);
     }
 }

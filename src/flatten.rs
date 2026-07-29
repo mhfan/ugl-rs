@@ -240,8 +240,8 @@ fn midpoint(a: Point, b: Point) -> Point {
     #[test] fn straight_curves_emit_one_directed_line() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0))
-            .quad_to((1.0, 1.0), (2.0, 2.0)).unwrap()
-            .cubic_to((3.0, 3.0), (4.0, 4.0), (5.0, 5.0)).unwrap();
+            .quad_to((1.0, 1.0), (2.0, 2.0))
+            .cubic_to((3.0, 3.0), (4.0, 4.0), (5.0, 5.0));
         let lines = collect(&builder.build(), Affine::identity(),
             FlattenOptions::default()).unwrap();
         assert_eq!(lines, [(Point::new(0.0, 0.0), Point::new(2.0, 2.0)),
@@ -251,7 +251,7 @@ fn midpoint(a: Point, b: Point) -> Point {
     #[test] fn curved_segments_preserve_order_and_exact_endpoints() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0))
-            .cubic_to((0.0, 10.0), (10.0, 10.0), (10.0, 0.0)).unwrap();
+            .cubic_to((0.0, 10.0), (10.0, 10.0), (10.0, 0.0));
         let lines = collect(&builder.build(), Affine::identity(),
             FlattenOptions { tolerance: 0.1, max_depth: 16 }).unwrap();
         assert!(lines.len() > 1);
@@ -262,7 +262,7 @@ fn midpoint(a: Point, b: Point) -> Point {
 
     #[test] fn collinear_curve_that_reverses_direction_is_not_collapsed() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).quad_to((2.0, 0.0), (1.0, 0.0)).unwrap();
+        builder.move_to((0.0, 0.0)).quad_to((2.0, 0.0), (1.0, 0.0));
         let lines = collect(&builder.build(), Affine::identity(),
             FlattenOptions { tolerance: 0.1, max_depth: 16 }).unwrap();
         assert!(lines.len() > 1);
@@ -271,7 +271,7 @@ fn midpoint(a: Point, b: Point) -> Point {
 
     #[test] fn tolerance_is_evaluated_after_transform() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).quad_to((0.5, 0.1), (1.0, 0.0)).unwrap();
+        builder.move_to((0.0, 0.0)).quad_to((0.5, 0.1), (1.0, 0.0));
         let path = builder.build();
         let options = FlattenOptions { tolerance: 0.2, max_depth: 16 };
         assert_eq!(collect(&path, Affine::identity(), options).unwrap().len(), 1);
@@ -289,7 +289,7 @@ fn midpoint(a: Point, b: Point) -> Point {
 
     #[test] fn invalid_options_depth_and_sink_fail_explicitly() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).quad_to((0.0, 1.0), (1.0, 1.0)).unwrap();
+        builder.move_to((0.0, 0.0)).quad_to((0.0, 1.0), (1.0, 1.0));
         let path = builder.build();
         assert_eq!(collect(&path, Affine::identity(),
                 FlattenOptions { tolerance: 0.0, max_depth: 16 }),

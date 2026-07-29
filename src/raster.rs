@@ -180,8 +180,8 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
 
     #[test] fn aligned_rectangle_has_exact_full_coverage() {
         let mut builder = PathBuilder::new();
-        builder.move_to((1.0, 1.0))       .line_to((3.0, 1.0)).unwrap()
-            .line_to((3.0, 3.0)).unwrap() .line_to((1.0, 3.0)).unwrap();
+        builder.move_to((1.0, 1.0)).line_to((3.0, 1.0))
+               .line_to((3.0, 3.0)).line_to((1.0, 3.0));
         assert_eq!(render(&path_edges(builder), 4, 4, FillRule::NonZero),
             [0, 0,   0,   0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 0,   0,   0]);
     }
@@ -200,15 +200,15 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
 
     #[test] fn fractional_rectangle_uses_exact_horizontal_span_overlap() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.5, 0.0))      .line_to((1.5, 0.0)).unwrap()
-            .line_to((1.5, 1.0)).unwrap().line_to((0.5, 1.0)).unwrap();
+        builder.move_to((0.5, 0.0)).line_to((1.5, 0.0))
+               .line_to((1.5, 1.0)).line_to((0.5, 1.0));
         assert_eq!(render(&path_edges(builder), 2, 1, FillRule::NonZero), [128, 128]);
     }
 
     #[test] fn equal_non_zero_coverage_is_coalesced_into_spans() {
         let mut builder = PathBuilder::new();
-        builder.move_to((1.0, 0.0)).line_to((4.0, 0.0)).unwrap()
-            .line_to((4.0, 1.0)).unwrap().line_to((1.0, 1.0)).unwrap();
+        builder.move_to((1.0, 0.0)).line_to((4.0, 0.0))
+               .line_to((4.0, 1.0)).line_to((1.0, 1.0));
         let edges = path_edges(builder);
         let (mut intersections, mut row) = (
             vec![Intersection::default(); edges.len()], [0.0; 5]);
@@ -225,8 +225,8 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
     #[test] fn non_zero_and_even_odd_differ_for_nested_same_direction_subpaths() {
         let mut builder = PathBuilder::new();
         for (x0, y0, x1, y1) in [(0.0, 0.0, 4.0, 4.0), (1.0, 1.0, 3.0, 3.0)] {
-            builder.move_to((x0, y0))      .line_to((x1, y0)).unwrap()
-                .line_to((x1, y1)).unwrap().line_to((x0, y1)).unwrap();
+            builder.move_to((x0, y0)).line_to((x1, y0))
+                   .line_to((x1, y1)).line_to((x0, y1));
         }
         let edges = path_edges(builder);
         assert_eq!(render(&edges, 4, 4, FillRule::NonZero)[5], 255);

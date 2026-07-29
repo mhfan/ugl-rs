@@ -109,8 +109,8 @@ impl<S> FillEdgeBuilder<'_, S> where S: EdgeSink {
 
     #[test] fn open_rectangle_is_implicitly_closed_and_horizontal_edges_are_omitted() {
         let mut builder = PathBuilder::new();
-        builder.move_to((1.0, 2.0))      .line_to((5.0, 2.0)).unwrap()
-            .line_to((5.0, 7.0)).unwrap().line_to((1.0, 7.0)).unwrap();
+        builder.move_to((1.0, 2.0)).line_to((5.0, 2.0))
+               .line_to((5.0, 7.0)).line_to((1.0, 7.0));
         assert_eq!(collect(&builder.build()).unwrap(), [
             Edge {
                 upper: Point::new(5.0, 2.0), lower: Point::new(5.0, 7.0), winding: 1,
@@ -123,15 +123,14 @@ impl<S> FillEdgeBuilder<'_, S> where S: EdgeSink {
 
     #[test] fn explicit_close_does_not_duplicate_the_closing_edge() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).unwrap()
-            .line_to((2.0, 0.0)).unwrap().close().unwrap();
+        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).line_to((2.0, 0.0)).close();
         assert_eq!(collect(&builder.build()).unwrap().len(), 2);
     }
 
     #[test] fn move_to_closes_each_previous_subpath() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).unwrap();
-        builder.move_to((2.0, 0.0)).line_to((3.0, 1.0)).unwrap();
+        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0));
+        builder.move_to((2.0, 0.0)).line_to((3.0, 1.0));
         let edges = collect(&builder.build()).unwrap();
         assert_eq!(edges.len(), 4);
         assert_eq!(edges.iter().map(|edge| edge.winding as i32).sum::<i32>(), 0);
@@ -139,7 +138,7 @@ impl<S> FillEdgeBuilder<'_, S> where S: EdgeSink {
 
     #[test] fn edge_sink_capacity_error_propagates() {
         let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).unwrap();
+        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0));
         let result = build_fill_edges(&builder.build(), Affine::identity(),
             FlattenOptions::default(), &mut |_| Err("full"));
         assert_eq!(result, Err(FlattenError::Sink("full")));

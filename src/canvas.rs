@@ -250,8 +250,8 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
 
     #[test] fn solid_rectangle_renders_end_to_end_without_allocation() {
         let mut builder = PathBuilder::new();
-        builder.move_to((1.0, 1.0)).line_to((3.0, 1.0)).unwrap()
-            .line_to((3.0, 3.0)).unwrap().line_to((1.0, 3.0)).unwrap();
+        builder.move_to((1.0, 1.0)).line_to((3.0, 1.0))
+               .line_to((3.0, 3.0)).line_to((1.0, 3.0));
         let mut pixels = vec![0; 4 * 4 * 4];
         let mut target = PixmapMut::new(&mut pixels, 4, 4, 16).unwrap();
         let (mut edges, mut intersections, mut row_coverage) = (
@@ -270,8 +270,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
 
     #[test] fn edge_capacity_failure_reports_required_lower_bound() {
         let (mut builder, mut pixels) = (PathBuilder::new(), [0; 16]);
-        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).unwrap()
-            .line_to((2.0, 0.0)).unwrap();
+        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).line_to((2.0, 0.0));
         let mut target = PixmapMut::new(&mut pixels, 2, 2, 8).unwrap();
         let (mut edges, mut intersections, mut row_coverage) = (
             [Edge::default(); 1], [Intersection::default(); 2], [0.0; 2]);
@@ -285,8 +284,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
 
     #[test] fn analytic_solid_rendering_uses_the_shared_compositor() {
         let (mut builder, mut pixels) = (PathBuilder::new(), [0; 4]);
-        builder.move_to((0.0, 0.0)).line_to((1.0, 0.0)).unwrap()
-            .line_to((0.0, 1.0)).unwrap();
+        builder.move_to((0.0, 0.0)).line_to((1.0, 0.0)).line_to((0.0, 1.0));
         let mut target = PixmapMut::new(&mut pixels, 1, 1, 4).unwrap();
         let (mut edges, mut intersections, mut row_coverage) = (
             [Edge::default(); 2], [AnalyticIntersection::default(); 2], [0.0]);
