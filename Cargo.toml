@@ -17,7 +17,7 @@ keywords = [ "ugl", "microgl", "vector-graphic" ]
 default = [ "fixed" ]
 
 [dependencies]
-serde = { version =  "1.0", optional = true }
+serde = { version =  "1.0", optional = true, features = [ "derive" ] }
 fixed = { version = "1.29", optional = true }
 nalgebra-glm = "0.20"
 #nalgebra = "0.33"
@@ -49,4 +49,3 @@ panic = 'abort' # Do not perform backtrace for panic on release builds.
 lto = 'fat' # true
 
 [workspace]
-

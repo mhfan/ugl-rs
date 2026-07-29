@@ -12,7 +12,7 @@ pub type Color = RGBA<u8>;
     assert_eq!(rgba.to_arra3(), cha[0..3]);
     assert_eq!(rgba.packed(), 0xFF112233);
     assert_eq!(rgba, 0xFF112233.into());
-    assert_eq!(rgba, cha[0..3] .into());
+    assert_eq!(rgba, RGBA::try_from(&cha[0..3]).unwrap());
     assert_eq!(rgba, cha.into());
  ```
     https://github.com/linebender/color */
@@ -67,11 +67,14 @@ impl<T: ColorChannel> From<[T; 3]>    for RGBA<T> {
     #[inline] fn from([r, g, b]: [T; 3])    -> Self { Self { r, g, b, a: T::MAX } }
 }
 
-impl<T: ColorChannel> From<&[T]> for RGBA<T> {
-    #[inline] fn from(rgb: &[T]) -> Self {   let len = rgb.len();
-        Self { r: rgb[0], g: rgb[1], b: rgb[2], a:
-            if 3 < len { rgb[3] } else if 2 < len { T::MAX } else { unreachable!() } }
-    }
+impl<T: ColorChannel>  TryFrom<&[T]> for RGBA<T> {
+    #[inline] fn try_from(rgb: &[T]) -> Result<Self, Self::Error> {
+        match rgb {
+            [r, g, b] => Ok(Self::new(*r, *g, *b, T::MAX)),
+            [r, g, b, a, ..] => Ok(Self::new(*r, *g, *b, *a)),
+            _ => Err("an RGB(A) slice requires at least three channels"),
+        }
+    }   type Error = &'static str;
 }
 
 impl From<RGBA<f32>> for RGBA<u8> {     // quantization
@@ -111,8 +114,8 @@ impl From<RGBA<u16>> for RGBA<u8> {
 
 impl From<RGBA<u8>>  for RGBA<u16> {
     #[inline] fn from(clr: RGBA<u8>) -> Self {
-        Self { r: (clr.r as u16) << 8, g: (clr.g as u16) << 8,
-               b: (clr.b as u16) << 8, a: (clr.a as u16) << 8 }
+        let expand = |channel| u16::from(channel) * 0x0101;
+        Self { r: expand(clr.r), g: expand(clr.g), b: expand(clr.b), a: expand(clr.a) }
     }
 }
 
@@ -140,9 +143,8 @@ impl RGBA<u8> {
         //((self.r as u32) <<  8) |  (self.a as u32)
     pub fn mula(&self) -> Self {
         let (half, alpha) = ((u8::MAX / 2) as u16, self.a as u16);
-        Self {  r: ((self.r as u16 * alpha + half) >> 8) as _,
-                g: ((self.g as u16 * alpha + half) >> 8) as _,
-                b: ((self.b as u16 * alpha + half) >> 8) as _, a: self.a }
+        let premul = |channel| ((channel as u16 * alpha + half) /  u8::MAX as u16) as _;
+        Self { r: premul(self.r), g: premul(self.g), b: premul(self.b), a: self.a }
     }
 }
 
@@ -154,9 +156,8 @@ impl RGBA<u16> {
         //((self.r as u64) << 16) |  (self.a as u64)
     pub fn mula(&self) -> Self {
         let (half, alpha) = ((u16::MAX / 2) as u32, self.a as u32);
-        Self {  r: ((self.r as u32 * alpha + half) >> 16) as _,
-                g: ((self.g as u32 * alpha + half) >> 16) as _,
-                b: ((self.b as u32 * alpha + half) >> 16) as _, a: self.a }
+        let premul = |channel| ((channel as u32 * alpha + half) / u16::MAX as u32) as _;
+        Self { r: premul(self.r), g: premul(self.g), b: premul(self.b), a: self.a }
     }
 }
 
@@ -190,3 +191,26 @@ impl RGBA<f32> {    #![allow(unused)]
     } }
 }
 
+#[cfg(test)] mod tests { use super::RGBA;
+
+    #[test] fn slice_conversion_checks_length() {
+        assert!(RGBA::<u8>::try_from(&[][..]).is_err());
+        assert!(RGBA::<u8>::try_from(&[1, 2][..]).is_err());
+        assert_eq!(RGBA::<u8>::try_from(&[1, 2, 3][..]), Ok((1, 2, 3, 255).into()));
+        assert_eq!(RGBA::<u8>::try_from(&[1, 2, 3, 4, 5][..]), Ok((1, 2, 3, 4).into()));
+    }
+
+    #[test] fn integer_conversions_preserve_channel_extrema() {
+        let white8 = RGBA::<u8>::white();
+        let white16 = RGBA::<u16>::white();
+        assert_eq!(RGBA::<u16>::from(white8), white16);
+        assert_eq!(RGBA::<u8>::from(white16), white8);
+    }
+
+    #[test] fn premultiplication_preserves_opaque_channels() {
+        assert_eq!(RGBA::<u8>::white().mula(), RGBA::<u8>::white());
+        assert_eq!(RGBA::<u16>::white().mula(), RGBA::<u16>::white());
+        assert_eq!(RGBA::<u8>::new(255, 127, 1, 0).mula(), RGBA::zeroed());
+        assert_eq!(RGBA::<u16>::new(65535, 32767, 1, 0).mula(), RGBA::zeroed());
+    }
+}

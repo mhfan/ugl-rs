@@ -1,5 +1,6 @@
 
 /** Porter-Duff Compositing Operators & Blending Modes
+```text
 
       Simple alpha compositing: co = Cs x αs + Cb x αb x (1 - αs)
         resultant alpha of the composite: αo = αs + αb x (1 - αs)
@@ -45,7 +46,8 @@
 
     https://en.wikipedia.org/wiki/Blend_modes
 
-    https://www.w3.org/TR/compositing-1 */
+    https://www.w3.org/TR/compositing-1
+``` */
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum BlendMode {
     //  (Alpha) Porter-Duff Compositing Operators:
@@ -321,18 +323,20 @@ impl RGBA<f32> {    #![allow(unused)]
              if *cmid < *cmin {  cmid = cmin; cmin = &mut self.b }
         else if *cmax < *cmid {  cmid = cmax; cmax = &mut self.b }
 
-        if  *cmid <  *cmax {
+        if  *cmin <  *cmax {
             *cmid = (*cmid - *cmin) * sat / (*cmax - *cmin);    *cmax = sat
-        } else {     *cmid = 0.;    *cmax = 0.; }    *cmid = 0.;    self
+        } else {     *cmid = 0.;    *cmax = 0.; }    *cmin = 0.;    self
     }
 
     fn set_lum(mut self, lum: f32) -> Self {
-        let l = self.to_sat();  let d = lum - l;
-        let n = self.r.min(self.g).min(self.b) + d;
-        let x = self.r.max(self.g).max(self.b) + d;
+        let d = lum - self.to_lum();
+        self.r += d; self.g += d; self.b += d;
+        let l = self.to_lum();
+        let n = self.r.min(self.g).min(self.b);
+        let x = self.r.max(self.g).max(self.b);
 
         if n < 0. {
-            let op = |c| l + (((c - l) * c) / (l - n));
+            let op = |c| l + (((c - l) * l) / (l - n));
             self.r = op(self.r); self.g = op(self.g); self.b = op(self.b);
         }
         if 1. < x {
@@ -483,3 +487,26 @@ impl RGBA<f32> {    #![allow(unused)]
     //  https://docs.krita.org/en/reference_manual/blending_modes.html
 }
 
+#[cfg(test)] mod tests { use super::RGBA;
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
+    }
+
+    #[test] fn set_sat_preserves_channel_order_and_sets_range() {
+        let color = RGBA::new(0.2, 0.5, 0.8, 1.0).set_sat(0.3);
+        assert_close(color.r, 0.0);
+        assert_close(color.g, 0.15);
+        assert_close(color.b, 0.3);
+        assert_close(color.to_sat(), 0.3);
+    }
+
+    #[test] fn set_lum_reaches_requested_luminosity() {
+        for color in [RGBA::new(1.0, 0.0, 0.0, 1.0), RGBA::new(0.2, 0.5, 0.8, 0.5),
+                      RGBA::new(0.4, 0.4, 0.4, 0.0)] {
+            let adjusted = color.set_lum(0.5);
+            assert_close(adjusted.to_lum(), 0.5);
+            assert_close(adjusted.a, color.a);
+        }
+    }
+}
