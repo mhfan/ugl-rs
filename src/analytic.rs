@@ -4,15 +4,19 @@
 //! crossings. Inside each resulting slab, pixel overlap varies linearly in y,
 //! so trapezoidal integration is exact apart from `f32` arithmetic.
 //!
-//! Active edges are ordered at each slab boundary. Only adjacent pairs need to
-//! be checked because the first future ordering change must occur between neighbors.
+//! Active edges persist in caller-owned storage across slabs and rows. Empty
+//! vertical ranges are skipped, while active edges are ordered only at event
+//! boundaries. Only adjacent pairs need crossing checks because the first
+//! future ordering change must occur between neighbors.
 
 use crate::{edge::Edge,
     raster::{checked_width, emit_coverage_runs, CoverageSink, FillRule, RasterError}
 };
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct AnalyticIntersection { x0: f32, x1: f32, slope: f32, winding: i8 }
+pub struct AnalyticIntersection {
+    x0: f32, x1: f32, slope: f32, y_end: f32, winding: i8,
+}
 
 pub struct AnalyticWorkspace<'a> {
     pub intersections: &'a mut [AnalyticIntersection],
@@ -29,66 +33,122 @@ pub fn rasterize_edges_analytic<S>(edges: &[Edge], width: u32, height: u32,
             intersections: edges.len(), row_coverage: width,
         });
     }
-    for y in 0..height {
+    let Some((mut y, last_row)) = occupied_rows(edges, height) else { return Ok(()); };
+    let (mut active_count, mut first_slab) = (0, true);
+    while y < last_row {
+        active_count = retain_active(workspace.intersections, active_count, y as _);
+        if active_count == 0 {
+            let Some(next) = next_occupied_row(edges, y, last_row) else { break; };
+            y = next;
+        }
         let row = &mut workspace.row_coverage[..width];
         row.fill(0.0);
-        integrate_row(edges, y as _, fill_rule,
-            &mut workspace.intersections[..edges.len()], row);
+        active_count = integrate_row(edges, y as _, fill_rule, workspace.intersections,
+            active_count, first_slab, row);
+        first_slab = false;
         emit_coverage_runs(row, y, sink)?;
+        y += 1;
     }   Ok(())
 }
 
 fn integrate_row(edges: &[Edge], row_y: f32, fill_rule: FillRule,
-    intersections: &mut [AnalyticIntersection], row: &mut [f32]) {
+    active: &mut [AnalyticIntersection], mut active_count: usize, first_slab: bool,
+    row: &mut [f32]) -> usize {
     let (row_end, mut y0) = (row_y + 1.0, row_y);
+    let mut include_spanning = first_slab;
     while y0 < row_end {
-        let (y1, count) = prepare_slab(edges, y0, row_end, intersections);
+        active_count = retain_active(active, active_count, y0);
+        active_count = activate_edges(edges, y0, include_spanning, active, active_count);
+        include_spanning = false;
+        if active_count == 0 {
+            let next = edges.iter().map(|edge| edge.upper.y)
+                .filter(|&start| start > y0).fold(row_end, f32::min);
+            if next >= row_end { break; }
+            y0 = next;  continue;
+        }
+        let y1 = prepare_active_slab(edges, y0, row_end, &mut active[..active_count]);
         if   y1 <= y0 { break; }
-        integrate_spans(&intersections[..count], y1 - y0, fill_rule, row);
+        integrate_spans(&active[..active_count], y1 - y0, fill_rule, row);
+        for edge in &mut active[..active_count] { edge.x0 = edge.x1; }
         y0 = y1;
     }
+    active_count
 }
 
-fn prepare_slab(edges: &[Edge], y0: f32, limit: f32,
-    intersections: &mut [AnalyticIntersection]) -> (f32, usize) {
-    let (mut next, mut count) = (limit, 0);
-    for edge in edges {
-        for y in [edge.upper.y, edge.lower.y] { if y > y0 && y < next { next = y; } }
-        let active_end = edge.lower.y.min(limit);
-        if edge.upper.y <= y0 && active_end > y0 {
-            let (slope, x0) = (edge.slope(), edge.x_at(y0));
-            intersections[count] = AnalyticIntersection {
-                x0, x1: x0, slope, winding: edge.winding,
-            };  count += 1;
+fn occupied_rows(edges: &[Edge], height: u32) -> Option<(u32, u32)> {
+    let first = edges.iter().map(|edge| libm::floorf(edge.upper.y))
+        .fold(f32::INFINITY, f32::min).clamp(0.0, height as _) as u32;
+    let last = edges.iter().map(|edge| libm::ceilf(edge.lower.y))
+        .fold(f32::NEG_INFINITY, f32::max).clamp(0.0, height as _) as u32;
+    (first < last).then_some((first, last))
+}
 
-            if slope != 0.0 {
-                let step = if slope > 0.0 { 1.0 } else { -1.0 };
-                let mut boundary = if slope > 0.0 { libm::floorf(x0) + 1.0 }
-                    else { libm::ceilf(x0) - 1.0 };
-                let mut y = edge.upper.y + (boundary - edge.upper.x) / slope;
-                if y <= y0 {
-                    boundary += step;
-                    y = edge.upper.y + (boundary - edge.upper.x) / slope;
-                }
-                if y >  y0 && y < next && y < active_end { next = y; }
-            }
+fn next_occupied_row(edges: &[Edge], current: u32, limit: u32) -> Option<u32> {
+    let current_y = current as f32;
+    edges.iter().filter(|edge| edge.lower.y > current_y)
+        .map(|edge| libm::floorf(edge.upper.y).max(current_y) as u32)
+        .filter(|&row| row < limit).min()
+}
+
+fn retain_active(active: &mut [AnalyticIntersection], count: usize, y: f32) -> usize {
+    let mut retained = 0;
+    for index in 0..count {
+        if active[index].y_end > y {
+            active[retained] = active[index];
+            retained += 1;
         }
     }
-    let intersections = &mut intersections[..count];
-    intersections.sort_unstable_by(|a, b|
+    retained
+}
+
+fn activate_edges(edges: &[Edge], y: f32, include_spanning: bool,
+    active: &mut [AnalyticIntersection], mut count: usize) -> usize {
+    for edge in edges {
+        if edge.upper.y == y || include_spanning && edge.upper.y < y && edge.lower.y > y {
+            let (slope, x0) = (edge.slope(), edge.x_at(y));
+            active[count] = AnalyticIntersection {
+                x0, x1: x0, slope, y_end: edge.lower.y, winding: edge.winding,
+            };
+            count += 1;
+        }
+    }
+    count
+}
+
+fn prepare_active_slab(edges: &[Edge], y0: f32, limit: f32,
+    active: &mut [AnalyticIntersection]) -> f32 {
+    let mut next = active.iter().map(|edge| edge.y_end)
+        .filter(|&end| end > y0).fold(limit, f32::min);
+    for start in edges.iter().map(|edge| edge.upper.y) {
+        if start > y0 && start < next { next = start; }
+    }
+    for edge in &*active {
+        if edge.slope != 0.0 {
+            let step = if edge.slope > 0.0 { 1.0 } else { -1.0 };
+            let mut boundary = if edge.slope > 0.0 { libm::floorf(edge.x0) + 1.0 }
+                else { libm::ceilf(edge.x0) - 1.0 };
+            let mut y = y0 + (boundary - edge.x0) / edge.slope;
+            if y <= y0 {
+                boundary += step;
+                y = y0 + (boundary - edge.x0) / edge.slope;
+            }
+            if y > y0 && y < next && y < edge.y_end { next = y; }
+        }
+    }
+    active.sort_unstable_by(|a, b|
         a.x0.total_cmp(&b.x0).then_with(|| a.slope.total_cmp(&b.slope)));
-    for pair in intersections.windows(2) {
+    for pair in active.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
         if a.slope == b.slope { continue; }
         let y = y0 + (b.x0 - a.x0) / (a.slope - b.slope);
         if  y > y0 && y < next { next = y; }
     }
     let height = next - y0;
-    for intersection in &mut *intersections {
+    for intersection in &mut *active {
         intersection.x1 = intersection.x0 + intersection.slope * height;
     }
-    intersections.sort_unstable_by(|a, b| (a.x0 + a.x1).total_cmp(&(b.x0 + b.x1)));
-    (next, count)
+    active.sort_unstable_by(|a, b| (a.x0 + a.x1).total_cmp(&(b.x0 + b.x1)));
+    next
 }
 
 fn integrate_spans(intersections: &[AnalyticIntersection], height: f32,
