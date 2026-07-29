@@ -30,45 +30,45 @@ impl ColorChannel for u16 { const MAX: Self = u16::MAX; const MIN: Self = 0; }
 impl ColorChannel for f32 { const MAX: Self = 1.0;      const MIN: Self = 0.0; }
 
 impl<T: ColorChannel> RGBA<T> {
-    #[inline] pub fn new(r: T, g: T, b: T, a: T) -> Self { Self { r, g, b, a } }
+    pub fn new(r: T, g: T, b: T, a: T) -> Self { Self { r, g, b, a } }
 
-    #[inline] pub fn to_arra3(self) -> [T; 3] { [self.r, self.g, self.b] }
-    #[inline] pub fn to_array(self) -> [T; 4] { [self.r, self.g, self.b, self.a] }
+    pub fn to_arra3(self) -> [T; 3] { [self.r, self.g, self.b] }
+    pub fn to_array(self) -> [T; 4] { [self.r, self.g, self.b, self.a] }
         //unsafe { core::mem::transmute(self) }   // [b, g, r, a] or [a, r, g, b]
 
-    #[inline] pub fn zeroed() -> Self { Self { r: T::MIN, g: T::MIN, b: T::MIN, a: T::MIN } }
-    #[inline] pub fn white()  -> Self { Self { r: T::MAX, g: T::MAX, b: T::MAX, a: T::MAX } }
-    #[inline] pub fn black()  -> Self { Self { r: T::MIN, g: T::MIN, b: T::MIN, a: T::MAX } }
-    #[inline] pub fn green()  -> Self { Self { r: T::MIN, g: T::MAX, b: T::MIN, a: T::MAX } }
-    #[inline] pub fn blue()   -> Self { Self { r: T::MIN, g: T::MIN, b: T::MAX, a: T::MAX } }
-    #[inline] pub fn red()    -> Self { Self { r: T::MAX, g: T::MIN, b: T::MIN, a: T::MAX } }
-    #[inline] pub fn cyan()   -> Self { Self { r: T::MIN, g: T::MAX, b: T::MAX, a: T::MAX } }
-    #[inline] pub fn yellow() -> Self { Self { r: T::MAX, g: T::MAX, b: T::MIN, a: T::MAX } }
-    #[inline] pub fn purple() -> Self { Self { r: T::MAX, g: T::MIN, b: T::MAX, a: T::MAX } }
+    pub fn zeroed() -> Self { Self { r: T::MIN, g: T::MIN, b: T::MIN, a: T::MIN } }
+    pub fn white()  -> Self { Self { r: T::MAX, g: T::MAX, b: T::MAX, a: T::MAX } }
+    pub fn black()  -> Self { Self { r: T::MIN, g: T::MIN, b: T::MIN, a: T::MAX } }
+    pub fn green()  -> Self { Self { r: T::MIN, g: T::MAX, b: T::MIN, a: T::MAX } }
+    pub fn blue()   -> Self { Self { r: T::MIN, g: T::MIN, b: T::MAX, a: T::MAX } }
+    pub fn red()    -> Self { Self { r: T::MAX, g: T::MIN, b: T::MIN, a: T::MAX } }
+    pub fn cyan()   -> Self { Self { r: T::MIN, g: T::MAX, b: T::MAX, a: T::MAX } }
+    pub fn yellow() -> Self { Self { r: T::MAX, g: T::MAX, b: T::MIN, a: T::MAX } }
+    pub fn purple() -> Self { Self { r: T::MAX, g: T::MIN, b: T::MAX, a: T::MAX } }
 }
 
-impl<T: ColorChannel> Default for RGBA<T> { #[inline] fn default() -> Self { Self::black() } }
+impl<T: ColorChannel> Default for RGBA<T> { fn default() -> Self { Self::black() } }
 
 impl<T: ColorChannel> From<(T, T, T, T)> for RGBA<T> {
-    #[inline] fn from((r, g, b,  a): (T, T, T, T)) -> Self { Self { r, g, b, a } }
+    fn from((r, g, b,  a): (T, T, T, T)) -> Self { Self { r, g, b, a } }
         //unsafe { core::mem::transmute(rgba) }   // (b, g, r, a) or (a, r, g, b)
 }
 
 impl<T: ColorChannel> From<[T; 4]> for RGBA<T> {
-    #[inline] fn from([r, g, b, a]: [T; 4]) -> Self { Self { r, g, b, a } }
+    fn from([r, g, b, a]: [T; 4]) -> Self { Self { r, g, b, a } }
         //unsafe { core::mem::transmute(rgba) }   // [b, g, r, a] or [a, r, g, b]
 }
 
 impl<T: ColorChannel> From<(T, T, T)> for RGBA<T> {
-    #[inline] fn from((r, g, b): (T, T, T)) -> Self { Self { r, g, b, a: T::MAX } }
+    fn from((r, g, b): (T, T, T)) -> Self { Self { r, g, b, a: T::MAX } }
 }
 
 impl<T: ColorChannel> From<[T; 3]>    for RGBA<T> {
-    #[inline] fn from([r, g, b]: [T; 3])    -> Self { Self { r, g, b, a: T::MAX } }
+    fn from([r, g, b]: [T; 3])    -> Self { Self { r, g, b, a: T::MAX } }
 }
 
 impl<T: ColorChannel>  TryFrom<&[T]> for RGBA<T> {
-    #[inline] fn try_from(rgb: &[T]) -> Result<Self, Self::Error> {
+    fn try_from(rgb: &[T]) -> Result<Self, Self::Error> {
         match rgb {
             [r, g, b] => Ok(Self::new(*r, *g, *b, T::MAX)),
             [r, g, b, a, ..] => Ok(Self::new(*r, *g, *b, *a)),
@@ -78,42 +78,42 @@ impl<T: ColorChannel>  TryFrom<&[T]> for RGBA<T> {
 }
 
 impl From<RGBA<f32>> for RGBA<u8> {     // quantization
-    #[inline] fn from(clr: RGBA<f32>) -> Self {   const MAX: f32 = u8 ::MAX as _;
+    fn from(clr: RGBA<f32>) -> Self {   const MAX: f32 = u8 ::MAX as _;
         Self { r: (clr.r * MAX + 0.5) as _, g: (clr.g * MAX + 0.5) as _,
                b: (clr.b * MAX + 0.5) as _, a: (clr.a * MAX + 0.5) as _ }
     }
 }
 
 impl From<RGBA<f32>> for RGBA<u16> {
-    #[inline] fn from(clr: RGBA<f32>) -> Self {   const MAX: f32 = u16::MAX as _;
+    fn from(clr: RGBA<f32>) -> Self {   const MAX: f32 = u16::MAX as _;
         Self { r: (clr.r * MAX + 0.5) as _, g: (clr.g * MAX + 0.5) as _,
                b: (clr.b * MAX + 0.5) as _, a: (clr.a * MAX + 0.5) as _ }
     }
 }
 
 impl From<RGBA<u8>>  for RGBA<f32> {    // intensity/normalize
-    #[inline] fn from(clr: RGBA<u8>)  -> Self {   const MAX: f32 = u8 ::MAX as _;
+    fn from(clr: RGBA<u8>)  -> Self {   const MAX: f32 = u8 ::MAX as _;
         Self { r: clr.r as f32 / MAX, g: clr.g as f32 / MAX,
                b: clr.b as f32 / MAX, a: clr.a as f32 / MAX }
     }
 }
 
 impl From<RGBA<u16>> for RGBA<f32> {
-    #[inline] fn from(clr: RGBA<u16>) -> Self {   const MAX: f32 = u16::MAX as _;
+    fn from(clr: RGBA<u16>) -> Self {   const MAX: f32 = u16::MAX as _;
         Self { r: clr.r as f32 / MAX, g: clr.g as f32 / MAX,
                b: clr.b as f32 / MAX, a: clr.a as f32 / MAX }
     }
 }
 
 impl From<RGBA<u16>> for RGBA<u8> {
-    #[inline] fn from(clr: RGBA<u16>) -> Self {
+    fn from(clr: RGBA<u16>) -> Self {
         Self { r: (clr.r >> 8) as _, g: (clr.g >> 8) as _,
                b: (clr.b >> 8) as _, a: (clr.a >> 8) as _ }
     }
 }
 
 impl From<RGBA<u8>>  for RGBA<u16> {
-    #[inline] fn from(clr: RGBA<u8>) -> Self {
+    fn from(clr: RGBA<u8>) -> Self {
         let expand = |channel| u16::from(channel) * 0x0101;
         Self { r: expand(clr.r), g: expand(clr.g), b: expand(clr.b), a: expand(clr.a) }
     }
@@ -122,7 +122,7 @@ impl From<RGBA<u8>>  for RGBA<u16> {
 impl From<u32> for RGBA<u8> {   // 0xAARRGGBB
         //Self { r: ((cpv >> 16) & 0xFF) as _, b: (cpv & 0xFF) as _,
         //       g: ((cpv >>  8) & 0xFF) as _, a: (cpv >> 24)  as _ }
-    #[inline] fn from(cpv: u32) -> Self { unsafe { core::mem::transmute(cpv) } }
+    fn from(cpv: u32) -> Self { unsafe { core::mem::transmute(cpv) } }
         //Self { r: (cpv >> 24)  as _, b: ((cpv >>  8) & 0xFF) as _,
         //       g: (cpv & 0xFF) as _, a: ((cpv >> 16) & 0xFF) as _ }
 }
@@ -130,7 +130,7 @@ impl From<u32> for RGBA<u8> {   // 0xAARRGGBB
 impl From<u64> for RGBA<u16> {  // 0xAAAARRRRGGGGBBBB
         //Self { r: ((cpv >> 32) & 0xFFFF) as _, b: (cpv & 0xFFFF) as _,
         //       g: ((cpv >> 16) & 0xFFFF) as _, a: (cpv >> 48)    as _ }
-    #[inline] fn from(cpv: u64) -> Self { unsafe { core::mem::transmute(cpv) } }
+    fn from(cpv: u64) -> Self { unsafe { core::mem::transmute(cpv) } }
         //Self { r: ((cpv >> 48)   as _, b: ((cpv >> 16) & 0xFFFF) as _,
         //       g: (cpv & 0xFFFF) as _, a: ((cpv >> 32) & 0xFFFF) as _ }
 }
@@ -138,7 +138,7 @@ impl From<u64> for RGBA<u16> {  // 0xAAAARRRRGGGGBBBB
 impl RGBA<u8> {
         //((self.a as u32) << 24) | ((self.r as u32) << 16) |
         //((self.g as u32) <<  8) |  (self.b as u32)
-    #[inline] pub fn packed(&self) -> u32 { unsafe { core::mem::transmute(*self) } }
+    pub fn packed(&self) -> u32 { unsafe { core::mem::transmute(*self) } }
         //((self.b as u32) << 24) | ((self.g as u32) << 16) |
         //((self.r as u32) <<  8) |  (self.a as u32)
     pub fn mula(&self) -> Self {
@@ -151,7 +151,7 @@ impl RGBA<u8> {
 impl RGBA<u16> {
         //((self.a as u64) << 48) | ((self.r as u64) << 32) |
         //((self.g as u64) << 16) |  (self.b as u64)
-    #[inline] pub fn packed(&self) -> u64 { unsafe { core::mem::transmute(*self) } }
+    pub fn packed(&self) -> u64 { unsafe { core::mem::transmute(*self) } }
         //((self.b as u64) << 48) | ((self.g as u64) << 32) |
         //((self.r as u64) << 16) |  (self.a as u64)
     pub fn mula(&self) -> Self {
@@ -167,18 +167,18 @@ impl RGBA<f32> {    #![allow(unused)]
     }
 
     //  Gamma Correction: https://en.wikipedia.org/wiki/Gamma_correction
-    #[inline] fn fast_gamma_expand(v: f32) -> f32 { v * v }
-    #[inline] fn fast_gamma_encode(v: f32) -> f32 { v.sqrt() }
+    fn fast_gamma_expand(v: f32) -> f32 { v * v }
+    fn fast_gamma_encode(v: f32) -> f32 { libm::sqrtf(v) }
 
-    #[inline] fn gamma_expand(v: f32) -> f32 { v.powf(2.2) }
-    #[inline] fn gamma_encode(v: f32) -> f32 { v.powf(1. / 2.2) }
+    fn gamma_expand(v: f32) -> f32 { libm::powf(v, 2.2) }
+    fn gamma_encode(v: f32) -> f32 { libm::powf(v, 1. / 2.2) }
     // TODO: http://www.machinedlearnings.com/2011/06/fast-approximate-logarithm-exponential.html
 
-    #[inline] fn srgb_gamma_expand(v: f32) -> f32 {
-        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    fn srgb_gamma_expand(v: f32) -> f32 {
+        if v <= 0.04045 { v / 12.92 } else { libm::powf((v + 0.055) / 1.055, 2.4) }
     }   //  https://en.wikipedia.org/wiki/SRGB#Transformation
-    #[inline] fn srgb_gamma_encode(v: f32) -> f32 {
-        if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1. / 2.4) - 0.055 }
+    fn srgb_gamma_encode(v: f32) -> f32 {
+        if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * libm::powf(v, 1. / 2.4) - 0.055 }
     }
 
     pub fn map2linear(&self) -> Self { Self {
