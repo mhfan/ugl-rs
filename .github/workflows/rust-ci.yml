@@ -1,121 +1,70 @@
-
-name: Rust CI   # https://docs.github.com/en/actions, https://course.rs/test/ci.html
+name: Rust CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [main]
   pull_request:
-    branches: [ master ]
-
-  #schedule: -cron:'0 0 * * *'
-
-  # Allows you to run this workflow manually from the Actions tab
+    branches: [main]
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  testbuild:
-    #name: Build Rust Project
-    runs-on: ubuntu-latest  # https://github.com/actions/virtual-environments
-
-    #strategy:
-    #  matrix:
-    #    toolchain:
-    #      - stable
-    #      - nightly
-    #
-    #    compiler: [gcc, clang]
-    #    build: [linux, macos, windows]
-    #    include:
-    #      - build: linux
-    #        os: ubuntu-latest
-    #        target: x86_64-unknown-linux-musl
-    #      - build: macos
-    #        os: macos-latest
-    #        target: aarch64-apple-darwin
-    #      - build: windows
-    #        os: windows-latest
-    #        target: x86_64-pc-windows-msvc
-    #  fail-fast: false
-
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: stable all features
+            toolchain: stable
+            command: cargo test --all-features
+          - name: stable no default features
+            toolchain: stable
+            command: cargo test --no-default-features
+          - name: stable serde without fixed
+            toolchain: stable
+            command: cargo test --no-default-features --features serde
+          - name: MSRV all features
+            toolchain: "1.93"
+            command: cargo test --all-features
+    name: ${{ matrix.name }}
     steps:
-    #- run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
-    - run: rustup update # some packages required by vello requires rustc v1.79
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - uses: Swatinem/rust-cache@v2
+      - run: ${{ matrix.command }}
 
-    #- name: Install toolchain
-    #  uses: dtolnay/rust-toolchain@stable
-    #- uses: Swatinem/rust-cache@v2
+  target-check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: 32-bit Linux
+            target: i686-unknown-linux-gnu
+            features: --all-features
+          - name: Cortex-M no FPU
+            target: thumbv7em-none-eabi
+            features: --no-default-features
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --lib --target ${{ matrix.target }} ${{ matrix.features }}
 
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    - run: git clone https://github.com/zimond/lottie-rs # for lottie-rs/fixtures
-
-    - uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Run tests
-    #  uses: taiki-e/install-action@nextest
-      run: cargo t -- --nocapture #cargo nextest r
-
-    - name: Build
-      run: cargo b
-
-    #- name: Benchmark
-    #  run: |
-    #    cargo bench -F "evg,b2d" # --all-features
-    #  #  sudo cargo flamegraph --bench engine_2d
-
-    #- name: Publish to crates-io
-    #  uses: katyo/publish-crates@v2
-    #  with:
-    #    registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-  #coverage:   # https://github.com/xd009642/tarpaulin
-  #  runs-on: ubuntu-latest
-  #  #container:
-  #  #  image: xd009642/tarpaulin:develop-nightly
-  #  #  options: --security-opt seccomp=unconfined
-  #
-  #  steps:
-  #  - name: Checkout repository
-  #    uses: actions/checkout@v4
-
-    - run: rustup toolchain install nightly --profile minimal --component llvm-tools
-    - uses: Swatinem/rust-cache@v2 # should be after rustup
-
-    - uses: taiki-e/install-action@cargo-llvm-cov # https://github.com/taiki-e/cargo-llvm-cov
-    - name: Generate code coverage  # https://github.com/actions-rs/tarpaulin
-      env:
-        CC:  clang
-        CXX: clang++
-      run: cargo +nightly llvm-cov --doctests --lcov --output-path lcov.info #--workspace --all-features --include-ffi
-      #  cargo tarpaulin --run-types 'Tests,Doctests' --out Lcov --exclude-files 'inperse/src/*'
-      #  cargo install tarpaulin
-      #uses: actions-rs/tarpaulin@v0.1    # XXX: no more working
-      #with:
-      #  #version: '0.20.1'
-      #  #args: '-- --test-threads 1'
-      #  run-types: 'Tests,Doctests'
-
-    - name: Upload to codecov.io
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{secrets.CODECOV_TOKEN}}  # not required for public repos
-      #  fail_ci_if_error: true
-        files: lcov.info
-
-    #- name: Archive code coverage results
-    #  uses: actions/upload-artifact@v3
-    #  with:
-    #    name: code-coverage-report
-    #    path: cobertura.xml
-
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --all-features -- -D warnings
