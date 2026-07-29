@@ -17,7 +17,11 @@ impl Default for FlattenOptions {
 }
 
 pub trait LineSink { type Error;
+    fn begin_subpath(&mut self, _: Point) -> Result<(), Self::Error> { Ok(()) }
+
     fn line(&mut self, from: Point, to: Point) -> Result<(), Self::Error>;
+
+    fn end_subpath(&mut self) -> Result<(), Self::Error> { Ok(()) }
 }
 
 impl<E, F> LineSink for F where F: FnMut(Point, Point) -> Result<(), E> {
@@ -47,7 +51,11 @@ pub fn flatten_path<S>(path: &Path, transform: Affine, options: FlattenOptions,
     for segment in path.segments() {
         match *segment {
             PathSegment::MoveTo(to) => {
+                if current.is_some() {
+                    sink.end_subpath().map_err(FlattenError::Sink)?;
+                }
                 let to = transformed(transform, to)?;
+                sink.begin_subpath(to).map_err(FlattenError::Sink)?;
                 subpath_start = Some(to);
                 current = Some(to);
             }
@@ -87,7 +95,9 @@ pub fn flatten_path<S>(path: &Path, transform: Affine, options: FlattenOptions,
                 current = Some(to);
             }
         }
-    }   Ok(())
+    }
+    if current.is_some() { sink.end_subpath().map_err(FlattenError::Sink)?; }
+    Ok(())
 }
 
 fn validate_options<E>(options: FlattenOptions) -> Result<(), FlattenError<E>> {

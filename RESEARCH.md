@@ -305,3 +305,57 @@ Tests cover straight and degenerate curves, transformed tolerance, output
 order, exact endpoints, invalid tolerances, non-finite transformed values,
 depth exhaustion, and sink capacity errors. Random curves will later compare
 maximum sampled deviation and output with the reference renderer.
+
+## Decision record 2: directed fill edges
+
+### Problem and contract
+
+Flattened subpaths must become edges that preserve winding and can feed several
+candidate coverage algorithms. Fill semantics implicitly close open subpaths.
+Horizontal lines contribute no scan crossing, while shared vertices must later
+use a half-open vertical interval to avoid double counting.
+
+### Designs studied
+
+- micro{gl} tessellation/trapezoid separation and allocator-aware geometry.
+- Blend2D's geometry-to-edge focus and analytic rasterizer.
+- AGG/FreeType-style directed cell/edge accumulation.
+- Vello CPU shared geometry followed by tile/strip-specific processing.
+
+### Decision
+
+The common `Edge<T>` stores only:
+
+- endpoints normalized to increasing device-space `y`;
+- a signed winding value preserving original direction.
+
+It deliberately does not store inverse slope, scanline bounds, tile IDs, or
+coverage coefficients. Those belong to the selected raster backend and have
+different numeric and locality tradeoffs.
+
+The flattener exposes subpath begin/end events through default sink methods.
+A fill-edge adapter uses them to close every subpath implicitly, including when
+another `MoveTo` begins a new one. Exact horizontal and zero-length lines emit
+no edge. With device `y` increasing downward, downward source edges have
+winding `+1` and upward edges `-1`; changing both signs would not affect
+non-zero filling, but the convention remains stable for tests.
+
+### Fixed-point and memory implications
+
+The shared edge performs no division and needs no wider intermediate than its
+coordinate representation. Fixed-point slope or intersection calculations are
+deferred to raster-backend preparation, where their required width can be
+proved. Edges stream through a fallible sink, so callers can use owned,
+fixed-capacity, or immediate binning storage.
+
+### Deferred choices
+
+- Active-edge sorting and half-open intersection rules.
+- Direct trapezoid decomposition.
+- Strip/tile binning and compact edge encodings.
+- Clipping before edge creation versus during backend preparation.
+
+### Falsification
+
+Tests cover clockwise/counter-clockwise winding, implicit and explicit closure,
+multiple subpaths, horizontal removal, transformed curves, and capacity failure.
