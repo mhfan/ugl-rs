@@ -2,6 +2,7 @@
 
 use core::convert::Infallible;
 use crate::{color::RGBA, edge::{build_fill_edges, Edge, EdgeSink},
+    analytic::{AnalyticIntersection, AnalyticWorkspace, rasterize_edges_analytic},
     flatten::{FlattenError, FlattenOptions}, geometry::{Affine, Path, PathError},
     raster::{CoverageSink, FillRule, Intersection, RasterError, RasterOptions,
         RasterWorkspace, rasterize_edges,
@@ -84,6 +85,12 @@ pub struct RenderWorkspace<'a> {
     pub row_coverage: &'a mut [f32],
 }
 
+pub struct AnalyticRenderWorkspace<'a> {
+    pub intersections: &'a mut [AnalyticIntersection],
+    pub  row_coverage: &'a mut [f32],
+    pub edges: &'a mut [Edge],
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct RenderOptions {
     pub fill_rule: FillRule,
     pub flatten: FlattenOptions,
@@ -111,11 +118,7 @@ impl Default for RenderOptions { fn default() -> Self {
 pub fn render_solid(path: &Path, transform: Affine, color: RGBA<u8>, options: RenderOptions,
     target: &mut PixmapMut<'_>, workspace: &mut RenderWorkspace<'_>) ->
     Result<(), RenderError> {
-    let mut edge_sink = EdgeSliceSink { edges: workspace.edges, len: 0 };
-    build_fill_edges(path, transform, options.flatten, &mut edge_sink)
-        .map_err(map_flatten_error)?;
-    let edge_count = edge_sink.len;
-
+    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     let mut compositor = SolidCompositor { target, color };
     rasterize_edges(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, options.raster, &mut RasterWorkspace {
@@ -125,27 +128,46 @@ pub fn render_solid(path: &Path, transform: Affine, color: RGBA<u8>, options: Re
     ).map_err(map_raster_error)
 }
 
+/// Renders a solid color through the exact-area `f32` rasterizer.
+pub fn render_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
+    options: RenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
+    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    let mut compositor = SolidCompositor { target, color };
+    rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
+        compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
+            intersections: workspace.intersections,
+             row_coverage: workspace.row_coverage,
+        }, &mut compositor,
+    ).map_err(map_raster_error)
+}
+
+fn build_edges(path: &Path, transform: Affine, options: FlattenOptions, edges: &mut [Edge]) ->
+    Result<usize, RenderError> {
+    let mut sink = EdgeSliceSink { edges, len: 0 };
+    build_fill_edges(path, transform, options, &mut sink).map_err(map_flatten_error)?;
+    Ok(sink.len)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] struct EdgeCapacity { needed_at_least: usize }
 
 struct EdgeSliceSink<'a> { edges: &'a mut [Edge], len: usize }
 
 impl EdgeSink for EdgeSliceSink<'_> {
-    type Error = EdgeCapacity;
     fn edge(&mut self, edge: Edge) -> Result<(), Self::Error> {
         let slot = self.edges.get_mut(self.len)
             .ok_or(EdgeCapacity { needed_at_least: self.len + 1 })?;
         *slot = edge;   self.len += 1;  Ok(())
-    }
+    }   type Error = EdgeCapacity;
 }
 
 struct SolidCompositor<'a, 'b> { target: &'a mut PixmapMut<'b>, color: RGBA<u8> }
 
 impl CoverageSink for SolidCompositor<'_, '_> {
-    type Error = Infallible;
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
         Result<(), Self::Error> {
         self.target.blend_solid_span(x, y, len, self.color, coverage);  Ok(())
-    }
+    }   type Error = Infallible;
 }
 
 fn map_flatten_error(error: FlattenError<EdgeCapacity>) -> RenderError {
@@ -169,12 +191,10 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
     }
 }
 
-#[cfg(test)] mod tests {
-    use alloc::vec;
-    use super::{PixmapError, PixmapMut, RenderError, RenderOptions,
-        RenderWorkspace, render_solid };
+#[cfg(test)] mod tests { use super::*;
     use crate::{color::RGBA, edge::Edge, raster::Intersection,
-        geometry::{Affine, PathBuilder}};
+        analytic::AnalyticIntersection, geometry::{Affine, PathBuilder}};
+    use alloc::vec;
 
     #[test] fn pixmap_validates_stride_and_preserves_padding() {
         let mut data = [0_u8; 11];
@@ -229,5 +249,21 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
             },
         );
         assert_eq!(result, Err(RenderError::EdgeCapacity { needed_at_least: 2 }));
+    }
+
+    #[test] fn analytic_solid_rendering_uses_the_shared_compositor() {
+        let (mut builder, mut pixels) = (PathBuilder::new(), [0; 4]);
+        builder.move_to((0.0, 0.0)).line_to((1.0, 0.0)).unwrap()
+            .line_to((0.0, 1.0)).unwrap();
+        let mut target = PixmapMut::new(&mut pixels, 1, 1, 4).unwrap();
+        let (mut edges, mut intersections, mut row_coverage) = (
+            [Edge::default(); 2], [AnalyticIntersection::default(); 2], [0.0]);
+        render_solid_analytic(&builder.build(), Affine::identity(), RGBA::white(),
+            RenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut intersections,
+                row_coverage: &mut row_coverage,
+            },
+        ).unwrap();
+        assert_eq!(target.pixel(0, 0), Some(RGBA::new(128, 128, 128, 128)));
     }
 }

@@ -213,13 +213,12 @@ fn midpoint(a: Point, b: Point) -> Point {
     Point::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5)
 }
 
-#[cfg(test)] mod tests {
-    use alloc::vec::Vec;
-    use core::convert::Infallible;
-    use super::{flatten_path, Affine, FlattenError, FlattenOptions, Point};
+#[cfg(test)] mod tests { use super::*;
     use crate::geometry::PathBuilder;
+    use core::convert::Infallible;
+    use alloc::vec::Vec;
 
-    fn collect(path: &crate::geometry::Path, transform: Affine,
+    fn collect(path: &Path, transform: Affine,
         options: FlattenOptions) -> Result<Vec<(Point, Point)>, FlattenError<Infallible>> {
         let mut lines = Vec::new();
         flatten_path(path, transform, options, &mut |from, to| {

@@ -192,9 +192,7 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
     }   Ok(())
 }
 
-#[cfg(test)] mod tests {
-    use super::{Affine, Path, PathBuilder, PathError, PathSegment, Point};
-
+#[cfg(test)] mod tests { use super::*;
     #[test] fn affine_uses_documented_column_vector_convention() {
         let transform = Affine::new(2.0, 0.5, -1.0, 3.0, 4.0, -2.0);
         assert_eq!(transform.transform_point(Point::new(3.0, 2.0)), Point::new(8.0, 5.5));

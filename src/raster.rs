@@ -137,14 +137,11 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
     }
 }
 
-#[cfg(test)] mod tests {
-    use alloc::vec;
-    use alloc::vec::Vec;
+#[cfg(test)] mod tests { use super::*;
+    use crate::{flatten::FlattenOptions, geometry::{Affine, PathBuilder},
+        edge::{build_fill_edges, Edge}};
     use core::convert::Infallible;
-    use super::{rasterize_edges, CoverageSink, FillRule, Intersection, RasterError,
-        RasterOptions, RasterWorkspace};
-    use crate::{edge::{build_fill_edges, Edge}, flatten::FlattenOptions,
-        geometry::{Affine, PathBuilder}};
+    use alloc::{vec, vec::Vec};
 
     fn path_edges(builder: PathBuilder) -> Vec<Edge> {
         let mut edges = Vec::new();

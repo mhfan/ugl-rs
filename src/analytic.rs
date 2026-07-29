@@ -63,9 +63,14 @@ fn next_event(edges: &[Edge], y0: f32, limit: f32) -> f32 {
             let slope = edge.slope();
             if slope != 0.0 {
                 let x = edge.x_at(y0);
-                let boundary = if slope > 0.0 { libm::floorf(x) + 1.0 }
+                let step = if slope > 0.0 { 1.0 } else { -1.0 };
+                let mut boundary = if slope > 0.0 { libm::floorf(x) + 1.0 }
                     else { libm::ceilf(x) - 1.0 };
-                let y = edge.upper.y + (boundary - edge.upper.x) / slope;
+                let mut y = edge.upper.y + (boundary - edge.upper.x) / slope;
+                if y <= y0 {
+                    boundary += step;
+                    y = edge.upper.y + (boundary - edge.upper.x) / slope;
+                }
                 if y > y0 && y < next && y < active_end { next = y; }
             }
         }
@@ -105,12 +110,13 @@ fn integrate_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
     }
 }
 
-#[cfg(test)] mod tests {
+#[cfg(test)] mod tests { use super::*;
     use alloc::{vec, vec::Vec};
     use core::convert::Infallible;
-    use super::{rasterize_edges_analytic, AnalyticIntersection, AnalyticWorkspace};
-    use crate::{edge::{build_fill_edges, Edge}, flatten::FlattenOptions,
-        geometry::{Affine, PathBuilder}, raster::FillRule};
+    use crate::{flatten::FlattenOptions, geometry::{Affine, PathBuilder},
+        raster::{rasterize_edges, FillRule, Intersection, RasterOptions, RasterWorkspace},
+        edge::{build_fill_edges, Edge},
+    };
 
     fn edges(builder: PathBuilder) -> Vec<Edge> {
         let mut edges = Vec::new();
@@ -119,7 +125,8 @@ fn integrate_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
         edges
     }
 
-    fn render(edges: &[Edge], width: u32, height: u32, fill_rule: FillRule) -> Vec<u8> {
+    fn render_analytic(edges: &[Edge], width: u32, height: u32,
+        fill_rule: FillRule) -> Vec<u8> {
         let mut pixels = vec![0; width as usize * height as usize];
         let mut intersections = vec![AnalyticIntersection::default(); edges.len()];
         let mut row = vec![0.0; width as usize];
@@ -132,11 +139,26 @@ fn integrate_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
         ).unwrap();     pixels
     }
 
+    fn render_sampled(edges: &[Edge], width: u32, height: u32,
+        fill_rule: FillRule) -> Vec<u8> {
+        let mut pixels = vec![0; width as usize * height as usize];
+        let mut intersections = vec![Intersection::default(); edges.len()];
+        let mut row  = vec![0.0; width as usize];
+        rasterize_edges(edges, width, height, fill_rule,
+            RasterOptions { vertical_samples: 2048 }, &mut RasterWorkspace {
+                intersections: &mut intersections, row_coverage: &mut row,
+            }, &mut |x, y, coverage| {
+                pixels[(y * width + x) as usize] = coverage;
+                Ok::<_, Infallible>(())
+            },
+        ).unwrap();     pixels
+    }
+
     #[test] fn aligned_rectangle_has_exact_coverage() {
         let mut builder = PathBuilder::new();
         builder.move_to((1.0, 1.0)).line_to((3.0, 1.0)).unwrap()
             .line_to((3.0, 3.0)).unwrap().line_to((1.0, 3.0)).unwrap();
-        assert_eq!(render(&edges(builder), 4, 4, FillRule::NonZero),
+        assert_eq!(render_analytic(&edges(builder), 4, 4, FillRule::NonZero),
             [0, 0, 0, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 0, 0, 0]);
     }
 
@@ -144,21 +166,21 @@ fn integrate_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0)).line_to((1.0, 0.0)).unwrap()
             .line_to((0.0, 1.0)).unwrap();
-        assert_eq!(render(&edges(builder), 1, 1, FillRule::NonZero), [128]);
+        assert_eq!(render_analytic(&edges(builder), 1, 1, FillRule::NonZero), [128]);
     }
 
     #[test] fn fractional_rectangle_has_exact_horizontal_area() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.25, 0.0)).line_to((1.75, 0.0)).unwrap()
             .line_to((1.75, 1.0)).unwrap().line_to((0.25, 1.0)).unwrap();
-        assert_eq!(render(&edges(builder), 2, 1, FillRule::NonZero), [191, 191]);
+        assert_eq!(render_analytic(&edges(builder), 2, 1, FillRule::NonZero), [191, 191]);
     }
 
     #[test] fn crossing_edges_are_split_inside_the_row() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0)).line_to((2.0, 2.0)).unwrap()
             .line_to((0.0, 2.0)).unwrap().line_to((2.0, 0.0)).unwrap();
-        assert_eq!(render(&edges(builder), 2, 2, FillRule::EvenOdd), [128; 4]);
+        assert_eq!(render_analytic(&edges(builder), 2, 2, FillRule::EvenOdd), [128; 4]);
     }
 
     #[test] fn nested_contours_distinguish_non_zero_and_even_odd() {
@@ -168,7 +190,34 @@ fn integrate_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
                 .line_to((x1, y1)).unwrap().line_to((x0, y1)).unwrap();
         }
         let edges = edges(builder);
-        assert_eq!(render(&edges, 3, 3, FillRule::NonZero)[4], 255);
-        assert_eq!(render(&edges, 3, 3, FillRule::EvenOdd)[4], 0);
+        assert_eq!(render_analytic(&edges, 3, 3, FillRule::NonZero)[4], 255);
+        assert_eq!(render_analytic(&edges, 3, 3, FillRule::EvenOdd)[4], 0);
+    }
+
+    #[test] fn analytic_triangles_match_high_sample_reference() {
+        let mut state = 0x7a31_4f29_u32;
+        for case in 0..32 {
+            let mut builder = PathBuilder::new();
+            let mut point = || {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 8) as f32 * (10.0 / 16_777_216.0) - 1.0
+            };
+            let points = [(point(), point()), (point(), point()), (point(), point())];
+            builder.move_to(points[0]).line_to(points[1]).unwrap()
+                .line_to(points[2]).unwrap();
+            let edges = edges(builder);
+            for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
+                let (analytic, sampled) = (
+                    render_analytic(&edges, 8, 8, fill_rule),
+                    render_sampled(&edges, 8, 8, fill_rule),
+                );
+                for (pixel, (&actual, &reference)) in
+                    analytic.iter().zip(&sampled).enumerate() {
+                    assert!(actual.abs_diff(reference) <= 1,
+                        "case {case}, pixel {pixel}, points {points:?}: \
+                         analytic={actual}, sampled={reference}");
+                }
+            }
+        }
     }
 }

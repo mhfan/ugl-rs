@@ -1,7 +1,7 @@
 //! Directed fill edges produced from flattened paths.
 
-use crate::flatten::{flatten_path, FlattenError, FlattenOptions, LineSink};
-use crate::geometry::{Affine, Path, Point, Scalar};
+use crate::{geometry::{Affine, Path, Point, Scalar},
+    flatten::{flatten_path, FlattenError, FlattenOptions, LineSink}};
 
 /// A non-horizontal edge normalized to increasing device-space `y`.
 ///
@@ -82,14 +82,13 @@ impl<S> FillEdgeBuilder<'_, S> where S: EdgeSink {
     }
 }
 
-#[cfg(test)] mod tests {
-    use alloc::vec::Vec;
+#[cfg(test)] mod tests { use super::*;
+    use crate::{flatten::{FlattenError, FlattenOptions},
+        geometry::{Affine, PathBuilder, Point, Path}};
     use core::convert::Infallible;
-    use super::{build_fill_edges, Edge};
-    use crate::flatten::{FlattenError, FlattenOptions};
-    use crate::geometry::{Affine, PathBuilder, Point};
+    use alloc::vec::Vec;
 
-    fn collect(path: &crate::geometry::Path) -> Result<Vec<Edge>, FlattenError<Infallible>> {
+    fn collect(path: &Path) -> Result<Vec<Edge>, FlattenError<Infallible>> {
         let mut edges = Vec::new();
         build_fill_edges(path, Affine::identity(), FlattenOptions::default(),
             &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) })?;
