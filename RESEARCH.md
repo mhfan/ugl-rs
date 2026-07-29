@@ -359,3 +359,68 @@ fixed-capacity, or immediate binning storage.
 
 Tests cover clockwise/counter-clockwise winding, implicit and explicit closure,
 multiple subpaths, horizontal removal, transformed curves, and capacity failure.
+
+## Decision record 3: bootstrap reference coverage
+
+### Problem and contract
+
+The project needs an executable edge-to-coverage reference before selecting and
+optimizing the production rasterizer. It must support non-zero and even-odd
+fills, deterministic 8-bit coverage, half-open vertical edge intervals, exact
+horizontal span overlap, caller-owned memory, and explicit capacity failure.
+
+### Designs studied
+
+- Blend2D, AGG, and FreeType analytic cell accumulation.
+- micro{gl} trapezoid decomposition and fractional coverage.
+- Vello CPU sparse strips and coarse/fine separation.
+- Active-edge scanline conversion with supersampled or analytic coverage.
+
+### Decision
+
+The bootstrap `f32` reference uses deterministic stratified vertical sampling.
+For each pixel row and sample:
+
+1. intersect all edges using `[upper.y, lower.y)` half-open intervals;
+2. sort intersections by `x`;
+3. accumulate non-zero winding or even-odd parity;
+4. add exact horizontal overlap of every inside span to pixel coverage;
+5. average samples and round once to 8-bit coverage.
+
+The default is 256 vertical samples. This is not claimed to be an analytic or
+production-performance rasterizer. It establishes fill semantics, workspace
+and sink APIs, end-to-end tests, and a high-quality deterministic baseline
+without hiding complex cell arithmetic in the first implementation.
+
+### Memory and complexity
+
+The caller supplies:
+
+- one intersection slot per input edge;
+- one floating coverage accumulator per target-row pixel.
+
+No render-stage allocation occurs. Runtime is
+`O(height × samples × (edges + intersections log intersections + covered width))`;
+this is intentionally expensive and suitable only as a reference.
+
+### Production candidates
+
+The production backend must compare:
+
+- AGG/FreeType/Blend2D-style analytic cell accumulation;
+- micro{gl}-style trapezoid decomposition;
+- active edges with analytic area;
+- sparse strip/tile binning with coarse empty/full rejection.
+
+The common `Edge`, `CoverageSink`, fill rules, and target contract must survive
+that replacement.
+
+### Limitations and falsification
+
+Vertical sampling is approximate and can miss geometry thinner than the sample
+spacing or produce error around high-curvature/intersection events. Tests cover
+aligned and fractional rectangles, shared endpoints, nested winding/parity,
+clipping to the target, workspace errors, and deterministic quantization.
+Analytic implementations are compared both against this reference and exact
+area fixtures; disagreement is not automatically an analytic-backend bug when
+the reference sampling error explains it.
