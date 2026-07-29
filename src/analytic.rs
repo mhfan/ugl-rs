@@ -3,11 +3,17 @@
 //! Each pixel row is split at edge endpoints, edge crossings, and integer-x
 //! crossings. Inside each resulting slab, pixel overlap varies linearly in y,
 //! so trapezoidal integration is exact apart from `f32` arithmetic.
+//!
+//! This correctness-first implementation checks active-edge crossings pairwise
+//! in each slab (`O(A²)`). Production backends replace that quadratic search
+//! with persistent active-edge ordering or strip-local event queues.
 
-use crate::{edge::Edge, raster::{emit_coverage_runs, CoverageSink, FillRule, RasterError}};
+use crate::{edge::Edge,
+    raster::{checked_width, emit_coverage_runs, CoverageSink, FillRule, RasterError}
+};
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct AnalyticIntersection { x: f32, x0: f32, x1: f32, winding: i8 }
+pub struct AnalyticIntersection { x0: f32, x1: f32, slope: f32, winding: i8 }
 
 pub struct AnalyticWorkspace<'a> {
     pub intersections: &'a mut [AnalyticIntersection],
@@ -17,7 +23,7 @@ pub struct AnalyticWorkspace<'a> {
 pub fn rasterize_edges_analytic<S>(edges: &[Edge], width: u32, height: u32,
     fill_rule: FillRule, workspace: &mut AnalyticWorkspace<'_>, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {
-    let width = width as _;
+    let width = checked_width(width).ok_or(RasterError::DimensionsOverflow)?;
     if workspace.intersections.len() < edges.len() || workspace.row_coverage.len() < width {
         return Err(RasterError::WorkspaceTooSmall {
             intersections: edges.len(), row_coverage: width,
@@ -36,56 +42,52 @@ fn integrate_row(edges: &[Edge], row_y: f32, fill_rule: FillRule,
     intersections: &mut [AnalyticIntersection], row: &mut [f32]) {
     let (row_end, mut y0) = (row_y + 1.0, row_y);
     while y0 < row_end {
-        let y1 = next_event(edges, y0, row_end);
-        if  y1 <= y0 { break; }
-        let (middle, mut count) = ((y0 + y1) * 0.5, 0);
-        for edge in edges {
-            if edge.upper.y < y1 && edge.lower.y > y0 {
-                intersections[count] = AnalyticIntersection {
-                    x: edge.x_at(middle), x0: edge.x_at(y0),
-                    winding: edge.winding, x1: edge.x_at(y1),
-                };  count += 1;
-            }
-        }
-        let intersections = &mut intersections[..count];
-        intersections.sort_unstable_by(|a, b| a.x.total_cmp(&b.x));
-        integrate_spans(intersections, y1 - y0, fill_rule, row);
+        let (y1, count) = prepare_slab(edges, y0, row_end, intersections);
+        if   y1 <= y0 { break; }
+        integrate_spans(&intersections[..count], y1 - y0, fill_rule, row);
         y0 = y1;
     }
 }
 
-fn next_event(edges: &[Edge], y0: f32, limit: f32) -> f32 {
-    let mut next = limit;
+fn prepare_slab(edges: &[Edge], y0: f32, limit: f32,
+    intersections: &mut [AnalyticIntersection]) -> (f32, usize) {
+    let (mut next, mut count) = (limit, 0);
     for edge in edges {
         for y in [edge.upper.y, edge.lower.y] { if y > y0 && y < next { next = y; } }
         let active_end = edge.lower.y.min(limit);
-        if edge.upper.y < active_end && active_end > y0 {
-            let slope = edge.slope();
+        if edge.upper.y <= y0 && active_end > y0 {
+            let (slope, x0) = (edge.slope(), edge.x_at(y0));
+            intersections[count] = AnalyticIntersection {
+                x0, x1: x0, slope, winding: edge.winding,
+            };  count += 1;
+
             if slope != 0.0 {
-                let x = edge.x_at(y0);
                 let step = if slope > 0.0 { 1.0 } else { -1.0 };
-                let mut boundary = if slope > 0.0 { libm::floorf(x) + 1.0 }
-                    else { libm::ceilf(x) - 1.0 };
+                let mut boundary = if slope > 0.0 { libm::floorf(x0) + 1.0 }
+                    else { libm::ceilf(x0) - 1.0 };
                 let mut y = edge.upper.y + (boundary - edge.upper.x) / slope;
                 if y <= y0 {
                     boundary += step;
                     y = edge.upper.y + (boundary - edge.upper.x) / slope;
                 }
-                if y > y0 && y < next && y < active_end { next = y; }
+                if y >  y0 && y < next && y < active_end { next = y; }
             }
         }
     }
-    for (index, a) in edges.iter().enumerate() {
-        for b in &edges[index + 1..] {
-            let start = y0.max(a.upper.y).max(b.upper.y);
-            let end = next.min(a.lower.y).min(b.lower.y);
-            if  start >= end { continue; }
-            let (sa, sb) = (a.slope(), b.slope());
-            if sa == sb { continue; }
-            let y = (b.upper.x - sb * b.upper.y - a.upper.x + sa * a.upper.y) / (sa - sb);
-            if  y > y0 && y < end { next = y; }
+    let intersections = &mut intersections[..count];
+    for (index, a) in intersections.iter().enumerate() {
+        for b in &intersections[index + 1..] {
+            if a.slope == b.slope { continue; }
+            let y = y0 + (b.x0 - a.x0) / (a.slope - b.slope);
+            if  y > y0 && y < next { next = y; }
         }
-    }   next
+    }
+    let height = next - y0;
+    for intersection in &mut *intersections {
+        intersection.x1 = intersection.x0 + intersection.slope * height;
+    }
+    intersections.sort_unstable_by(|a, b| (a.x0 + a.x1).total_cmp(&(b.x0 + b.x1)));
+    (next, count)
 }
 
 fn integrate_spans(intersections: &[AnalyticIntersection], height: f32,
@@ -100,9 +102,11 @@ fn integrate_spans(intersections: &[AnalyticIntersection], height: f32,
     }
 }
 
-fn integrate_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
-    height: f32, row: &mut [f32]) {
-    for (x, coverage) in row.iter_mut().enumerate() {
+fn integrate_span(left: &AnalyticIntersection,
+                 right: &AnalyticIntersection, height: f32, row: &mut [f32]) {
+    let start = libm::floorf(left.x0.min( left.x1)).clamp(0.0, row.len() as _) as _;
+    let end   = libm::ceilf(right.x0.max(right.x1)).clamp(0.0, row.len() as _) as _;
+    for (x, coverage) in row.iter_mut().enumerate().take(end).skip(start) {
         let x = x as _;
         let overlap0 = (right.x0.min(x + 1.0) - left.x0.max(x)).clamp(0.0, 1.0);
         let overlap1 = (right.x1.min(x + 1.0) - left.x1.max(x)).clamp(0.0, 1.0);
@@ -145,7 +149,7 @@ fn integrate_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
         let mut intersections = vec![Intersection::default(); edges.len()];
         let mut row  = vec![0.0; width as usize];
         rasterize_edges(edges, width, height, fill_rule,
-            RasterOptions { vertical_samples: 2048 }, &mut RasterWorkspace {
+            RasterOptions { vertical_samples: 8192 }, &mut RasterWorkspace {
                 intersections: &mut intersections, row_coverage: &mut row,
             }, &mut |x, y, coverage| {
                 pixels[(y * width + x) as usize] = coverage;
@@ -194,7 +198,48 @@ fn integrate_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
         assert_eq!(render_analytic(&edges, 3, 3, FillRule::EvenOdd)[4], 0);
     }
 
-    #[test] fn analytic_triangles_match_high_sample_reference() {
+    #[test] fn workspace_requirements_and_sink_errors_are_explicit() {
+        let edges = [
+            Edge { upper: (0.0, 0.0).into(), lower: (0.0, 1.0).into(), winding: -1 },
+            Edge { upper: (1.0, 0.0).into(), lower: (1.0, 1.0).into(), winding: 1 },
+        ];
+        let (mut intersections, mut row) = ([], [0.0]);
+        let result = rasterize_edges_analytic(&edges, 1, 1, FillRule::NonZero,
+            &mut AnalyticWorkspace {
+                intersections: &mut intersections, row_coverage: &mut row,
+            }, &mut |_, _, _| Ok::<_, Infallible>(()),
+        );
+        assert_eq!(result,
+            Err(RasterError::WorkspaceTooSmall { intersections: 2, row_coverage: 1 }));
+
+        let mut intersections = [AnalyticIntersection::default(); 2];
+        let result = rasterize_edges_analytic(&edges, 1, 1, FillRule::NonZero,
+            &mut AnalyticWorkspace {
+                intersections: &mut intersections, row_coverage: &mut row,
+            }, &mut |_, _, _| Err("stop"),
+        );
+        assert_eq!(result, Err(RasterError::Sink("stop")));
+    }
+
+    #[test] fn empty_or_fully_clipped_targets_emit_no_spans() {
+        let edges = [
+            Edge { upper: (2.0, 0.0).into(), lower: (2.0, 1.0).into(), winding: -1 },
+            Edge { upper: (3.0, 0.0).into(), lower: (3.0, 1.0).into(), winding: 1 },
+        ];
+        let mut intersections = [AnalyticIntersection::default(); 2];
+        let mut row = [0.0];
+        let mut calls = 0;
+        for (width, height) in [(0, 1), (1, 0), (1, 1)] {
+            rasterize_edges_analytic(&edges, width, height, FillRule::NonZero,
+                &mut AnalyticWorkspace {
+                    intersections: &mut intersections, row_coverage: &mut row,
+                }, &mut |_, _, _| { calls += 1; Ok::<_, Infallible>(()) },
+            ).unwrap();
+        }
+        assert_eq!(calls, 0);
+    }
+
+    #[test] fn analytic_polygons_match_high_sample_reference() {
         let mut state = 0x7a31_4f29_u32;
         for case in 0..32 {
             let mut builder = PathBuilder::new();
@@ -202,9 +247,10 @@ fn integrate_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
                 state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 (state >> 8) as f32 * (10.0 / 16_777_216.0) - 1.0
             };
-            let points = [(point(), point()), (point(), point()), (point(), point())];
+            let points: Vec<_> = (0..3 + case % 4).map(|_| (point(), point())).collect();
             builder.move_to(points[0]).line_to(points[1]).unwrap()
                 .line_to(points[2]).unwrap();
+            for &point in &points[3..] { builder.line_to(point).unwrap(); }
             let edges = edges(builder);
             for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
                 let (analytic, sampled) = (
@@ -214,7 +260,7 @@ fn integrate_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
                 for (pixel, (&actual, &reference)) in
                     analytic.iter().zip(&sampled).enumerate() {
                     assert!(actual.abs_diff(reference) <= 1,
-                        "case {case}, pixel {pixel}, points {points:?}: \
+                        "case {case}, pixel {pixel}, {fill_rule:?}, points {points:?}: \
                          analytic={actual}, sampled={reference}");
                 }
             }

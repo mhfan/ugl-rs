@@ -191,7 +191,7 @@ impl RGBA<f32> {    #![allow(unused)]
     } }
 }
 
-#[cfg(test)] mod tests { use super::*;
+#[cfg(test)] mod tests { use super::RGBA;
     #[test] fn slice_conversion_checks_length() {
         assert!(RGBA::<u8>::try_from(&[][..]).is_err());
         assert!(RGBA::<u8>::try_from(&[1, 2][..]).is_err());

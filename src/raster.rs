@@ -53,14 +53,14 @@ impl<E, F> CoverageSink for F where F: FnMut(u32, u32, u8) -> Result<(), E> {
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RasterError<E> {
     WorkspaceTooSmall { intersections: usize, row_coverage: usize },
-    InvalidSampleCount, Sink(E),
+    DimensionsOverflow, InvalidSampleCount, Sink(E),
 }
 
 pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32, fill_rule: FillRule,
     options: RasterOptions, workspace: &mut RasterWorkspace<'_>, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {
     if options.vertical_samples == 0 { return Err(RasterError::InvalidSampleCount); }
-    let (width, height) = (width as _, height as _);
+    let width = checked_width(width).ok_or(RasterError::DimensionsOverflow)?;
     if workspace.intersections.len() < edges.len() || workspace.row_coverage.len() < width {
         return Err(RasterError::WorkspaceTooSmall {
             intersections: edges.len(), row_coverage: width,
@@ -83,9 +83,11 @@ pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32, fill_rule: Fi
             accumulate_spans(intersections, width, fill_rule, sample_scale, row);
         }
 
-        emit_coverage_runs(row, y as _, sink)?;
+        emit_coverage_runs(row, y, sink)?;
     }   Ok(())
 }
+
+pub(crate) fn checked_width(width: u32) -> Option<usize> { usize::try_from(width).ok() }
 
 pub(crate) fn emit_coverage_runs<S>(row: &[f32], y: u32, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {

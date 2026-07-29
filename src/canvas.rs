@@ -106,7 +106,7 @@ impl Default for RenderOptions { fn default() -> Self {
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RenderError {
     InvalidTolerance, InvalidDepth, NonFiniteCoordinate, FlattenDepthLimit,
-    InvalidSampleCount, InvalidPath(PathError),
+    DimensionsOverflow, InvalidSampleCount, InvalidPath(PathError),
     EdgeCapacity { needed_at_least: usize },
     RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
 }
@@ -184,6 +184,7 @@ fn map_flatten_error(error: FlattenError<EdgeCapacity>) -> RenderError {
 
 fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
     match error {
+        RasterError::DimensionsOverflow => RenderError::DimensionsOverflow,
         RasterError::InvalidSampleCount => RenderError::InvalidSampleCount,
         RasterError::WorkspaceTooSmall { intersections, row_coverage } =>
             RenderError::RasterWorkspaceTooSmall { intersections, row_coverage },

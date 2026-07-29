@@ -489,7 +489,7 @@ impl RGBA<f32> {    #![allow(unused)]
     //  https://docs.krita.org/en/reference_manual/blending_modes.html
 }
 
-#[cfg(test)] mod tests { use super::*;
+#[cfg(test)] mod tests { use super::RGBA;
     fn assert_close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
     }
