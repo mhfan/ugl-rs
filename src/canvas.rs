@@ -3,9 +3,9 @@
 use core::convert::Infallible;
 use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticIntersection, AnalyticWorkspace, rasterize_edges_analytic},
-    flatten::{FlattenError, FlattenOptions}, geometry::{Affine, Path, PathError},
+    flatten::{FlattenError, FlattenOptions}, geometry::{Affine, Path, PathError, Rect},
     raster::{CoverageSink, FillRule, Intersection, RasterError, RasterOptions,
-        RasterWorkspace, rasterize_edges,
+        RasterWorkspace, RectClipSink, rasterize_edges,
     }
 };
 #[cfg(feature = "fixed")] use crate::raster_fixed::{
@@ -164,6 +164,20 @@ pub fn render_solid(path: &Path, transform: Affine, color: RGBA<u8>, options: Re
     ).map_err(map_raster_error)
 }
 
+/// Renders through the sampled reference rasterizer and an antialiased rectangle clip.
+pub fn render_solid_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
+    clip: Rect, options: RenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
+    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    let mut compositor = SolidCompositor { target, color: color.premul() };
+    rasterize_edges(&workspace.edges[..edge_count], compositor.target.width,
+        compositor.target.height, options.fill_rule, options.raster, &mut RasterWorkspace {
+            intersections: workspace.intersections,
+            row_coverage: workspace.row_coverage,
+        }, &mut RectClipSink::new(clip, &mut compositor),
+    ).map_err(map_raster_error)
+}
+
 /// Renders a solid color through the exact-area `f32` rasterizer.
 pub fn render_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
     options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
@@ -175,6 +189,20 @@ pub fn render_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
             intersections: workspace.intersections,
              row_coverage: workspace.row_coverage,
         }, &mut compositor,
+    ).map_err(map_raster_error)
+}
+
+/// Renders through the analytic reference rasterizer and an antialiased rectangle clip.
+pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
+    clip: Rect, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
+    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    let mut compositor = SolidCompositor { target, color: color.premul() };
+    rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
+        compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
+            intersections: workspace.intersections,
+            row_coverage: workspace.row_coverage,
+        }, &mut RectClipSink::new(clip, &mut compositor),
     ).map_err(map_raster_error)
 }
 
@@ -357,6 +385,27 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
             },
         ).unwrap();
         assert_eq!(target.pixel(0, 0), Some((128, 128, 128, 128).into()));
+    }
+
+    #[test] fn analytic_rectangle_clip_multiplies_coverage_end_to_end() {
+        let mut builder = PathBuilder::new();
+        builder.move_to((0.0, 0.0)).line_to((3.0, 0.0))
+            .line_to((3.0, 2.0)).line_to((0.0, 2.0));
+        let mut pixels = [0; 3 * 2 * 4];
+        let mut target = PixmapMut::new(&mut pixels, 3, 2, 12).unwrap();
+        let (mut edges, mut intersections, mut row_coverage) = (
+            [Edge::default(); 4], [AnalyticIntersection::default(); 4], [0.0; 3]);
+        render_solid_analytic_clipped(&builder.build(), Affine::identity(), RGBA::white(),
+            Rect::from_ltrb(0.5, 0.25, 2.5, 1.0).unwrap(),
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut intersections,
+                row_coverage: &mut row_coverage,
+            }).unwrap();
+        assert_eq!((target.pixel(0, 0), target.pixel(1, 0), target.pixel(2, 0)), (
+            Some((96, 96, 96, 96).into()), Some((191, 191, 191, 191).into()),
+            Some((96, 96, 96, 96).into()),
+        ));
+        assert_eq!(target.pixel(1, 1), Some(PremulRGBA::zeroed()));
     }
 
     #[cfg(feature = "fixed")]

@@ -29,13 +29,46 @@ impl ScalarConstants for f32 { const ZERO: Self = 0.0; const ONE: Self = 1.0; }
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Point<T = Scalar> { pub x: T, pub y: T, }
 
 impl<T> Point<T> { pub const fn new(x: T, y: T) -> Self { Self { x, y } } }
 
 impl<T> From<(T, T)> for Point<T> {
     fn from((x, y): (T, T)) -> Self { Self::new(x, y) }
+}
+
+/// Axis-aligned rectangle with ordered, finite-or-orderable boundaries.
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Rect<T = Scalar> { min: Point<T>, max: Point<T> }
+
+impl<T> Rect<T> where T: Copy + PartialOrd {
+    pub fn from_ltrb(left: T, top: T, right: T, bottom: T) -> Option<Self> {
+        if left <= right && top <= bottom {
+            Some(Self { min: (left, top).into(), max: (right, bottom).into() })
+        } else {
+            None
+        }
+    }
+
+    pub fn min(&self) -> Point<T> { self.min }
+    pub fn max(&self) -> Point<T> { self.max }
+    pub fn left(&self) -> T { self.min.x }
+    pub fn top(&self) -> T { self.min.y }
+    pub fn right(&self) -> T { self.max.x }
+    pub fn bottom(&self) -> T { self.max.y }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, T> serde::Deserialize<'de> for Rect<T> where
+    T: Copy + PartialOrd + serde::Deserialize<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
+        #[derive(serde::Deserialize)] struct Fields<T> { min: Point<T>, max: Point<T> }
+        let Fields { min, max } = Fields::deserialize(deserializer)?;
+        Self::from_ltrb(min.x, min.y, max.x, max.y)
+            .ok_or_else(|| serde::de::Error::custom("rectangle boundaries must be ordered"))
+    }
 }
 
 /// A 2D affine transform using column-vector convention.
@@ -207,6 +240,13 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
     #[test] fn affine_uses_documented_column_vector_convention() {
         let transform = Affine::new(2.0, 0.5, -1.0, 3.0, 4.0, -2.0);
         assert_eq!(transform.transform_point((3.0, 2.0).into()), (8.0, 5.5).into());
+    }
+
+    #[test] fn rectangles_reject_unordered_and_non_finite_boundaries() {
+        assert_eq!(Rect::from_ltrb(1.0, 2.0, 3.0, 4.0).map(|rect|
+            (rect.min(), rect.max())), Some(((1.0, 2.0).into(), (3.0, 4.0).into())));
+        assert_eq!(Rect::from_ltrb(3.0, 2.0, 1.0, 4.0), None);
+        assert_eq!(Rect::from_ltrb(1.0, f32::NAN, 3.0, 4.0), None);
     }
 
     #[test] fn path_builder_starts_missing_subpaths_and_closes_idempotently() {

@@ -3,7 +3,7 @@
 //! This module prioritizes a transparent contract over production throughput.
 //! It uses stratified vertical samples and exact horizontal span overlap.
 
-use crate::edge::Edge;
+use crate::{edge::Edge, geometry::Rect};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FillRule { NonZero, EvenOdd }
 
@@ -48,6 +48,45 @@ impl<E, F> CoverageSink for F where F: FnMut(u32, u32, u8) -> Result<(), E> {
         Result<(), Self::Error> {
         for x in x..x + len { self(x, y, coverage)?; }  Ok(())
     }   type Error = E;
+}
+
+/// Coverage adapter that intersects incoming spans with an antialiased rectangle.
+pub struct RectClipSink<'a, S> { rect: Rect, sink: &'a mut S }
+
+impl<'a, S> RectClipSink<'a, S> {
+    pub fn new(rect: Rect, sink: &'a mut S) -> Self { Self { rect, sink } }
+}
+
+impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
+    type Error = S::Error;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        let overlap = |from: f32, to: f32, pixel: u32| {
+            (to.min(pixel as f32 + 1.0) - from.max(pixel as f32)).clamp(0.0, 1.0)
+        };
+        let vertical = overlap(self.rect.top(), self.rect.bottom(), y);
+        if vertical == 0.0 { return Ok(()); }
+        let (start, end) = (
+            x.max(libm::floorf(self.rect.left()).max(0.0) as _),
+            (x + len).min(libm::ceilf(self.rect.right()).max(0.0) as _),
+        );
+        if start >= end { return Ok(()); }
+        let combined = |x| {
+            let clip = overlap(self.rect.left(), self.rect.right(), x) * vertical;
+            ((coverage as f32 * clip) + 0.5).clamp(0.0, 255.0) as u8
+        };
+        let mut cursor = start;
+        while cursor < end {
+            let clipped = combined(cursor);
+            let run_start = cursor;
+            cursor += 1;
+            while cursor < end && combined(cursor) == clipped { cursor += 1; }
+            if clipped != 0 {
+                self.sink.span(run_start, y, cursor - run_start, clipped)?;
+            }
+        }   Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RasterError<E> {
@@ -217,6 +256,20 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
             }, &mut spans,
         ).unwrap();
         assert_eq!(spans.0, [(1, 0, 3, 255)]);
+    }
+
+    #[test] fn rectangular_clip_multiplies_boundary_coverage_and_coalesces_interior() {
+        let mut spans = SpanRecorder::default();
+        let rect = Rect::from_ltrb(0.5, 0.25, 3.25, 1.0).unwrap();
+        RectClipSink::new(rect, &mut spans).span(0, 0, 5, u8::MAX).unwrap();
+        assert_eq!(spans.0, [
+            (0, 0, 1, 96), (1, 0, 2, 191), (3, 0, 1, 48),
+        ]);
+
+        spans.0.clear();
+        let rect = Rect::from_ltrb(1.0, 0.0, 4.0, 1.0).unwrap();
+        RectClipSink::new(rect, &mut spans).span(0, 0, 5, 128).unwrap();
+        assert_eq!(spans.0, [(1, 0, 3, 128)]);
     }
 
     #[test] fn non_zero_and_even_odd_differ_for_nested_same_direction_subpaths() {
