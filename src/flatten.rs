@@ -68,7 +68,6 @@ pub fn flatten_path<S>(path: &Path, transform: Affine, options: FlattenOptions,
                     transformed(transform, to)?,
                 );
                 emit_line(from, to, sink)?;
-                sink.close_subpath().map_err(FlattenError::Sink)?;
                 current = Some(to);
             }
             PathSegment::QuadTo { ctrl, to } => {
@@ -96,6 +95,7 @@ pub fn flatten_path<S>(path: &Path, transform: Affine, options: FlattenOptions,
                     subpath_start.ok_or(FlattenError::InvalidPath(PathError::MissingMoveTo))?,
                 );
                 emit_line(from, to, sink)?;
+                sink.close_subpath().map_err(FlattenError::Sink)?;
                 current = Some(to);
             }
         }

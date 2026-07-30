@@ -3,7 +3,8 @@ use ugl_rs::{analytic::AnalyticIntersection, color::{PRGB32, RGBA}, edge::Edge,
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,
         render_stroke_solid_analytic,
-    }, geometry::{Affine, PathBuilder}, raster::FillRule, stroke::StrokeContour,
+    }, geometry::{Affine, PathBuilder}, raster::FillRule,
+    stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions},
     sampler::{GradientStop, GradientStops, LinearGradient, PaintSampler, SpreadMode},
 };
 
@@ -43,20 +44,26 @@ fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
         target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
 }
 
-fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
+fn render_analytic_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
+    [PRGB32<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
-    let (mut contours, mut edges) = ([StrokeContour::default(); 1], [Edge::default(); 4]);
-    let (mut points, mut row_coverage) = ([Default::default(); 2], [0.0; WIDTH as usize]);
-    let mut intersections = [AnalyticIntersection::default(); 4];
+    let (mut contours, mut edges) = ([StrokeContour::default(); 2], [Edge::default(); 64]);
+    let (mut points, mut row_coverage) = ([Default::default(); 8], [0.0; WIDTH as usize]);
+    let mut intersections = [AnalyticIntersection::default(); 64];
     render_stroke_solid_analytic(&builder.build(), Affine::identity(),
-        RGBA::new(20, 200, 40, 160), AnalyticStrokeOptions::default(), &mut target,
+        RGBA::new(20, 200, 40, 160),
+        AnalyticStrokeOptions { stroke, ..Default::default() }, &mut target,
         &mut AnalyticStrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut edges,
             intersections: &mut intersections, row_coverage: &mut row_coverage,
         }).unwrap();
     core::array::from_fn(|index|
         target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
+}
+
+fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
+    render_analytic_stroke_with(builder, StrokeOptions::default())
 }
 
 #[test] fn aligned_rectangle_rgba_golden() {
@@ -117,6 +124,34 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
         transparent, transparent, transparent, transparent,
         transparent, transparent, transparent, transparent,
     ]);
+}
+
+#[test] fn stroke_caps_and_joins_rgba_golden() {
+    let mut line = PathBuilder::new();
+    line.move_to((1.5, 1.5)).line_to((2.5, 1.5));
+    let alpha = |builder, options| render_analytic_stroke_with(builder, options)
+        .map(|pixel| pixel.alpha());
+    let options = StrokeOptions::new(2.0).unwrap();
+    assert_eq!(alpha(line.clone(), options.with_cap(LineCap::Butt)), [
+         0, 40, 40,  0,   0, 80, 80,  0,   0, 40, 40,  0,   0,  0,  0, 0,
+    ]);
+    assert_eq!(alpha(line.clone(), options.with_cap(LineCap::Square)), [
+        40, 80, 80, 40,  80,160,160, 80,  40, 80, 80, 40,   0,  0,  0, 0,
+    ]);
+    assert_eq!(alpha(line, options.with_cap(LineCap::Round)), [
+         6, 68, 68,  6,  58,160,160, 58,   6, 68, 68,  6,   0,  0,  0, 0,
+    ]);
+
+    let mut corner = PathBuilder::new();
+    corner.move_to((0.5, 3.5)).line_to((2.0, 0.5)).line_to((3.5, 3.5));
+    assert_eq!(alpha(corner.clone(), options.with_join(LineJoin::Bevel)), [
+         22,150,150, 22,  99,160,160, 99, 157,157,157,157,  80, 90, 90, 80,
+    ]);
+    let rounded = alpha(corner.clone(), options.with_join(LineJoin::Round));
+    assert_eq!(rounded, [
+         22,157,157, 22,  99,160,160, 99, 157,157,157,157,  80, 90, 90, 80,
+    ]);
+    assert_eq!(alpha(corner, options.with_join(LineJoin::Miter)), rounded);
 }
 
 #[cfg(feature = "fixed")]

@@ -153,6 +153,35 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(pixels, [17; 12]);
 }
 
+#[test] fn analytic_stroke_geometry_capacity_errors_leave_the_target_unchanged() {
+    let mut builder = PathBuilder::new();
+    builder.move_to((0.5, 0.5)).line_to((2.5, 0.5));
+    let path = builder.build();
+    let (mut points, mut intersections, mut row_coverage) = (
+        [Point::default(); 2], [AnalyticIntersection::default(); 4], [0.0; 3],
+    );
+    let mut pixels = [17; 12];
+    let error = render_stroke_solid_analytic(&path, Affine::identity(), RGBA::white(),
+        AnalyticStrokeOptions::default(), &mut PixmapMut::new(&mut pixels, 3, 1, 12).unwrap(),
+        &mut AnalyticStrokeWorkspace {
+            points: &mut points, contours: &mut [], edges: &mut [],
+            intersections: &mut intersections, row_coverage: &mut row_coverage,
+        });
+    assert_eq!(error, Err(RenderError::StrokeContourCapacity { needed_at_least: 1 }));
+    assert_eq!(pixels, [17; 12]);
+
+    let mut contours = [StrokeContour::default(); 1];
+    let mut edges = [Edge::default(); 1];
+    let error = render_stroke_solid_analytic(&path, Affine::identity(), RGBA::white(),
+        AnalyticStrokeOptions::default(), &mut PixmapMut::new(&mut pixels, 3, 1, 12).unwrap(),
+        &mut AnalyticStrokeWorkspace {
+            points: &mut points, contours: &mut contours, edges: &mut edges,
+            intersections: &mut intersections, row_coverage: &mut row_coverage,
+        });
+    assert_eq!(error, Err(RenderError::EdgeCapacity { needed_at_least: 2 }));
+    assert_eq!(pixels, [17; 12]);
+}
+
 #[test] fn analytic_gradient_stroke_composes_through_rectangle_and_path_clips() {
     let mut builder = PathBuilder::new();
     builder.move_to((0.0, 0.5)).line_to((2.0, 0.5));

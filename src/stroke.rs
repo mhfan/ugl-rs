@@ -284,18 +284,21 @@ fn emit_cap<S: EdgeSink>(point: Point, unit: Point, start: bool, options: Stroke
         LineCap::Square => {
             let end: Point = (point.x + unit.x * radius * direction,
                               point.y + unit.y * radius * direction).into();
-            emit_segment_body(point, end, unit, radius, sink)
+            let cap_unit: Point = (unit.x * direction, unit.y * direction).into();
+            emit_segment_body(point, end, cap_unit, radius, sink)
         }
         LineCap::Round => {
             let segments = arc_segments(radius, options).map_err(|(needed, maximum)|
                 StrokeExpandError::ArcSegmentLimit { needed, maximum })?;
             let angle = libm::atan2f(unit.y, unit.x);
-            let start_angle = if start { angle + FRAC_PI_2 } else { angle - FRAC_PI_2 };
+            let (start_angle, sweep) = if start {
+                (angle - FRAC_PI_2, -PI)
+            } else { (angle - FRAC_PI_2, PI) };
             let mut contour = EdgeContour::new(sink);
             contour.point(point)?;
             contour.point((point.x + radius * libm::cosf(start_angle),
                            point.y + radius * libm::sinf(start_angle)).into())?;
-            contour.arc(point, radius, start_angle, PI, segments)?;
+            contour.arc(point, radius, start_angle, sweep, segments)?;
             contour.close()
         }
     }
@@ -405,8 +408,9 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
 
     #[test] fn stroke_path_workspace_preserves_subpaths_and_explicit_close() {
         let mut builder = PathBuilder::new();
-        builder.move_to((1.0, 2.0)).line_to((3.0, 4.0)).close().move_to((5.0, 6.0));
-        let mut points = [Point::default(); 4];
+        builder.move_to((1.0, 2.0)).line_to((3.0, 4.0)).close()
+               .move_to((5.0, 6.0)).line_to((7.0, 8.0));
+        let mut points = [Point::default(); 5];
         let mut contours = [StrokeContour::default(); 2];
         let mut workspace = StrokePathWorkspace {
             points: &mut points, contours: &mut contours,
@@ -416,7 +420,7 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
         let contours: Vec<_> = flattened.contours().collect();
         assert_eq!(contours, [
             (&[(1.0, 2.0).into(), (3.0, 4.0).into(), (1.0, 2.0).into()][..], true),
-            (&[(5.0, 6.0).into()][..], false),
+            (&[(5.0, 6.0).into(), (7.0, 8.0).into()][..], false),
         ]);
     }
 
