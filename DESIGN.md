@@ -317,8 +317,14 @@ Status: complete (2026-07-30).
 
 ### M3 — Stroke
 
+Status: undashed scalar reference implemented; reliability validation ongoing
+(2026-07-30).
+
 - Width, cap, join, and miter behavior.
 - Degenerate subpaths and self-intersections.
+- Allocation-free `Path -> flatten -> stroke expansion -> analytic coverage ->
+  paint/composite` using caller-owned point, contour, edge, intersection, and
+  row storage.
 - Dash patterns only after the base stroke contract is stable.
 
 ### M4 — Fixed-point backend

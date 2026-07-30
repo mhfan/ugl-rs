@@ -27,12 +27,16 @@ The project now has an allocation-free path-to-pixel vertical slice with
 sampled and analytic `f32` rasterizers, premultiplied source-over, caller-owned
 scratch storage, rectangular and path coverage clips, and allocation-free
 solid, linear, two-circle radial, and conic paint samplers. Paint transforms
-are independent from path transforms and invert once at construction. The
-project also has an early Q24.8 fixed-point backend. Production fixed edge
-binning and persistent active edges now operate on caller-owned sparse strip
-storage. The fixed backend can optionally retain compact sparse coverage
-strips for batching or caching while keeping the lower-memory streaming sink
-as its default. An optional 16 × 16 tile prototype now classifies empty, full,
+are independent from path transforms and invert once at construction.
+Allocation-free analytic stroking now covers transformed paths, flattened
+curves, open and explicitly closed contours, butt/round/square caps, and
+miter/round/bevel joins. Its flattened points, compact contour descriptors,
+expanded edges, intersections, and row coverage all use caller-owned bounded
+storage. The project also has an early Q24.8 fixed-point backend. Production
+fixed edge binning and persistent active edges now operate on caller-owned
+sparse strip storage. The fixed backend can optionally retain compact sparse
+coverage strips for batching or caching while keeping the lower-memory
+streaming sink as its default. An optional 16 × 16 tile prototype now classifies empty, full,
 and boundary regions, supports direct tile-major output, and can composite a
 retained tile mask without rasterizing it again. External fuzzing and broader
 golden/benchmark scenes are still under development, so it is not yet suitable
@@ -48,6 +52,7 @@ The first complete rendering path is intentionally small:
 ```text
 Path
   -> curve flattening
+  -> fill edges or stroke expansion
   -> directed edges
   -> scan conversion and pixel coverage
   -> optional rectangle/path clipping
