@@ -26,8 +26,9 @@ The intended niche is deliberately narrower than Blend2D, tiny-skia, Skia, or Ve
 The project now has an allocation-free path-to-pixel vertical slice with
 sampled and analytic `f32` rasterizers, premultiplied source-over, caller-owned
 scratch storage, and an early Q24.8 fixed-point backend. Production fixed edge
-binning, fuzzing, and broader golden/benchmark scenes are still under
-development, so it is not yet suitable as a production renderer.
+binning and persistent active edges now operate on caller-owned sparse strip
+storage. Coverage-strip encoding, fuzzing, and broader golden/benchmark scenes
+are still under development, so it is not yet suitable as a production renderer.
 
 The current MSRV is Rust 1.93. CI checks MSRV and stable builds, independent
 feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
@@ -74,28 +75,30 @@ source-over compositing.
 
 Current development baseline, measured on 2026-07-30:
 
-- commit: `5f98d43`;
+- commit: `6c8190e`;
 - platform: Darwin arm64;
 - compiler: `rustc 1.97.1`, LLVM 22.1.6;
-- Criterion parameters: 1 s warm-up, 1 s measurement, 10 samples.
+- Criterion parameters: 2 s warm-up, 2 s measurement, 20 samples.
 
 | Backend | Time estimate | Reported interval | Throughput |
 | --- | ---: | ---: | ---: |
-| sampled `f32` | 15.820 ms | 15.625–16.031 ms | 4.14 Mpixel/s |
-| analytic `f32` | 213.10 µs | 205.48–235.39 µs | 307.53 Mpixel/s |
-| Q24.8 fixed | 315.43 µs | 312.93–319.83 µs | 207.77 Mpixel/s |
+| sampled `f32` | 15.546 ms | 15.466–15.645 ms | 4.22 Mpixel/s |
+| analytic `f32` | 206.34 µs | 204.09–209.84 µs | 317.62 Mpixel/s |
+| Q24.8 fixed | 229.64 µs | 229.19–230.18 µs | 285.38 Mpixel/s |
 
-These short-run numbers are a regression reference for this machine, not a
-cross-platform ranking. Published comparisons should use longer measurements
-and record CPU model, power state, compiler, and commit.
+The additional fixed distribution scenes measure 45.76 µs for 16 sparse
+rectangles and 185.37 µs for 256 short-edge rectangles. Before strip binning
+and persistent active edges, the same scenes measured 65.34 µs and 621.64 µs,
+respectively. These numbers are a regression reference for this machine, not a
+cross-platform ranking.
 
 The initial caller-owned scratch budgets are:
 
-| Backend | Edge/segment storage | Crossing storage | Row storage |
+| Backend | Edge/segment storage | Strip/crossing storage | Row storage |
 | --- | ---: | ---: | ---: |
 | sampled `f32` | 128 `Edge` | 128 `Intersection` | 256 `f32` |
 | analytic `f32` | 128 `Edge` | 128 `AnalyticIntersection` | 256 `f32` |
-| Q24.8 fixed | 128 `FixedSegment` + 64 `FixedTrapezoid` | none | 256 `u64` |
+| Q24.8 fixed | 128 `FixedSegment` + 64 `FixedTrapezoid` | one `u32` offset per strip plus one `u32` per line/strip overlap | 256 `u64` |
 
 Renderer allocation count inside the measured path is zero by API
 construction: every mutable geometry, crossing, area, and destination buffer

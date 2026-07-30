@@ -322,9 +322,11 @@ pub struct FixedRasterWorkspace<'a> {
     pub strip_indices: &'a mut [u32],
 }
 
+/// Caller-owned storage required to bin prepared lines for a target height.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FixedStripRequirements { pub offsets: usize, pub indices: usize }
 
+/// Computes the exact strip-bin capacities required by [`rasterize_lines`].
 pub fn fixed_strip_requirements(lines: &[FixedLine], height: u32) ->
     Result<FixedStripRequirements, FixedRasterError> {
     let offsets = usize::try_from(height.div_ceil(FIXED_STRIP_HEIGHT))

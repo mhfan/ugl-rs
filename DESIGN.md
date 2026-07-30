@@ -292,6 +292,7 @@ only after this path is complete.
   backend persists active edges and skips empty vertical ranges.
 - M4/M5 prototypes include generic fixed-point geometry, widened Q24.8
   arithmetic, rational crossing events, span/trapezoid area evaluation,
-  caller-owned workspaces, and differential/error-path tests.
-- Production fixed edge binning, broader golden scenes and benchmarks,
-  fuzzing, gradients, clipping, and stroking remain future work.
+  caller-owned sparse strip bins, persistent active edges, and
+  differential/error-path tests.
+- Coverage-strip/tile encoding, broader golden scenes and benchmarks, fuzzing,
+  gradients, clipping, and stroking remain future work.
