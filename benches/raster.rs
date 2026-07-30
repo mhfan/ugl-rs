@@ -70,16 +70,16 @@ fn benchmark_f32(c: &mut Criterion) {
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
     let scenes = [
         ("64_rectangles", (0..64).map(|index| [
-            (index % 8) as f32 * 30.0 + 4.25, (index / 8) as f32 * 30.0 + 4.5,
-            22.5, 21.75,
+            (index % 8) as f32 * 30.0 + 4.25,
+            (index / 8) as f32 * 30.0 + 4.5, 22.5, 21.75,
         ]).collect::<Vec<_>>()),
         ("sparse_16", (0..16).map(|index| [
-            (index % 4) as f32 * 64.0 + 8.25, (index / 4) as f32 * 64.0 + 8.5,
-            4.5, 4.25,
+            (index % 4) as f32 * 64.0 + 8.25,
+            (index / 4) as f32 * 64.0 + 8.5, 4.5, 4.25,
         ]).collect()),
         ("short_edges_256", (0..256).map(|index| [
-            (index % 16) as f32 * 16.0 + 2.25, (index / 16) as f32 * 16.0 + 2.5,
-            6.5, 4.25,
+            (index % 16) as f32 * 16.0 + 2.25,
+            (index / 16) as f32 * 16.0 + 2.5, 6.5, 4.25,
         ]).collect()),
     ];
     for (name, rectangles) in scenes {
@@ -90,7 +90,7 @@ fn benchmark_f32(c: &mut Criterion) {
                 FixedScalar::from_num(y), FixedScalar::from_num(y + height),
             );
             source_edges.extend([
-                Edge { upper: (left, top).into(), lower: (left, bottom).into(), winding: -1 },
+                Edge { upper:  (left, top).into(), lower:  (left, bottom).into(), winding: -1 },
                 Edge { upper: (right, top).into(), lower: (right, bottom).into(), winding: 1 },
             ]);
         }

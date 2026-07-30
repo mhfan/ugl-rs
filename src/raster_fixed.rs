@@ -341,8 +341,7 @@ pub fn fixed_strip_requirements(lines: &[FixedLine], height: u32) ->
     }
     if lines.len() > u32::MAX as usize || indices > u32::MAX as usize {
         return Err(FixedRasterError::DimensionsOverflow);
-    }
-    Ok(FixedStripRequirements { offsets, indices })
+    }   Ok(FixedStripRequirements { offsets, indices })
 }
 
 /// Rasterizes prepared fixed-point lines into anti-aliased coverage runs.
@@ -387,8 +386,8 @@ pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
         let strip_lines = bins.indices(strip);
         if strip != current_strip {
             current_strip = strip;
-            pending = 0;
             active_count = 0;
+            pending = 0;
         }
         let row = &mut workspace.row_area[..width_usize];  row.fill(0);
         let (mut top, bottom) = (FixedScalar::from_bits(extent(y)     as i32),
@@ -402,8 +401,7 @@ pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
                 &workspace.segments[..active_count], top, bottom);
             if active_count == 0 {
                 if vertex_boundary >= bottom { break; }
-                top = vertex_boundary;
-                continue;
+                top = vertex_boundary;  continue;
             }
             prepare_active_segments(lines, &mut workspace.segments[..active_count],
                 top, vertex_boundary).map_err(FixedRenderError::Raster)?;
@@ -454,7 +452,7 @@ fn line_strip_range(line: FixedLine, height: u32) ->
     let first_row = line.y0.div_euclid(scale).clamp(0, height);
     let last_row = (bottom.div_euclid(scale) +
         (bottom.rem_euclid(scale) != 0) as i32).clamp(0, height);
-    if first_row >= last_row { return Ok(None); }
+    if  first_row >= last_row { return Ok(None); }
     let strip_height = FIXED_STRIP_HEIGHT as i32;
     let first = first_row.div_euclid(strip_height) as usize;
     let last = (last_row - 1).div_euclid(strip_height) as usize + 1;
@@ -466,15 +464,15 @@ fn build_strip_bins<'a>(lines: &[FixedLine], height: u32, offsets: &'a mut [u32]
     let required = fixed_strip_requirements(lines, height)?;
     for (kind, available, required) in [
         (FixedWorkspace::StripOffsets, offsets.len(), required.offsets),
-        (FixedWorkspace::StripIndices, indices.len(), required.indices),
-    ] {
+        (FixedWorkspace::StripIndices, indices.len(), required.indices)] {
         if available < required {
             return Err(FixedRasterError::WorkspaceTooSmall { kind, required });
         }
     }
-    let (offsets, indices) =
-        (&mut offsets[..required.offsets], &mut indices[..required.indices]);
+    let offsets = &mut offsets[..required.offsets];
+    let indices = &mut indices[..required.indices];
     offsets.fill(0);
+
     for line in lines {
         if let Some(range) = line_strip_range(*line, height)? {
             for strip in range { offsets[strip + 1] += 1; }
@@ -499,8 +497,7 @@ fn build_strip_bins<'a>(lines: &[FixedLine], height: u32, offsets: &'a mut [u32]
             left.y0.cmp(&right.y0)
                 .then_with(|| (left.y0 + left.dy as i32).cmp(&(right.y0 + right.dy as i32)))
         });
-    }
-    Ok(FixedStripBins { offsets, indices })
+    }   Ok(FixedStripBins { offsets, indices })
 }
 
 fn retain_active_lines(lines: &[FixedLine], segments: &mut [FixedSegment],
@@ -513,8 +510,7 @@ fn retain_active_lines(lines: &[FixedLine], segments: &mut [FixedSegment],
             segments[retained] = segments[index];
             retained += 1;
         }
-    }
-    retained
+    }       retained
 }
 
 fn activate_pending_lines(lines: &[FixedLine], strip_lines: &[u32], pending: &mut usize,
@@ -545,8 +541,7 @@ fn next_active_slab_boundary(lines: &[FixedLine], strip_lines: &[u32], pending: 
             line.y0 + line.dy as i32
         };
         if top < end && end < boundary { boundary = end; }
-    }
-    FixedScalar::from_bits(boundary)
+    }   FixedScalar::from_bits(boundary)
 }
 
 fn prepare_active_segments(lines: &[FixedLine], segments: &mut [FixedSegment],
@@ -556,8 +551,7 @@ fn prepare_active_segments(lines: &[FixedLine], segments: &mut [FixedSegment],
         *segment = lines[segment.line_index as usize]
             .segment_in_slab(segment.line_index, top, bottom)
             .ok_or(FixedRasterError::InvalidSlabPartition)?;
-    }
-    Ok(())
+    }   Ok(())
 }
 
 /// Validates and widens fixed-point edges into caller-owned raster storage.
@@ -589,8 +583,7 @@ pub fn next_slab_boundary(lines: &[FixedLine], top: FixedScalar, bottom: FixedSc
         for vertex in [line.y0, line.y0 + line.dy as i32] {
             if top < vertex && vertex < boundary { boundary = vertex; }
         }
-    }
-    Ok(FixedScalar::from_bits(boundary))
+    }   Ok(FixedScalar::from_bits(boundary))
 }
 
 /// Clips prepared lines to a horizontal slab without rounding x coordinates.
