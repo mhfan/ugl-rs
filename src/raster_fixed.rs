@@ -326,13 +326,11 @@ pub struct FixedRasterWorkspace<'a> {
 ///
 /// Keeping `y` strip-local makes the record 12 bytes while preserving the
 /// Q24.8 backend's full supported device width.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] #[repr(C)]
 pub struct FixedCoverageRun { pub x: u32, pub len: u32, pub row: u8, pub coverage: u8 }
 
 /// Range of coverage runs belonging to one non-empty 16-row strip.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] #[repr(C)]
 pub struct FixedCoverageStrip { pub y: u32, pub run_start: u32, pub run_count: u32 }
 
 /// Caller-owned storage for optional retained sparse coverage.
@@ -359,8 +357,7 @@ impl<'a> FixedCoverageStrips<'a> {
             for run in &self.runs[start..start + strip.run_count as usize] {
                 sink.span(run.x, strip.y + run.row as u32, run.len, run.coverage)?;
             }
-        }
-        Ok(())
+        }   Ok(())
     }
 }
 
@@ -500,9 +497,9 @@ pub fn rasterize_lines_to_strips<'a>(lines: &[FixedLine], width: u32, height: u3
 
 struct FixedCoverageEncoder<'a> {
     strips: &'a mut [FixedCoverageStrip],
-    runs: &'a mut [FixedCoverageRun],
+      runs: &'a mut [FixedCoverageRun],
     strip_count: usize,
-    run_count: usize,
+      run_count: usize,
 }
 
 impl<'a> FixedCoverageEncoder<'a> {

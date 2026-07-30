@@ -7,11 +7,9 @@ use ugl_rs::{analytic::AnalyticIntersection, color::RGBA, edge::Edge, raster::In
     }, geometry::{Affine, Path, PathBuilder},
 };
 #[cfg(feature = "fixed")] use ugl_rs::raster::FillRule;
-#[cfg(feature = "fixed")]
-#[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
+#[cfg(feature = "fixed")] #[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
 
-#[cfg(feature = "fixed")]
-impl ugl_rs::raster::CoverageSink for RunCounter {
+#[cfg(feature = "fixed")] impl ugl_rs::raster::CoverageSink for RunCounter {
     type Error = core::convert::Infallible;
     fn span(&mut self, _x: u32, _y: u32, len: u32, _coverage: u8) ->
         Result<(), Self::Error> {

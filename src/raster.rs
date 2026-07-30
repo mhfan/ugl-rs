@@ -5,8 +5,7 @@
 
 use crate::edge::Edge;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FillRule { NonZero, EvenOdd }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FillRule { NonZero, EvenOdd }
 
 impl FillRule {
     pub(crate) fn contains(self, winding: i32) -> bool {
