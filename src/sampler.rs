@@ -230,6 +230,32 @@ impl PaintSampler for RadialGradient<'_> {
     }
 }
 
+/// A full-turn conic gradient around `center`.
+#[derive(Clone, Copy, Debug)] pub struct ConicGradient<'a> {
+    center: Point, start_turn: f32, stops: GradientStops<'a>,
+}
+
+impl<'a> ConicGradient<'a> {
+    /// Creates a conic gradient whose zero stop lies at `start_angle` radians.
+    pub fn new(center: impl Into<Point>, start_angle: f32, stops: GradientStops<'a>) ->
+        Result<Self, GradientError> {
+        let center = center.into();
+        if !center.x.is_finite() || !center.y.is_finite() || !start_angle.is_finite() {
+            return Err(GradientError::NonFiniteGeometry);
+        }
+        const TAU: f32 = core::f32::consts::PI * 2.0;
+        Ok(Self { center, start_turn: start_angle / TAU, stops })
+    }
+}
+
+impl PaintSampler for ConicGradient<'_> {
+    fn sample(&self, x: f32, y: f32) -> PRGB32<u8> {
+        const TAU: f32 = core::f32::consts::PI * 2.0;
+        let turn = libm::atan2f(y - self.center.y, x - self.center.x) / TAU;
+        self.stops.sample(SpreadMode::Repeat.map(turn - self.start_turn))
+    }
+}
+
 #[cfg(test)] mod tests { use super::*;
     #[test] fn solid_paint_is_position_independent_and_premultiplied() {
         let paint = SolidPaint::new(RGBA::new(200, 100, 50, 128));
@@ -285,5 +311,19 @@ impl PaintSampler for RadialGradient<'_> {
         assert_eq!(focal.sample(-4.0, 0.0), RGBA::<u8>::blue().premul());
         assert_eq!(RadialGradient::new((0.0, 0.0), -1.0, stops, SpreadMode::Pad)
             .unwrap_err(), GradientError::NegativeRadius);
+    }
+
+    #[test] fn conic_gradient_wraps_a_full_turn_from_its_start_angle() {
+        let stops = red_blue_stops();
+        let stops = GradientStops::new(&stops).unwrap();
+        let conic = ConicGradient::new((2.0, 3.0), 0.0, stops).unwrap();
+        assert_eq!(conic.sample(3.0, 3.0), RGBA::<u8>::red().premul());
+        assert_eq!(conic.sample(2.0, 4.0), (191, 0, 64, 255).into());
+        assert_eq!(conic.sample(1.0, 3.0), (128, 0, 128, 255).into());
+        assert_eq!(conic.sample(2.0, 2.0), (64, 0, 191, 255).into());
+
+        let rotated =
+            ConicGradient::new((2.0, 3.0), core::f32::consts::FRAC_PI_2, stops).unwrap();
+        assert_eq!(rotated.sample(2.0, 4.0), RGBA::<u8>::red().premul());
     }
 }
