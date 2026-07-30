@@ -153,6 +153,28 @@ and SIMD layouts do not enter the common `Edge` representation.
   sRGB conversion belongs at input/output boundaries.
 - Integer conversion maps channel extrema exactly and uses round-to-nearest.
 
+## Paint and gradients
+
+- `PaintSampler` returns premultiplied RGBA8888 at device-space pixel centers
+  and is statically dispatched without allocation.
+- Solid paint reports its constant color so span and tile compositors retain
+  their bulk fast paths.
+- `TransformedPaint` maps device samples into paint-local coordinates through
+  an inverse affine computed once at construction. A singular or non-finite
+  transform is rejected.
+- Gradient stops borrow caller-owned storage, are ordered in `[0, 1]`, and
+  interpolate premultiplied channels. Equal offsets form a hard transition;
+  the last stop at an exact repeated offset wins.
+- Linear and radial gradients support pad, repeat, and reflect extension.
+- Radial paint uses the general two-circle model. Samples outside its valid
+  cone are transparent, and negative, non-finite, or identical-circle inputs
+  are rejected.
+- Conic paint covers one complete turn, repeats at the seam, and takes its
+  start angle in radians.
+- The reference API treats supplied channel values as linear-light values.
+  Encoding or decoding sRGB is an explicit input/output-boundary operation,
+  not an implicit sampler step.
+
 ## Memory and failure
 
 - Rendering never owns the destination; it borrows a caller-provided buffer.
@@ -264,9 +286,14 @@ only after this path is complete.
 
 ### M2 — Paint and clipping
 
+Status: complete (2026-07-30).
+
 - Rectangular and path clips.
 - Linear, radial, and conic gradients.
 - A bounded sampler contract and explicit color-space boundaries.
+- Independent, allocation-free paint transforms.
+- Golden, randomized-invariant, clipping-composition, and sampler benchmark
+  coverage.
 
 ### M3 — Stroke
 

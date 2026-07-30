@@ -25,7 +25,10 @@ The intended niche is deliberately narrower than Blend2D, tiny-skia, Skia, or Ve
 
 The project now has an allocation-free path-to-pixel vertical slice with
 sampled and analytic `f32` rasterizers, premultiplied source-over, caller-owned
-scratch storage, and an early Q24.8 fixed-point backend. Production fixed edge
+scratch storage, rectangular and path coverage clips, and allocation-free
+solid, linear, two-circle radial, and conic paint samplers. Paint transforms
+are independent from path transforms and invert once at construction. The
+project also has an early Q24.8 fixed-point backend. Production fixed edge
 binning and persistent active edges now operate on caller-owned sparse strip
 storage. The fixed backend can optionally retain compact sparse coverage
 strips for batching or caching while keeping the lower-memory streaming sink
@@ -47,7 +50,8 @@ Path
   -> curve flattening
   -> directed edges
   -> scan conversion and pixel coverage
-  -> solid paint
+  -> optional rectangle/path clipping
+  -> solid or gradient paint sampling
   -> source-over compositing
   -> caller-owned RGBA8888 buffer
 ```
@@ -71,6 +75,31 @@ Run the scalar rasterizer comparison with:
 ```text
 cargo bench --bench raster --all-features
 ```
+
+Run only the paint-sampler comparison with:
+
+```text
+cargo bench --bench raster --all-features -- paint_sample_rgba8888
+```
+
+The paint benchmark directly samples 65,536 device-space pixel centers and
+accumulates the resulting premultiplied RGBA channels. It excludes path
+processing, rasterization, clipping, destination writes, and compositing.
+The development baseline at commit `ad3906f`, measured on 2026-07-30 with
+`rustc 1.97.1`/LLVM 22.1.6 on Darwin arm64 using Criterion's default 3-second
+warm-up, 5-second measurement, and 100 samples, is:
+
+| Paint | Time estimate | Reported interval | Throughput |
+| --- | ---: | ---: | ---: |
+| solid | 287.33 µs | 277.61–298.01 µs | 228.09 Mpixel/s |
+| linear | 500.50 µs | 487.76–517.64 µs | 130.94 Mpixel/s |
+| two-circle radial | 1.3429 ms | 1.3189–1.3844 ms | 48.80 Mpixel/s |
+| conic | 1.1343 ms | 1.1126–1.1625 ms | 57.78 Mpixel/s |
+
+These are scalar reference costs, not optimized paint targets. In particular,
+the general radial sampler performs stable two-circle root solving per pixel;
+future specialized concentric/span-stepping paths must retain byte-equivalent
+tests and report their code-size and memory costs.
 
 The baseline scene contains 64 fractional rectangles in a 256 × 256
 premultiplied RGBA8888 target. Path construction, fixed-line preparation, and
