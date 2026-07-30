@@ -21,7 +21,7 @@ const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FixedWorkspace {
     Lines, Segments, Trapezoids, RowArea, Intersections, Spans,
-    StripOffsets, StripIndices,
+    StripOffsets, StripIndices, CoverageStrips, CoverageRuns,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -322,6 +322,47 @@ pub struct FixedRasterWorkspace<'a> {
     pub strip_indices: &'a mut [u32],
 }
 
+/// One non-empty horizontal coverage run within a 16-row strip.
+///
+/// Keeping `y` strip-local makes the record 12 bytes while preserving the
+/// Q24.8 backend's full supported device width.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FixedCoverageRun { pub x: u32, pub len: u32, pub row: u8, pub coverage: u8 }
+
+/// Range of coverage runs belonging to one non-empty 16-row strip.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FixedCoverageStrip { pub y: u32, pub run_start: u32, pub run_count: u32 }
+
+/// Caller-owned storage for optional retained sparse coverage.
+pub struct FixedCoverageWorkspace<'a> {
+    pub strips: &'a mut [FixedCoverageStrip],
+    pub runs: &'a mut [FixedCoverageRun],
+}
+
+/// Borrowed sparse coverage produced by [`rasterize_lines_to_strips`].
+#[derive(Clone, Copy, Debug)]
+pub struct FixedCoverageStrips<'a> {
+    strips: &'a [FixedCoverageStrip],
+    runs: &'a [FixedCoverageRun],
+}
+
+impl<'a> FixedCoverageStrips<'a> {
+    pub fn strips(&self) -> &'a [FixedCoverageStrip] { self.strips }
+    pub fn runs(&self) -> &'a [FixedCoverageRun] { self.runs }
+
+    /// Replays retained coverage through the ordinary streaming sink contract.
+    pub fn replay<S: CoverageSink>(&self, sink: &mut S) -> Result<(), S::Error> {
+        for strip in self.strips {
+            let start = strip.run_start as usize;
+            for run in &self.runs[start..start + strip.run_count as usize] {
+                sink.span(run.x, strip.y + run.row as u32, run.len, run.coverage)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Caller-owned storage required to bin prepared lines for a target height.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FixedStripRequirements { pub offsets: usize, pub indices: usize }
@@ -434,6 +475,77 @@ pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
         }
         emit_area_runs(row, y, sink).map_err(FixedRenderError::Sink)?;
     }   Ok(())
+}
+
+/// Rasterizes into compact caller-owned sparse coverage strips.
+///
+/// This optional retained form is intended for batching, caching, or a later
+/// strip/tile compositor. [`rasterize_lines`] remains the lower-memory
+/// streaming path. On insufficient capacity, `required` is the first
+/// unavailable record count; callers may grow that buffer and retry.
+pub fn rasterize_lines_to_strips<'a>(lines: &[FixedLine], width: u32, height: u32,
+    fill_rule: FillRule, raster_workspace: &mut FixedRasterWorkspace<'_>,
+    coverage_workspace: FixedCoverageWorkspace<'a>) ->
+    Result<FixedCoverageStrips<'a>, FixedRasterError> {
+    let mut encoder = FixedCoverageEncoder {
+        strips: coverage_workspace.strips, runs: coverage_workspace.runs,
+        strip_count: 0, run_count: 0,
+    };
+    match rasterize_lines(lines, width, height, fill_rule, raster_workspace, &mut encoder) {
+        Ok(()) => Ok(encoder.finish()),
+        Err(FixedRenderError::Raster(error) | FixedRenderError::Sink(error)) => Err(error),
+    }
+}
+
+struct FixedCoverageEncoder<'a> {
+    strips: &'a mut [FixedCoverageStrip],
+    runs: &'a mut [FixedCoverageRun],
+    strip_count: usize,
+    run_count: usize,
+}
+
+impl<'a> FixedCoverageEncoder<'a> {
+    fn finish(self) -> FixedCoverageStrips<'a> {
+        FixedCoverageStrips {
+            strips: &self.strips[..self.strip_count],
+            runs: &self.runs[..self.run_count],
+        }
+    }
+}
+
+impl CoverageSink for FixedCoverageEncoder<'_> {
+    type Error = FixedRasterError;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        let strip_y = y / FIXED_STRIP_HEIGHT * FIXED_STRIP_HEIGHT;
+        let new_strip = self.strip_count == 0 ||
+            self.strips[self.strip_count - 1].y != strip_y;
+        if new_strip && self.strip_count == self.strips.len() {
+            return Err(FixedRasterError::WorkspaceTooSmall {
+                kind: FixedWorkspace::CoverageStrips, required: self.strip_count + 1,
+            });
+        }
+        if self.run_count == self.runs.len() {
+            return Err(FixedRasterError::WorkspaceTooSmall {
+                kind: FixedWorkspace::CoverageRuns, required: self.run_count + 1,
+            });
+        }
+        if self.run_count == u32::MAX as usize {
+            return Err(FixedRasterError::DimensionsOverflow);
+        }
+        if new_strip {
+            self.strips[self.strip_count] = FixedCoverageStrip {
+                y: strip_y, run_start: self.run_count as _, run_count: 0,
+            };
+            self.strip_count += 1;
+        }
+        self.runs[self.run_count] =
+            FixedCoverageRun { x, len, row: (y - strip_y) as _, coverage };
+        self.run_count += 1;
+        self.strips[self.strip_count - 1].run_count += 1;
+        Ok(())
+    }
 }
 
 #[derive(Debug)] struct FixedStripBins<'a> { offsets: &'a [u32], indices: &'a [u32] }

@@ -269,6 +269,78 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!((offsets, indices), ([7; 5], [9; 4]));
 }
 
+#[test] fn retained_coverage_is_compact_sparse_and_replays_exactly() {
+    assert_eq!(core::mem::size_of::<FixedCoverageRun>(), 12);
+    let edge = |x, top, bottom, winding| Edge {
+        upper: (fixed(x), fixed(top)).into(),
+        lower: (fixed(x), fixed(bottom)).into(), winding,
+    };
+    let edges = [
+        edge(0.5, 0.5, 20.25, 1), edge(2.5, 0.5, 20.25, -1),
+        edge(1.0, 32.0, 33.0, 1), edge(3.0, 32.0, 33.0, -1),
+    ];
+    let mut lines = [FixedLine::default(); 4];
+    prepare_lines(&edges, &mut lines).unwrap();
+    let requirements = fixed_strip_requirements(&lines, 40).unwrap();
+    let (mut segments, mut trapezoids, mut row_area, mut offsets, mut indices) = (
+        [FixedSegment::default(); 4], [FixedTrapezoid::default(); 2], [0; 4],
+        vec![0; requirements.offsets], vec![0; requirements.indices],
+    );
+    let mut raster_workspace = FixedRasterWorkspace {
+        segments: &mut segments, trapezoids: &mut trapezoids, row_area: &mut row_area,
+        strip_offsets: &mut offsets, strip_indices: &mut indices,
+    };
+    let (mut strips, mut runs) = ([FixedCoverageStrip::default(); 3],
+                                  [FixedCoverageRun::default(); 64]);
+    let retained = rasterize_lines_to_strips(&lines, 4, 40, FillRule::NonZero,
+        &mut raster_workspace,
+        FixedCoverageWorkspace { strips: &mut strips, runs: &mut runs }).unwrap();
+
+    assert_eq!(retained.strips().iter().map(|strip| strip.y).collect::<Vec<_>>(),
+        [0, 16, 32]);
+    assert!(retained.runs().iter().all(|run| run.row < FIXED_STRIP_HEIGHT as u8));
+    let mut replayed = vec![0; 4 * 40];
+    retained.replay(&mut |x, y, coverage| {
+        replayed[y as usize * 4 + x as usize] = coverage;
+        Ok::<_, Infallible>(())
+    }).unwrap();
+    assert_eq!(replayed, render(&edges, 4, 40, FillRule::NonZero));
+}
+
+#[test] fn retained_coverage_reports_each_caller_owned_capacity() {
+    let edges = [
+        Edge { upper: (fixed(0.0), fixed(0.0)).into(),
+               lower: (fixed(0.0), fixed(1.0)).into(), winding: 1 },
+        Edge { upper: (fixed(1.0), fixed(0.0)).into(),
+               lower: (fixed(1.0), fixed(1.0)).into(), winding: -1 },
+    ];
+    let mut lines = [FixedLine::default(); 2];  prepare_lines(&edges, &mut lines).unwrap();
+    let requirements = fixed_strip_requirements(&lines, 1).unwrap();
+    let (mut segments, mut trapezoids, mut row_area, mut offsets, mut indices) = (
+        [FixedSegment::default(); 2], [FixedTrapezoid::default(); 1], [0; 1],
+        vec![0; requirements.offsets], vec![0; requirements.indices],
+    );
+    let mut raster_workspace = FixedRasterWorkspace {
+        segments: &mut segments, trapezoids: &mut trapezoids, row_area: &mut row_area,
+        strip_offsets: &mut offsets, strip_indices: &mut indices,
+    };
+    let mut run = [FixedCoverageRun::default(); 1];
+    assert_eq!(rasterize_lines_to_strips(&lines, 1, 1, FillRule::NonZero,
+        &mut raster_workspace,
+        FixedCoverageWorkspace { strips: &mut [], runs: &mut run }).unwrap_err(),
+        FixedRasterError::WorkspaceTooSmall {
+            kind: FixedWorkspace::CoverageStrips, required: 1,
+        });
+
+    let mut strip = [FixedCoverageStrip::default(); 1];
+    assert_eq!(rasterize_lines_to_strips(&lines, 1, 1, FillRule::NonZero,
+        &mut raster_workspace,
+        FixedCoverageWorkspace { strips: &mut strip, runs: &mut [] }).unwrap_err(),
+        FixedRasterError::WorkspaceTooSmall {
+            kind: FixedWorkspace::CoverageRuns, required: 1,
+        });
+}
+
 #[test] fn slab_boundaries_advance_through_edge_vertices() {
     let edge = |x, top, bottom, winding| Edge {
         upper: (fixed(x), fixed(top)).into(),
