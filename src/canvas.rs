@@ -11,6 +11,9 @@ use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
 #[cfg(feature = "fixed")] use crate::raster_fixed::{
     FixedLine, FixedRasterError, FixedRasterWorkspace, FixedRenderError, rasterize_lines,
 };
+#[cfg(feature = "fixed")] use crate::tile_fixed::{
+    FixedDirectTileWorkspace, FixedTileKind, rasterize_lines_to_tiles,
+};
 
 const BYTES_PER_PIXEL: u32 = 4;
 
@@ -63,21 +66,41 @@ impl<'a> PixmapMut<'a> {
 
     fn blend_solid_span(&mut self, x: u32, y: u32, len: u32,
         color: PremulRGBA<u8>, coverage: u8) {
-        let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
-        let [r, g, b, a] = color.to_array();
-        let source_alpha = mul_div_255(a, coverage);
-        let inverse_alpha = u8::MAX - source_alpha;
-        let source = [mul_div_255(r, coverage), mul_div_255(g, coverage),
-                      mul_div_255(b, coverage)];
+        let terms = solid_blend_terms(color, coverage);
         let start = y as usize * self.stride as usize
             + x as usize * BYTES_PER_PIXEL as usize;
         let end = start + len as usize * BYTES_PER_PIXEL as usize;
-        for pixel in self.data[start..end].chunks_exact_mut(BYTES_PER_PIXEL as _) {
-            for (channel, source) in pixel[..3].iter_mut().zip(source) {
-                *channel = source.saturating_add(mul_div_255(*channel, inverse_alpha));
-            }
-            pixel[3] = source_alpha.saturating_add(mul_div_255(pixel[3], inverse_alpha));
+        blend_solid_bytes(&mut self.data[start..end], terms);
+    }
+
+    #[cfg(feature = "fixed")]
+    fn blend_solid_tile(&mut self, x: u32, y: u32, width: u32, height: u32,
+        color: PremulRGBA<u8>) {
+        let terms = solid_blend_terms(color, u8::MAX);
+        for row in y..y + height {
+            let start = row as usize * self.stride as usize
+                + x as usize * BYTES_PER_PIXEL as usize;
+            let end = start + width as usize * BYTES_PER_PIXEL as usize;
+            blend_solid_bytes(&mut self.data[start..end], terms);
         }
+    }
+}
+
+fn solid_blend_terms(color: PremulRGBA<u8>, coverage: u8) -> ([u8; 3], u8, u8) {
+    let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
+    let [r, g, b, a] = color.to_array();
+    let alpha = mul_div_255(a, coverage);
+    ([mul_div_255(r, coverage), mul_div_255(g, coverage),
+      mul_div_255(b, coverage)], alpha, u8::MAX - alpha)
+}
+
+fn blend_solid_bytes(bytes: &mut [u8], (source, alpha, inverse): ([u8; 3], u8, u8)) {
+    let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
+    for pixel in bytes.chunks_exact_mut(BYTES_PER_PIXEL as _) {
+        for (channel, source) in pixel[..3].iter_mut().zip(source) {
+            *channel = source.saturating_add(mul_div_255(*channel, inverse));
+        }
+        pixel[3] = alpha.saturating_add(mul_div_255(pixel[3], inverse));
     }
 }
 
@@ -162,6 +185,34 @@ pub fn render_solid_fixed(lines: &[FixedLine], color: RGBA<u8>, fill_rule: FillR
     let mut compositor = SolidCompositor { target, color: color.premul() };
     rasterize_lines(lines, compositor.target.width, compositor.target.height,
         fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
+}
+
+/// Renders prepared Q24.8 lines through direct sparse tiles.
+#[cfg(feature = "fixed")]
+pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule: FillRule,
+    target: &mut PixmapMut<'_>, raster_workspace: &mut FixedRasterWorkspace<'_>,
+    tile_workspace: FixedDirectTileWorkspace<'_>) -> Result<(), RenderError> {
+    let tiled = rasterize_lines_to_tiles(lines, target.width, target.height, fill_rule,
+        raster_workspace, tile_workspace).map_err(RenderError::FixedRaster)?;
+    let compositor = SolidCompositor { target, color: color.premul() };
+    for tile in tiled.tiles() {
+        match tile.kind {
+            FixedTileKind::Full => {
+                let width = (tiled.width() - tile.x).min(crate::tile_fixed::FIXED_TILE_WIDTH);
+                let height = (tiled.height() - tile.y).min(crate::tile_fixed::FIXED_TILE_HEIGHT);
+                compositor.target.blend_solid_tile(
+                    tile.x, tile.y, width, height, compositor.color);
+            }
+            FixedTileKind::Boundary => {
+                let start = tile.run_start as usize;
+                for run in &tiled.runs()[start..start + tile.run_count as usize] {
+                    compositor.target.blend_solid_span(tile.x + run.x as u32,
+                        tile.y + run.row as u32, run.len as _, compositor.color, run.coverage);
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn build_edges(path: &Path, transform: Affine, options: FlattenOptions, edges: &mut [Edge]) ->
@@ -301,6 +352,9 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
     #[test] fn fixed_solid_rendering_uses_the_shared_compositor() {
         use crate::{geometry::FixedScalar, raster_fixed::{
             FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines,
+        }, tile_fixed::{
+            FixedCoverageTile, FixedCoverageTileRun, FixedDirectTilePiece,
+            FixedDirectTileWorkspace,
         }};
 
         let fixed = FixedScalar::from_num;
@@ -325,5 +379,33 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
             }).unwrap();
         assert_eq!(target.pixel(0, 0), Some((128, 128, 128, 128).into()));
         assert_eq!(target.pixel(1, 0), Some((128, 128, 128, 128).into()));
+
+        let mut tiled_pixels = [0; 8];
+        let mut tiled_target = PixmapMut::new(&mut tiled_pixels, 2, 1, 8).unwrap();
+        let (mut tiles, mut runs, mut pieces) = (
+            [FixedCoverageTile::default(); 1], [FixedCoverageTileRun::default(); 2],
+            [FixedDirectTilePiece::default(); 2],
+        );
+        render_solid_fixed_tiled(&lines, RGBA::white(), FillRule::NonZero,
+            &mut tiled_target, &mut FixedRasterWorkspace {
+                segments: &mut segments, trapezoids: &mut trapezoids, row_area: &mut row_area,
+                strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+            }, FixedDirectTileWorkspace {
+                tiles: &mut tiles, runs: &mut runs, pieces: &mut pieces,
+                column_heads: &mut [0], column_tails: &mut [0], touched_columns: &mut [0],
+            },
+        ).unwrap();
+        assert_eq!(tiled_pixels, pixels);
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn full_tile_blending_matches_row_spans() {
+        let (mut tiled, mut spanned) = ([17; 16 * 16 * 4], [17; 16 * 16 * 4]);
+        let color = RGBA::<u8>::new(40, 120, 220, 192).premul();
+        PixmapMut::new(&mut tiled, 16, 16, 64).unwrap()
+            .blend_solid_tile(0, 0, 16, 16, color);
+        let mut target = PixmapMut::new(&mut spanned, 16, 16, 64).unwrap();
+        for y in 0..16 { target.blend_solid_span(0, y, 16, color, u8::MAX); }
+        assert_eq!(tiled, spanned);
     }
 }
