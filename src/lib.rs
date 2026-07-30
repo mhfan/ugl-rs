@@ -15,6 +15,7 @@ pub mod raster;
 pub mod flatten;
 pub mod analytic;
 #[cfg(feature = "fixed")] pub mod raster_fixed;
+#[cfg(feature = "fixed")] pub mod tile_fixed;
 pub mod canvas;
 pub mod edge;
 

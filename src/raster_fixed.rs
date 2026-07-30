@@ -22,6 +22,7 @@ const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 pub enum FixedWorkspace {
     Lines, Segments, Trapezoids, RowArea, Intersections, Spans,
     StripOffsets, StripIndices, CoverageStrips, CoverageRuns,
+    CoverageTiles, CoverageTileRuns, CoverageTilePieces,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -342,11 +343,15 @@ pub struct FixedCoverageWorkspace<'a> {
 /// Borrowed sparse coverage produced by [`rasterize_lines_to_strips`].
 #[derive(Clone, Copy, Debug)]
 pub struct FixedCoverageStrips<'a> {
+    width: u32,
+    height: u32,
     strips: &'a [FixedCoverageStrip],
     runs: &'a [FixedCoverageRun],
 }
 
 impl<'a> FixedCoverageStrips<'a> {
+    pub fn width(&self) -> u32 { self.width }
+    pub fn height(&self) -> u32 { self.height }
     pub fn strips(&self) -> &'a [FixedCoverageStrip] { self.strips }
     pub fn runs(&self) -> &'a [FixedCoverageRun] { self.runs }
 
@@ -487,7 +492,7 @@ pub fn rasterize_lines_to_strips<'a>(lines: &[FixedLine], width: u32, height: u3
     Result<FixedCoverageStrips<'a>, FixedRasterError> {
     let mut encoder = FixedCoverageEncoder {
         strips: coverage_workspace.strips, runs: coverage_workspace.runs,
-        strip_count: 0, run_count: 0,
+        width, height, strip_count: 0, run_count: 0,
     };
     match rasterize_lines(lines, width, height, fill_rule, raster_workspace, &mut encoder) {
         Ok(()) => Ok(encoder.finish()),
@@ -498,6 +503,8 @@ pub fn rasterize_lines_to_strips<'a>(lines: &[FixedLine], width: u32, height: u3
 struct FixedCoverageEncoder<'a> {
     strips: &'a mut [FixedCoverageStrip],
       runs: &'a mut [FixedCoverageRun],
+    width: u32,
+    height: u32,
     strip_count: usize,
       run_count: usize,
 }
@@ -505,6 +512,7 @@ struct FixedCoverageEncoder<'a> {
 impl<'a> FixedCoverageEncoder<'a> {
     fn finish(self) -> FixedCoverageStrips<'a> {
         FixedCoverageStrips {
+            width: self.width, height: self.height,
             strips: &self.strips[..self.strip_count],
             runs: &self.runs[..self.run_count],
         }
