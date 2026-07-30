@@ -144,6 +144,37 @@ construction: every mutable geometry, crossing, area, and destination buffer
 is borrowed from the benchmark. Criterion's own allocations are outside that
 contract.
 
+The analytic stroke baseline can be reproduced with:
+
+```text
+cargo bench --bench raster --all-features -- stroke
+```
+
+Commit `81b198c` adds separate end-to-end and geometry-expansion groups.
+`stroke_rgba8888` clears a 256 × 256 destination and measures path flattening,
+stroke expansion, analytic rasterization, and solid source-over composition.
+`stroke_expand` measures flattening and edge emission without rasterization or
+destination writes. Path construction and all scratch allocation remain
+outside the measured loop. A short initial run on the same Darwin arm64
+machine used a 1-second warm-up, 1-second measurement, and 10 samples:
+
+| Scene | Points | Contours | Edges/intersections | End-to-end | Expansion only |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 32-segment Butt/Miter polyline | 33 | 1 | 191 | 557.59 µs | 1.0988 µs |
+| 32-segment Round cap/join polyline | 33 | 1 | 326 | 722.35 µs | 3.8742 µs |
+| 8-cubic Butt/Miter path | 145 | 1 | 1102 | 4.3974 ms | 8.0294 µs |
+
+Every scene also borrows one 256-element `f32` row-coverage buffer. The table
+reports exact minimum capacities for these inputs at the default flattening
+tolerance, and benchmark identifiers encode the same
+`points/contours/edges` counts. Round joins increase emitted edges by 70.7%
+for the polyline, while curve flattening expands eight cubics into 145 points
+and 1102 fill edges. The expansion-only cost is small relative to the current
+analytic scan conversion, especially for the dense curve scene; this identifies
+edge distribution and coverage integration as the first optimization target.
+These short measurements are an initial regression baseline, not a
+cross-renderer performance comparison.
+
 The optional retained fixed output groups only non-empty 16-row strips. Each
 strip descriptor is 12 bytes and each uniform non-zero coverage run is 12
 bytes (`u32` x/length plus `u8` row/coverage). It therefore does not impose a
