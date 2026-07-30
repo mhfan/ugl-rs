@@ -211,8 +211,7 @@ pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule:
     for tile in tiled.tiles() {
         match tile.kind {
             FixedTileKind::Full => {
-                let width = (tiled.width() - tile.x).min(crate::tile_fixed::FIXED_TILE_WIDTH);
-                let height = (tiled.height() - tile.y).min(crate::tile_fixed::FIXED_TILE_HEIGHT);
+                let (width, height) = tiled.tile_extent(*tile);
                 compositor.target.blend_solid_tile(
                     tile.x, tile.y, width, height, compositor.color);
             }

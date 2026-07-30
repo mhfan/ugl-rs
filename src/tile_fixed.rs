@@ -1,12 +1,47 @@
 //! Compact tile indexing for retained fixed-point coverage.
 
 use crate::{raster::{CoverageSink, FillRule}, raster_fixed::{
-    FixedCoverageStrips, FixedLine, FixedRasterError, FixedRasterWorkspace,
-    FixedRenderError, FixedWorkspace, rasterize_lines,
+    DEVICE_RAW_LIMIT, FixedCoverageStrips, FixedLine, FixedRasterError, FixedRasterWorkspace,
+    FixedRenderError, FixedWorkspace, SUBPIXEL_SCALE, rasterize_lines,
 }};
 
 pub const FIXED_TILE_WIDTH:  u32 = 16;
 pub const FIXED_TILE_HEIGHT: u32 = 16;
+
+/// Conservative capacities for allocation-free direct tile rasterization.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FixedTileRequirements {
+    pub columns: usize,
+    pub  pieces: usize,
+    pub tiles: usize,
+     pub runs: usize,
+}
+
+/// Computes worst-case direct-tile capacities for a target.
+///
+/// `columns` elements are required in each column scratch slice. `tiles`,
+/// `runs`, and `pieces` bound their correspondingly named workspace slices.
+pub fn fixed_tile_requirements(width: u32, height: u32) ->
+    Result<FixedTileRequirements, FixedRasterError> {
+    let extent = |value: u32| value as u64 * SUBPIXEL_SCALE as u64;
+    if extent(width) > DEVICE_RAW_LIMIT as u64 || extent(height) > DEVICE_RAW_LIMIT as u64 {
+        return Err(FixedRasterError::CoordinateOutOfRange);
+    }
+    let  width = usize::try_from(width) .map_err(|_| FixedRasterError::DimensionsOverflow)?;
+    let height = usize::try_from(height).map_err(|_| FixedRasterError::DimensionsOverflow)?;
+    let tile_width = FIXED_TILE_WIDTH as usize;
+    let tile_height = FIXED_TILE_HEIGHT as usize;
+    let columns = width.div_ceil(tile_width);
+    let rows = height.div_ceil(tile_height);
+    let checked_mul = |left: usize, right| left.checked_mul(right)
+        .ok_or(FixedRasterError::DimensionsOverflow);
+    let tiles = checked_mul(columns, rows)?;
+    if  tiles > u32::MAX as usize { return Err(FixedRasterError::DimensionsOverflow); }
+    Ok(FixedTileRequirements { columns, tiles,
+          runs: checked_mul(width, height)?,
+        pieces: checked_mul(width, height.min(tile_height))?,
+    })
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u8)] pub enum FixedTileKind { Full, #[default] Boundary }
@@ -60,10 +95,14 @@ impl<'a> FixedCoverageTiles<'a> {
     pub fn tiles(&self) -> &'a [FixedCoverageTile] { self.tiles }
     pub fn runs(&self) -> &'a [FixedCoverageTileRun] { self.runs }
 
+    pub(crate) fn tile_extent(&self, tile: FixedCoverageTile) -> (u32, u32) {
+        ((self.width  - tile.x).min(FIXED_TILE_WIDTH),
+         (self.height - tile.y).min(FIXED_TILE_HEIGHT))
+    }
+
     pub fn replay<S: CoverageSink>(&self, sink: &mut S) -> Result<(), S::Error> {
         for tile in self.tiles {
-            let  width = (self.width  - tile.x).min(FIXED_TILE_WIDTH);
-            let height = (self.height - tile.y).min(FIXED_TILE_HEIGHT);
+            let (width, height) = self.tile_extent(*tile);
             match tile.kind {
                 FixedTileKind::Full => {
                     for row in 0..height { sink.span(tile.x, tile.y + row, width, u8::MAX)?; }
@@ -84,15 +123,15 @@ impl<'a> FixedCoverageTiles<'a> {
 ///
 /// Fine runs are linked per active tile column for one 16-row strip, then
 /// compacted into final tile order. Scratch therefore scales with the widest
-/// active strip rather than the retained coverage of the whole frame.
+/// active strip rather than the retained coverage of the whole frame. On
+/// error, callers must discard the formal tile and run outputs; earlier strips
+/// may already have been written.
 pub fn rasterize_lines_to_tiles<'a>(lines: &[FixedLine], width: u32, height: u32,
     fill_rule: FillRule, raster_workspace: &mut FixedRasterWorkspace<'_>,
     workspace: FixedDirectTileWorkspace<'a, '_>) ->
     Result<FixedCoverageTiles<'a>, FixedRasterError> {
-    let columns = width.div_ceil(FIXED_TILE_WIDTH) as usize;
-    if (columns as u64) * height.div_ceil(FIXED_TILE_HEIGHT) as u64 > u32::MAX as u64 {
-        return Err(FixedRasterError::DimensionsOverflow);
-    }
+    let requirements = fixed_tile_requirements(width, height)?;
+    let columns = requirements.columns;
     for (available, required) in [
         (workspace.column_heads.len(), columns),
         (workspace.column_tails.len(), columns),
@@ -379,8 +418,8 @@ fn tile_is_full(pieces: &[FixedCoverageTilePiece], width: u32, height: u32) -> b
     use core::convert::Infallible;
     use crate::{edge::Edge, geometry::FixedScalar, raster::FillRule,
         raster_fixed::{FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace,
-            FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
-            fixed_strip_requirements, prepare_lines, rasterize_lines,
+            FixedLine, FixedRasterWorkspace, FixedRenderError, FixedSegment, FixedTrapezoid,
+            FIXED_STRIP_HEIGHT, fixed_strip_requirements, prepare_lines, rasterize_lines,
             rasterize_lines_to_strips,
         },
     };
@@ -411,6 +450,14 @@ fn tile_is_full(pieces: &[FixedCoverageTilePiece], width: u32, height: u32) -> b
             vec![0; requirements.offsets],
             vec![0; requirements.indices],
         )
+    }
+
+    #[test] fn tile_requirements_bound_each_workspace_dimension() {
+        assert_eq!(fixed_tile_requirements(0, 0).unwrap(), FixedTileRequirements::default());
+        assert_eq!(fixed_tile_requirements(17, 18).unwrap(),
+            FixedTileRequirements { columns: 2, tiles: 4, runs: 306, pieces: 272 });
+        assert_eq!(fixed_tile_requirements(DEVICE_RAW_LIMIT as u32 / SUBPIXEL_SCALE + 1, 1),
+            Err(FixedRasterError::CoordinateOutOfRange));
     }
 
     #[test] fn tiles_are_compact_sparse_classified_and_exact() {
@@ -575,5 +622,108 @@ fn tile_is_full(pieces: &[FixedCoverageTilePiece], width: u32, height: u32) -> b
             }), Err(FixedRasterError::WorkspaceTooSmall {
                 kind: FixedWorkspace::CoverageTileRuns, required: 1..,
             })));
+    }
+
+    #[test] fn randomized_stream_strip_and_direct_tile_coverage_are_identical() {
+        let (mut state, mut successful) = (0xA5A5_1F2E_39C4_D507_u64, 0);
+        let mut random = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for case in 0..256 {
+            let (width, height) = (1 + random() as u32 % 35, 1 + random() as u32 % 35);
+            let mut edges = Vec::new();
+            for _ in 0..1 + random() as usize % 3 {
+                let count = 3 + random() as usize % 5;
+                let mut points = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let x = random() as i32 % ((width + 4) as i32 * 256) - 512;
+                    let y = random() as i32 % ((height + 4) as i32 * 256) - 512;
+                    points.push((FixedScalar::from_bits(x),
+                                 FixedScalar::from_bits(y)).into());
+                }
+                for index in 0..count {
+                    if let Some(edge) = Edge::from_line(points[index],
+                        points[(index + 1) % count]) {
+                        edges.push(edge);
+                    }
+                }
+            }
+            let mut lines = vec![FixedLine::default(); edges.len()];
+            let line_count = prepare_lines(&edges, &mut lines).unwrap();
+            lines.truncate(line_count);
+            let (mut segments, mut trapezoids, mut row_area, mut offsets, mut indices) =
+                raster_workspaces(&lines, width, height);
+            let tile_requirements = fixed_tile_requirements(width, height).unwrap();
+            let mut strip_runs =
+                vec![FixedCoverageRun::default(); width as usize * height as usize];
+            let mut strips = vec![FixedCoverageStrip::default();
+                    height.div_ceil(FIXED_STRIP_HEIGHT) as usize];
+            let mut tiles  = vec![FixedCoverageTile::default(); tile_requirements.tiles];
+            let mut pieces = vec![FixedDirectTilePiece::default(); tile_requirements.pieces];
+            let mut tile_runs = vec![FixedCoverageTileRun::default(); tile_requirements.runs];
+            let (mut heads, mut tails, mut touched) = (vec![0; tile_requirements.columns],
+                vec![0; tile_requirements.columns],    vec![0; tile_requirements.columns],
+            );
+            for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
+                let mut workspace = FixedRasterWorkspace {
+                    segments: &mut segments, trapezoids: &mut trapezoids,
+                    row_area: &mut row_area, strip_offsets: &mut offsets,
+                    strip_indices: &mut indices,
+                };
+                let mut streamed = vec![0; width as usize * height as usize];
+                let result = rasterize_lines(&lines, width, height, fill_rule, &mut workspace,
+                    &mut |x, y, coverage| {
+                        streamed[y as usize * width as usize + x as usize] = coverage;
+                        Ok::<_, Infallible>(())
+                    });
+                if let Err(error) = result {
+                    let FixedRenderError::Raster(error) = error;
+                    assert_eq!(rasterize_lines_to_strips(&lines, width, height, fill_rule,
+                        &mut workspace, FixedCoverageWorkspace {
+                            strips: &mut strips, runs: &mut strip_runs,
+                        }).unwrap_err(), error,
+                        "strip error mismatch in case {case}, {fill_rule:?}");
+                    assert_eq!(rasterize_lines_to_tiles(&lines, width, height, fill_rule,
+                        &mut workspace, FixedDirectTileWorkspace {
+                            tiles: &mut tiles, runs: &mut tile_runs, pieces: &mut pieces,
+                            column_heads: &mut heads, column_tails: &mut tails,
+                            touched_columns: &mut touched,
+                        }).unwrap_err(), error,
+                        "tile error mismatch in case {case}, {fill_rule:?}");
+                    continue;
+                }
+                successful += 1;
+
+                let retained = rasterize_lines_to_strips(&lines, width, height, fill_rule,
+                    &mut workspace, FixedCoverageWorkspace {
+                        strips: &mut strips, runs: &mut strip_runs,
+                    }).unwrap();
+                let mut replayed_strips = vec![0; streamed.len()];
+                retained.replay(&mut |x, y, coverage| {
+                    replayed_strips[y as usize * width as usize + x as usize] = coverage;
+                    Ok::<_, Infallible>(())
+                }).unwrap();
+                assert_eq!(replayed_strips, streamed,
+                    "strip mismatch in case {case}, {fill_rule:?}");
+
+                let tiled = rasterize_lines_to_tiles(&lines, width, height, fill_rule,
+                    &mut workspace, FixedDirectTileWorkspace {
+                        tiles: &mut tiles, runs: &mut tile_runs, pieces: &mut pieces,
+                        column_heads: &mut heads, column_tails: &mut tails,
+                        touched_columns: &mut touched,
+                    }).unwrap();
+                let mut replayed_tiles = vec![0; streamed.len()];
+                tiled.replay(&mut |x, y, coverage| {
+                    replayed_tiles[y as usize * width as usize + x as usize] = coverage;
+                    Ok::<_, Infallible>(())
+                }).unwrap();
+                assert_eq!(replayed_tiles, streamed,
+                    "tile mismatch in case {case}, {fill_rule:?}");
+            }
+        }
+        assert!(successful >= 256, "only {successful} randomized pipelines completed");
     }
 }
