@@ -66,40 +66,53 @@ fn benchmark_f32(c: &mut Criterion) {
         raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines},
     };
 
-    let mut source_edges = Vec::with_capacity(EDGE_CAPACITY);
-    for index in 0..SHAPES {
-        let x = (index % 8) as f32 * 30.0 + 4.25;
-        let y = (index / 8) as f32 * 30.0 + 4.5;
-        let (left, right, top, bottom) = (
-            FixedScalar::from_num(x), FixedScalar::from_num(x + 22.5),
-            FixedScalar::from_num(y), FixedScalar::from_num(y + 21.75),
-        );
-        source_edges.extend([
-            Edge { upper: (left, top).into(), lower: (left, bottom).into(), winding: -1 },
-            Edge { upper: (right, top).into(), lower: (right, bottom).into(), winding: 1 },
-        ]);
-    }
-    let mut lines = vec![FixedLine::default(); EDGE_CAPACITY];
-    let line_count = prepare_lines(&source_edges, &mut lines).unwrap();
-    let (mut segments, mut trapezoids, mut row_area, mut pixels) = (
-        vec![FixedSegment::default(); EDGE_CAPACITY],
-        vec![FixedTrapezoid::default(); EDGE_CAPACITY.div_ceil(2)],
-        vec![0; WIDTH as usize], vec![0; WIDTH as usize * HEIGHT as usize * 4],
-    );
-
     let mut group = c.benchmark_group("raster_rgba8888");
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
-    group.bench_function(BenchmarkId::new("fixed", "64_rectangles"), |b| b.iter(|| {
-        pixels.fill(0);
-        let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
-        render_solid_fixed(&lines[..line_count], RGBA::new(40, 120, 220, 192),
-            FillRule::NonZero, &mut target, &mut FixedRasterWorkspace {
-                segments: &mut segments, trapezoids: &mut trapezoids,
-                row_area: &mut row_area,
-            },
-        ).unwrap();
-        black_box(&pixels);
-    }));
+    let scenes = [
+        ("64_rectangles", (0..64).map(|index| [
+            (index % 8) as f32 * 30.0 + 4.25, (index / 8) as f32 * 30.0 + 4.5,
+            22.5, 21.75,
+        ]).collect::<Vec<_>>()),
+        ("sparse_16", (0..16).map(|index| [
+            (index % 4) as f32 * 64.0 + 8.25, (index / 4) as f32 * 64.0 + 8.5,
+            4.5, 4.25,
+        ]).collect()),
+        ("short_edges_256", (0..256).map(|index| [
+            (index % 16) as f32 * 16.0 + 2.25, (index / 16) as f32 * 16.0 + 2.5,
+            6.5, 4.25,
+        ]).collect()),
+    ];
+    for (name, rectangles) in scenes {
+        let mut source_edges = Vec::with_capacity(rectangles.len() * 2);
+        for [x, y, width, height] in rectangles {
+            let (left, right, top, bottom) = (
+                FixedScalar::from_num(x), FixedScalar::from_num(x + width),
+                FixedScalar::from_num(y), FixedScalar::from_num(y + height),
+            );
+            source_edges.extend([
+                Edge { upper: (left, top).into(), lower: (left, bottom).into(), winding: -1 },
+                Edge { upper: (right, top).into(), lower: (right, bottom).into(), winding: 1 },
+            ]);
+        }
+        let mut lines = vec![FixedLine::default(); source_edges.len()];
+        let line_count = prepare_lines(&source_edges, &mut lines).unwrap();
+        let (mut segments, mut trapezoids, mut row_area, mut pixels) = (
+            vec![FixedSegment::default(); line_count],
+            vec![FixedTrapezoid::default(); line_count.div_ceil(2)],
+            vec![0; WIDTH as usize], vec![0; WIDTH as usize * HEIGHT as usize * 4],
+        );
+        group.bench_function(BenchmarkId::new("fixed", name), |b| b.iter(|| {
+            pixels.fill(0);
+            let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+            render_solid_fixed(&lines[..line_count], RGBA::new(40, 120, 220, 192),
+                FillRule::NonZero, &mut target, &mut FixedRasterWorkspace {
+                    segments: &mut segments, trapezoids: &mut trapezoids,
+                    row_area: &mut row_area,
+                },
+            ).unwrap();
+            black_box(&pixels);
+        }));
+    }
     group.finish();
 }
 
