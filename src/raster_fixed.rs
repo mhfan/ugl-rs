@@ -9,6 +9,7 @@ use crate::{edge::Edge, geometry::{FixedScalar, Point}, raster::{CoverageSink, F
 /// every line-intersection multiply-add to remain in `i64`.
 pub const   SUBPIXEL_SCALE: u32 = 1 << 8;
 pub const DEVICE_RAW_LIMIT: i32 = 1 << 29;
+pub const FIXED_STRIP_HEIGHT: u32 = 16;
 const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FixedRasterError {
@@ -18,7 +19,10 @@ const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FixedWorkspace { Lines, Segments, Trapezoids, RowArea, Intersections, Spans }
+pub enum FixedWorkspace {
+    Lines, Segments, Trapezoids, RowArea, Intersections, Spans,
+    StripOffsets, StripIndices,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FixedRenderError<E> { Raster(FixedRasterError), Sink(E) }
@@ -314,6 +318,29 @@ pub struct FixedRasterWorkspace<'a> {
     pub segments: &'a mut [FixedSegment],
     pub trapezoids: &'a mut [FixedTrapezoid],
     pub row_area: &'a mut [u64],
+    pub strip_offsets: &'a mut [u32],
+    pub strip_indices: &'a mut [u32],
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FixedStripRequirements { pub offsets: usize, pub indices: usize }
+
+pub fn fixed_strip_requirements(lines: &[FixedLine], height: u32) ->
+    Result<FixedStripRequirements, FixedRasterError> {
+    let offsets = usize::try_from(height.div_ceil(FIXED_STRIP_HEIGHT))
+        .map_err(|_| FixedRasterError::DimensionsOverflow)?
+        .checked_add(1).ok_or(FixedRasterError::DimensionsOverflow)?;
+    let mut indices = 0_usize;
+    for line in lines {
+        if let Some(range) = line_strip_range(*line, height)? {
+            indices = indices.checked_add(range.len())
+                .ok_or(FixedRasterError::DimensionsOverflow)?;
+        }
+    }
+    if lines.len() > u32::MAX as usize || indices > u32::MAX as usize {
+        return Err(FixedRasterError::DimensionsOverflow);
+    }
+    Ok(FixedStripRequirements { offsets, indices })
 }
 
 /// Rasterizes prepared fixed-point lines into anti-aliased coverage runs.
@@ -338,6 +365,8 @@ pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
                 FixedRasterError::WorkspaceTooSmall { kind, required }));
         }
     }
+    let bins = build_strip_bins(lines, height,
+        workspace.strip_offsets, workspace.strip_indices).map_err(FixedRenderError::Raster)?;
 
     let Some((first_line, rest)) = lines.split_first() else { return Ok(()); };
     let (mut minimum_y, mut maximum_y) =
@@ -352,20 +381,24 @@ pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
         (maximum_y.rem_euclid(scale) != 0) as i32).clamp(0, height as i32) as u32;
 
     for y in first_row..last_row {
+        let strip = y as usize / FIXED_STRIP_HEIGHT as usize;
+        let strip_lines = bins.indices(strip);
         let row = &mut workspace.row_area[..width_usize];  row.fill(0);
         let (mut top, bottom) = (FixedScalar::from_bits(extent(y)     as i32),
                                  FixedScalar::from_bits(extent(y + 1) as i32));
         while top < bottom {
-            let vertex_boundary = next_slab_boundary(lines, top, bottom)
+            let vertex_boundary = next_indexed_slab_boundary(lines, strip_lines, top, bottom)
                 .map_err(FixedRenderError::Raster)?;
             let mut segment_count =
-                collect_segments(lines, top, vertex_boundary, workspace.segments)
+                collect_indexed_segments(lines, strip_lines,
+                    top, vertex_boundary, workspace.segments)
                 .map_err(FixedRenderError::Raster)?;
             let (next, snap_top, snap_bottom) = next_crossing_boundary(lines,
                 &mut workspace.segments[..segment_count], top, vertex_boundary)
                 .map_err(FixedRenderError::Raster)?;
             if next != vertex_boundary {
-                segment_count = collect_segments(lines, top, next, workspace.segments)
+                segment_count = collect_indexed_segments(
+                    lines, strip_lines, top, next, workspace.segments)
                     .map_err(FixedRenderError::Raster)?;
             }
             if snap_top {
@@ -388,6 +421,63 @@ pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
         }
         emit_area_runs(row, y, sink).map_err(FixedRenderError::Sink)?;
     }   Ok(())
+}
+
+#[derive(Debug)] struct FixedStripBins<'a> { offsets: &'a [u32], indices: &'a [u32] }
+
+impl FixedStripBins<'_> {
+    fn indices(&self, strip: usize) -> &[u32] {
+        &self.indices[self.offsets[strip] as usize..self.offsets[strip + 1] as usize]
+    }
+}
+
+fn line_strip_range(line: FixedLine, height: u32) ->
+    Result<Option<core::ops::Range<usize>>, FixedRasterError> {
+    let scale = SUBPIXEL_SCALE as i32;
+    let height = i32::try_from(height).map_err(|_| FixedRasterError::DimensionsOverflow)?;
+    let bottom = line.y0 + line.dy as i32;
+    let first_row = line.y0.div_euclid(scale).clamp(0, height);
+    let last_row = (bottom.div_euclid(scale) +
+        (bottom.rem_euclid(scale) != 0) as i32).clamp(0, height);
+    if first_row >= last_row { return Ok(None); }
+    let strip_height = FIXED_STRIP_HEIGHT as i32;
+    let first = first_row.div_euclid(strip_height) as usize;
+    let last = (last_row - 1).div_euclid(strip_height) as usize + 1;
+    Ok(Some(first..last))
+}
+
+fn build_strip_bins<'a>(lines: &[FixedLine], height: u32, offsets: &'a mut [u32],
+    indices: &'a mut [u32]) -> Result<FixedStripBins<'a>, FixedRasterError> {
+    let required = fixed_strip_requirements(lines, height)?;
+    for (kind, available, required) in [
+        (FixedWorkspace::StripOffsets, offsets.len(), required.offsets),
+        (FixedWorkspace::StripIndices, indices.len(), required.indices),
+    ] {
+        if available < required {
+            return Err(FixedRasterError::WorkspaceTooSmall { kind, required });
+        }
+    }
+    let (offsets, indices) =
+        (&mut offsets[..required.offsets], &mut indices[..required.indices]);
+    offsets.fill(0);
+    for line in lines {
+        if let Some(range) = line_strip_range(*line, height)? {
+            for strip in range { offsets[strip + 1] += 1; }
+        }
+    }
+    for strip in 1..offsets.len() { offsets[strip] += offsets[strip - 1]; }
+    for (index, line) in lines.iter().enumerate() {
+        if let Some(range) = line_strip_range(*line, height)? {
+            for strip in range {
+                let position = offsets[strip] as usize;
+                indices[position] = index as _;
+                offsets[strip] += 1;
+            }
+        }
+    }
+    for strip in (1..offsets.len()).rev() { offsets[strip] = offsets[strip - 1]; }
+    offsets[0] = 0;
+    Ok(FixedStripBins { offsets, indices })
 }
 
 /// Validates and widens fixed-point edges into caller-owned raster storage.
@@ -423,6 +513,19 @@ pub fn next_slab_boundary(lines: &[FixedLine], top: FixedScalar, bottom: FixedSc
     Ok(FixedScalar::from_bits(boundary))
 }
 
+fn next_indexed_slab_boundary(lines: &[FixedLine], indices: &[u32],
+    top: FixedScalar, bottom: FixedScalar) -> Result<FixedScalar, FixedRasterError> {
+    let (top, bottom) = validate_slab(top, bottom)?;
+    let mut boundary = bottom;
+    for &index in indices {
+        let line = lines.get(index as usize).ok_or(FixedRasterError::InvalidEdge)?;
+        for vertex in [line.y0, line.y0 + line.dy as i32] {
+            if top < vertex && vertex < boundary { boundary = vertex; }
+        }
+    }
+    Ok(FixedScalar::from_bits(boundary))
+}
+
 /// Clips prepared lines to a horizontal slab without rounding x coordinates.
 ///
 /// Only overlapping fragments are emitted. Capacity is checked before output
@@ -444,6 +547,31 @@ pub fn collect_segments(lines: &[FixedLine], top: FixedScalar, bottom: FixedScal
         line.segment_in_slab(index as _, top, bottom)) {
         output[count] = segment;  count += 1;
     }       Ok(count)
+}
+
+fn collect_indexed_segments(lines: &[FixedLine], indices: &[u32],
+    top: FixedScalar, bottom: FixedScalar, output: &mut [FixedSegment]) ->
+    Result<usize, FixedRasterError> {
+    let (top, bottom) = validate_slab(top, bottom)?;
+    let mut required = 0;
+    for &index in indices {
+        let line = lines.get(index as usize).ok_or(FixedRasterError::InvalidEdge)?;
+        required += line.segment_in_slab(index, top, bottom).is_some() as usize;
+    }
+    if output.len() < required {
+        return Err(FixedRasterError::WorkspaceTooSmall {
+            kind: FixedWorkspace::Segments, required,
+        });
+    }
+    let mut count = 0;
+    for &index in indices {
+        let line = lines.get(index as usize).ok_or(FixedRasterError::InvalidEdge)?;
+        if let Some(segment) = line.segment_in_slab(index, top, bottom) {
+            output[count] = segment;
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] struct FixedCrossing { y: i32, x: i64 }

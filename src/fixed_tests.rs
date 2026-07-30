@@ -8,18 +8,20 @@ fn fixed(value: f32) -> FixedScalar { FixedScalar::from_num(value) }
 
 fn render(edges: &[Edge<FixedScalar>], width: usize, height: usize,
     fill_rule: FillRule) -> Vec<u8> {
-    let mut lines = vec![FixedLine::default(); edges.len()];
-    prepare_lines(edges, &mut lines).unwrap();
-    let (mut segments, mut trapezoids, mut row_area) = (
-        vec![FixedSegment::default(); lines.len()],
-        vec![FixedTrapezoid::default(); lines.len().div_ceil(2)],
-        vec![0; width],
-    );
+        let mut lines = vec![FixedLine::default(); edges.len()];
+        prepare_lines(edges, &mut lines).unwrap();
+        let requirements = fixed_strip_requirements(&lines, height as _).unwrap();
+        let (mut segments, mut trapezoids, mut row_area, mut strip_offsets, mut strip_indices) = (
+            vec![FixedSegment::default(); lines.len()],
+            vec![FixedTrapezoid::default(); lines.len().div_ceil(2)],
+            vec![0; width], vec![0; requirements.offsets], vec![0; requirements.indices],
+        );
     let mut pixels = vec![0; width * height];
     rasterize_lines(&lines, width as _, height as _, fill_rule,
-        &mut FixedRasterWorkspace { segments: &mut segments,
-            trapezoids: &mut trapezoids, row_area: &mut row_area,
-        }, &mut |x, y, coverage| {
+            &mut FixedRasterWorkspace { segments: &mut segments,
+                trapezoids: &mut trapezoids, row_area: &mut row_area,
+                strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+            }, &mut |x, y, coverage| {
             pixels[y as usize * width + x as usize] = coverage;
             Ok::<_, Infallible>(())
         }).unwrap();
@@ -216,7 +218,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(FixedLine::new(edge), Err(FixedRasterError::InvalidEdge));
 }
 
-#[test] fn line_preparation_is_bounded_and_transactional() {
+    #[test] fn line_preparation_is_bounded_and_transactional() {
     let edge = |x, winding| Edge {
         upper: (fixed(x), fixed(0.0)).into(),
         lower: (fixed(x), fixed(1.0)).into(), winding,
@@ -234,10 +236,44 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
         Err(FixedRasterError::WorkspaceTooSmall {
             kind: FixedWorkspace::Lines, required: 2,
         }));
-    assert_eq!(output, [sentinel; 2]);
-}
+        assert_eq!(output, [sentinel; 2]);
+    }
 
-#[test] fn slab_boundaries_advance_through_edge_vertices() {
+    #[test] fn strip_bins_are_compact_bounded_and_transactional() {
+        let line = |x, top, bottom| FixedLine::new(Edge {
+            upper: (fixed(x), fixed(top)).into(),
+            lower: (fixed(x), fixed(bottom)).into(), winding: 1,
+        }).unwrap();
+        let lines = [
+            line(0.0, 0.0, 16.0),
+            line(1.0, 15.5, 32.5),
+            line(2.0, -10.0, -1.0),
+        ];
+        assert_eq!(fixed_strip_requirements(&lines, 64),
+            Ok(FixedStripRequirements { offsets: 5, indices: 4 }));
+
+        let (mut offsets, mut indices) = ([0; 5], [0; 4]);
+        let bins = build_strip_bins(&lines, 64, &mut offsets, &mut indices).unwrap();
+        assert_eq!(bins.offsets, [0, 2, 3, 4, 4]);
+        assert_eq!(bins.indices(0), [0, 1]);
+        assert_eq!(bins.indices(1), [1]);
+        assert_eq!(bins.indices(2), [1]);
+        assert!(bins.indices(3).is_empty());
+
+        let (mut offsets, mut indices) = ([7; 5], [9; 4]);
+        assert_eq!(build_strip_bins(&lines, 64, &mut offsets[..4], &mut indices).unwrap_err(),
+            FixedRasterError::WorkspaceTooSmall {
+                kind: FixedWorkspace::StripOffsets, required: 5,
+            });
+        assert_eq!((offsets, indices), ([7; 5], [9; 4]));
+        assert_eq!(build_strip_bins(&lines, 64, &mut offsets, &mut indices[..3]).unwrap_err(),
+            FixedRasterError::WorkspaceTooSmall {
+                kind: FixedWorkspace::StripIndices, required: 4,
+            });
+        assert_eq!((offsets, indices), ([7; 5], [9; 4]));
+    }
+
+    #[test] fn slab_boundaries_advance_through_edge_vertices() {
     let edge = |x, top, bottom, winding| Edge {
         upper: (fixed(x), fixed(top)).into(),
         lower: (fixed(x), fixed(bottom)).into(), winding,

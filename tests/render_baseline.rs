@@ -88,12 +88,17 @@ fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>
             [FixedTrapezoid::default(); 2], [0; WIDTH as usize],
         );
         let line_count = prepare_lines(&edges, &mut lines).unwrap();
+        let requirements =
+            ugl_rs::raster_fixed::fixed_strip_requirements(&lines[..line_count], HEIGHT).unwrap();
+        let (mut strip_offsets, mut strip_indices) =
+            (vec![0; requirements.offsets], vec![0; requirements.indices]);
         let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
         let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
         render_solid_fixed(&lines[..line_count], RGBA::new(20, 200, 40, 160),
             FillRule::NonZero, &mut target, &mut FixedRasterWorkspace {
                 segments: &mut segments, trapezoids: &mut trapezoids,
                 row_area: &mut row_area,
+                strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
             },
         ).unwrap();
 

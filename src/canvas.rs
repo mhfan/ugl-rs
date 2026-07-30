@@ -314,12 +314,14 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
             [FixedLine::default(); 2], [FixedSegment::default(); 2],
             [FixedTrapezoid::default(); 1], [0; 2],
         );
+        let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 2]);
         prepare_lines(&edges, &mut lines).unwrap();
         let mut pixels = [0; 8];
         let mut target = PixmapMut::new(&mut pixels, 2, 1, 8).unwrap();
         render_solid_fixed(&lines, RGBA::white(), FillRule::NonZero, &mut target,
             &mut FixedRasterWorkspace { segments: &mut segments,
                 trapezoids: &mut trapezoids, row_area: &mut row_area,
+                strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
             }).unwrap();
         assert_eq!(target.pixel(0, 0), Some((128, 128, 128, 128).into()));
         assert_eq!(target.pixel(1, 0), Some((128, 128, 128, 128).into()));

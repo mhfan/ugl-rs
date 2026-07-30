@@ -96,10 +96,14 @@ fn benchmark_f32(c: &mut Criterion) {
         }
         let mut lines = vec![FixedLine::default(); source_edges.len()];
         let line_count = prepare_lines(&source_edges, &mut lines).unwrap();
-        let (mut segments, mut trapezoids, mut row_area, mut pixels) = (
+        let requirements =
+            ugl_rs::raster_fixed::fixed_strip_requirements(&lines[..line_count], HEIGHT).unwrap();
+        let (mut segments, mut trapezoids, mut row_area, mut pixels,
+            mut strip_offsets, mut strip_indices) = (
             vec![FixedSegment::default(); line_count],
             vec![FixedTrapezoid::default(); line_count.div_ceil(2)],
             vec![0; WIDTH as usize], vec![0; WIDTH as usize * HEIGHT as usize * 4],
+            vec![0; requirements.offsets], vec![0; requirements.indices],
         );
         group.bench_function(BenchmarkId::new("fixed", name), |b| b.iter(|| {
             pixels.fill(0);
@@ -108,6 +112,7 @@ fn benchmark_f32(c: &mut Criterion) {
                 FillRule::NonZero, &mut target, &mut FixedRasterWorkspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
+                    strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
                 },
             ).unwrap();
             black_box(&pixels);
