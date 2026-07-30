@@ -1,9 +1,11 @@
 
 use ugl_rs::{analytic::AnalyticIntersection, color::{PRGB32, RGBA}, edge::Edge,
-    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut,
-        render_paint_analytic, render_solid_analytic
+    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
+        AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,
+        render_stroke_solid_analytic,
     }, geometry::{Affine, PathBuilder}, raster::FillRule,
     sampler::{GradientStop, GradientStops, LinearGradient, PaintSampler, SpreadMode},
+    stroke::StrokeContour,
 };
 
 const  WIDTH: u32 = 4;
@@ -38,6 +40,25 @@ fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
             row_coverage: &mut row_coverage,
         },
     ).unwrap();
+    core::array::from_fn(|index|
+        target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
+}
+
+fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
+    let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
+    let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+    let (mut points, mut contours, mut edges) = (
+        [Default::default(); 2], [StrokeContour::default(); 1], [Edge::default(); 4],
+    );
+    let (mut intersections, mut row_coverage) = (
+        [AnalyticIntersection::default(); 4], [0.0; WIDTH as usize],
+    );
+    render_stroke_solid_analytic(&builder.build(), Affine::identity(),
+        RGBA::new(20, 200, 40, 160), AnalyticStrokeOptions::default(), &mut target,
+        &mut AnalyticStrokeWorkspace {
+            points: &mut points, contours: &mut contours, edges: &mut edges,
+            intersections: &mut intersections, row_coverage: &mut row_coverage,
+        }).unwrap();
     core::array::from_fn(|index|
         target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
 }
@@ -86,6 +107,20 @@ fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
     ];
     assert_eq!(render_analytic_paint(path, &gradient),
         core::array::from_fn(|index| row[index % row.len()]));
+}
+
+#[test] fn fractional_butt_stroke_rgba_golden() {
+    let mut path = PathBuilder::new();
+    path.move_to((0.5, 1.5)).line_to((3.5, 1.5));
+    let transparent = PRGB32::zeroed();
+    let solid: PRGB32<u8> = (13, 125, 25, 160).into();
+    let half: PRGB32<u8> = (7, 63, 13, 80).into();
+    assert_eq!(render_analytic_stroke(path), [
+        transparent, transparent, transparent, transparent,
+        half,        solid,       solid,       half,
+        transparent, transparent, transparent, transparent,
+        transparent, transparent, transparent, transparent,
+    ]);
 }
 
 #[cfg(feature = "fixed")]
