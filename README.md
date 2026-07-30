@@ -161,8 +161,20 @@ sort is required. A 1-second/10-sample follow-up measured:
 
 Direct emission removes most conversion overhead and sharply reduces peak
 scratch, while streaming remains the MCU/minimum-latency default. The next
-desktop optimization is a tile-aware compositor that consumes full tiles
-without expanding them back into per-row `CoverageSink` spans.
+desktop experiment added a tile-aware solid compositor that consumes full
+tiles without expanding them back through `CoverageSink`. It remains
+byte-equivalent but did not beat immediate streaming:
+
+| Scene | streaming solid | direct tiled solid |
+| --- | ---: | ---: |
+| 64 fractional rectangles | 229.64 µs | 291.27 µs |
+| 16 sparse rectangles | 45.76 µs | 49.07 µs |
+| 256 short-edge rectangles | 185.37 µs | 210.28 µs |
+| 16 aligned 32×32 rectangles | 86.62 µs | 111.95 µs |
+
+Even full-tile-heavy immediate rendering does not yet amortize tile
+construction. The tiled compositor therefore remains an explicit batching or
+cached-coverage path; it is not selected automatically.
 
 ## Non-goals for the core
 

@@ -491,7 +491,9 @@ to evaluate with a tile-aware compositor and repeated/batched use.
 - Making retained tiles the MCU default is rejected because it adds scratch,
   latency, and a second representation.
 - Expanding full tiles back into sixteen row spans is retained only for
-  `CoverageSink` compatibility; a tile-aware compositor is the next candidate.
+  `CoverageSink` compatibility. A tile-aware solid compositor was implemented,
+  but immediate rendering remained slower even in a full-tile-heavy aligned
+  scene; it stays available only for future reuse/batching evaluation.
 - SIMD and tile-parallel scheduling remain deferred until scalar direct
   emission has equivalent-output tests and favorable end-to-end measurements.
 

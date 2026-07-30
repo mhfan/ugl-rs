@@ -177,6 +177,10 @@ and SIMD layouts do not enter the common `Edge` representation.
   active 16-row strip and three caller-owned `u32` arrays per tile column. It
   sorts only touched columns, emits tile-major output at strip boundaries, and
   never retains or reorders whole-frame fine coverage.
+- The tile-aware solid compositor consumes full tiles directly and boundary
+  runs exactly, but benchmarks do not justify making it the immediate-mode
+  default. Tile construction must be amortized by reuse, batching, a more
+  specialized pixel pipeline, or later parallel execution.
 
 ## Determinism and quality
 
@@ -309,5 +313,5 @@ only after this path is complete.
   caller-owned sparse strip bins, persistent active edges, optional retained
   sparse coverage strips, direct empty/full/boundary tile-major emission, and
   differential/error-path tests.
-- A tile-aware compositor, broader golden scenes and benchmarks, fuzzing,
-  gradients, clipping, and stroking remain future work.
+- Coverage reuse/batching policy, broader golden scenes and benchmarks,
+  fuzzing, gradients, clipping, and stroking remain future work.

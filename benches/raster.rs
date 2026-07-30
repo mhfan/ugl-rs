@@ -71,7 +71,8 @@ fn benchmark_f32(c: &mut Criterion) {
 }
 
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {
-    use ugl_rs::{canvas::render_solid_fixed, geometry::FixedScalar,
+    use ugl_rs::{canvas::{render_solid_fixed, render_solid_fixed_tiled},
+        geometry::FixedScalar,
         raster_fixed::{FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace,
             FIXED_STRIP_HEIGHT, FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
             prepare_lines, rasterize_lines, rasterize_lines_to_strips,
@@ -97,6 +98,10 @@ fn benchmark_f32(c: &mut Criterion) {
         ("short_edges_256", (0..256).map(|index| [
             (index % 16) as f32 * 16.0 + 2.25,
             (index / 16) as f32 * 16.0 + 2.5, 6.5, 4.25,
+        ]).collect()),
+        ("full_tiles_16", (0..16).map(|index| [
+            (index % 4) as f32 * 64.0,
+            (index / 4) as f32 * 64.0, 32.0, 32.0,
         ]).collect()),
     ];
     for (name, rectangles) in scenes {
@@ -145,6 +150,23 @@ fn benchmark_f32(c: &mut Criterion) {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
                     strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+                },
+            ).unwrap();
+            black_box(&pixels);
+        }));
+        group.bench_function(BenchmarkId::new("fixed_tiled", name), |b| b.iter(|| {
+            pixels.fill(0);
+            let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+            render_solid_fixed_tiled(&lines[..line_count], RGBA::new(40, 120, 220, 192),
+                FillRule::NonZero, &mut target, &mut FixedRasterWorkspace {
+                    segments: &mut segments, trapezoids: &mut trapezoids,
+                    row_area: &mut row_area,
+                    strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+                }, FixedDirectTileWorkspace {
+                    tiles: &mut coverage_tiles, runs: &mut coverage_tile_runs,
+                    pieces: &mut direct_tile_pieces,
+                    column_heads: &mut tile_heads, column_tails: &mut tile_tails,
+                    touched_columns: &mut touched_tiles,
                 },
             ).unwrap();
             black_box(&pixels);
