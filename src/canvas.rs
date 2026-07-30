@@ -220,9 +220,16 @@ pub fn render_paint_analytic<S: PaintSampler>(path: &Path, transform: Affine, sa
 pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
     clip: Rect, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
+    render_paint_analytic_clipped(path, transform, &SolidPaint::new(color), clip,
+        options, target, workspace)
+}
+
+/// Renders an analytic paint through an antialiased rectangle clip.
+pub fn render_paint_analytic_clipped<S: PaintSampler>(path: &Path, transform: Affine,
+    sampler: &S, clip: Rect, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    let paint = SolidPaint::new(color);
-    let mut compositor = PaintCompositor { target, sampler: &paint };
+    let mut compositor = PaintCompositor { target, sampler };
     rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
             intersections: workspace.intersections,
@@ -252,14 +259,22 @@ pub fn rasterize_path_clip_analytic(path: &Path, transform: Affine,
 pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: RGBA<u8>,
     mask: CoverageMask<'_>, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
+    render_paint_analytic_masked(path, transform, &SolidPaint::new(color), mask,
+        options, target, workspace)
+}
+
+/// Renders analytic paint coverage multiplied by a borrowed path clip mask.
+pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Affine,
+    sampler: &S, mask: CoverageMask<'_>, options: AnalyticRenderOptions,
+    target: &mut PixmapMut<'_>, workspace: &mut AnalyticRenderWorkspace<'_>) ->
+    Result<(), RenderError> {
     if (mask.width(), mask.height()) != (target.width, target.height) {
         return Err(RenderError::CoverageDimensionsMismatch {
             coverage: (mask.width(), mask.height()), target: (target.width, target.height),
         });
     }
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    let paint = SolidPaint::new(color);
-    let mut compositor = PaintCompositor { target, sampler: &paint };
+    let mut compositor = PaintCompositor { target, sampler };
     rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
             intersections: workspace.intersections,
@@ -525,6 +540,42 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
         assert_eq!(target.pixel(0, 0), Some((85, 0, 170, 255).into()));
         assert_eq!(target.pixel(1, 0), Some((255, 0, 0, 255).into()));
         assert_eq!(target.pixel(2, 0), target.pixel(0, 0));
+    }
+
+    #[test] fn analytic_gradient_composes_through_rectangle_and_path_clips() {
+        use crate::sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode};
+
+        let mut builder = PathBuilder::new();
+        builder.move_to((0.0, 0.0)).line_to((2.0, 0.0))
+               .line_to((2.0, 1.0)).line_to((0.0, 1.0));
+        let path = builder.build();
+        let stops = [GradientStop::new(0.0, RGBA::red()),
+                     GradientStop::new(1.0, RGBA::blue())];
+        let gradient = LinearGradient::new((0.0, 0.0), (2.0, 0.0),
+            GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
+        let (mut edges, mut intersections, mut row_coverage) = (
+            [Edge::default(); 4], [AnalyticIntersection::default(); 4], [0.0; 2]);
+        let mut workspace = AnalyticRenderWorkspace {
+            edges: &mut edges, intersections: &mut intersections,
+            row_coverage: &mut row_coverage,
+        };
+
+        let mut clipped_pixels = [0; 8];
+        render_paint_analytic_clipped(&path, Affine::identity(), &gradient,
+            Rect::from_ltrb(0.5, 0.0, 1.5, 1.0).unwrap(),
+            AnalyticRenderOptions::default(),
+            &mut PixmapMut::new(&mut clipped_pixels, 2, 1, 8).unwrap(),
+            &mut workspace).unwrap();
+        assert_eq!(clipped_pixels, [96, 0, 32, 128, 32, 0, 96, 128]);
+
+        let mask_data = [128, 255];
+        let mut masked_pixels = [0; 8];
+        render_paint_analytic_masked(&path, Affine::identity(), &gradient,
+            CoverageMask::new(&mask_data, 2, 1, 2).unwrap(),
+            AnalyticRenderOptions::default(),
+            &mut PixmapMut::new(&mut masked_pixels, 2, 1, 8).unwrap(),
+            &mut workspace).unwrap();
+        assert_eq!(masked_pixels, [96, 0, 32, 128, 64, 0, 191, 255]);
     }
 
     #[test] fn analytic_rectangle_clip_multiplies_coverage_end_to_end() {
