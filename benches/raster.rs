@@ -2,11 +2,14 @@
 use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ugl_rs::{analytic::AnalyticIntersection, color::RGBA, edge::Edge, raster::Intersection,
-    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut, RenderOptions,
-        RenderWorkspace, render_solid, render_solid_analytic,
+    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
+        AnalyticStrokeWorkspace, PixmapMut, RenderOptions, RenderWorkspace,
+        render_solid, render_solid_analytic, render_stroke_solid_analytic,
     }, geometry::{Affine, Path, PathBuilder},
     sampler::{ConicGradient, GradientStop, GradientStops, LinearGradient, PaintSampler,
         RadialGradient, SolidPaint, SpreadMode},
+    stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions, StrokePathWorkspace,
+        flatten_stroke_path, stroke_polyline},
 };
 #[cfg(feature = "fixed")] use ugl_rs::raster::FillRule;
 #[cfg(feature = "fixed")] #[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
@@ -70,6 +73,125 @@ fn benchmark_f32(c: &mut Criterion) {
         black_box(&pixels);
     }));
     group.finish();
+}
+
+fn stroke_polyline_scene() -> Path {
+    let mut path = PathBuilder::with_capacity(33);
+    path.move_to((8.0, 128.0));
+    for index in 1..=32 {
+        let x = 8.0 + index as f32 * 7.5;
+        let y = if index & 1 == 0 { 48.25 } else { 207.75 };
+        path.line_to((x, y));
+    }   path.build()
+}
+
+fn stroke_curve_scene() -> Path {
+    let mut path = PathBuilder::with_capacity(9);
+    path.move_to((8.0, 128.0));
+    for index in 0..8 {
+        let x = 8.0 + index as f32 * 30.0;
+        let high = if index & 1 == 0 { 24.0 } else { 232.0 };
+        let low  = if index & 1 == 0 { 232.0 } else { 24.0 };
+        path.cubic_to((x + 10.0, high), (x + 20.0, low), (x + 30.0, 128.0));
+    }   path.build()
+}
+
+fn stroke_requirements(path: &Path, options: AnalyticStrokeOptions) ->
+    (usize, usize, usize) {
+    let (mut points, mut contours) =
+        (vec![Default::default(); 1024], vec![StrokeContour::default(); 16]);
+    let mut workspace = StrokePathWorkspace {
+        points: &mut points, contours: &mut contours,
+    };
+    let flattened = flatten_stroke_path(path, Affine::identity(), options.flatten,
+        &mut workspace).unwrap();
+    let (mut point_count, mut contour_count, mut edge_count) = (0, 0, 0);
+    for (points, closed) in flattened.contours() {
+        point_count += points.len();  contour_count += 1;
+        stroke_polyline(points, closed, options.stroke, &mut |_| {
+            edge_count += 1;  Ok::<_, core::convert::Infallible>(())
+        }).unwrap();
+    }
+    (point_count, contour_count, edge_count)
+}
+
+fn benchmark_stroke(c: &mut Criterion) {
+    let base = StrokeOptions::new(6.0).unwrap();
+    let scenes = [
+        ("butt_miter_polyline", stroke_polyline_scene(),
+            AnalyticStrokeOptions { stroke: base, ..Default::default() }),
+        ("round_polyline", stroke_polyline_scene(), AnalyticStrokeOptions {
+            stroke: base.with_cap(LineCap::Round).with_join(LineJoin::Round),
+            ..Default::default()
+        }),
+        ("butt_miter_curves", stroke_curve_scene(),
+            AnalyticStrokeOptions { stroke: base, ..Default::default() }),
+    ];
+    let mut render_group = c.benchmark_group("stroke_rgba8888");
+    render_group.throughput(Throughput::Elements(WIDTH as u64 * HEIGHT as u64));
+    for (name, path, options) in scenes {
+        let (point_count, contour_count, edge_count) =
+            stroke_requirements(&path, options);
+        let scratch = format!("{point_count}p_{contour_count}c_{edge_count}e");
+        let (mut points, mut contours, mut edges, mut intersections,
+            mut row_coverage, mut pixels) = (
+            vec![Default::default(); point_count],
+            vec![StrokeContour::default(); contour_count],
+            vec![Edge::default(); edge_count],
+            vec![AnalyticIntersection::default(); edge_count],
+            vec![0.0; WIDTH as usize],
+            vec![0; WIDTH as usize * HEIGHT as usize * 4],
+        );
+        render_group.bench_function(BenchmarkId::new(name, scratch), |b| b.iter(|| {
+            pixels.fill(0);
+            render_stroke_solid_analytic(&path, Affine::identity(),
+                RGBA::new(40, 120, 220, 192), options,
+                &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
+                &mut AnalyticStrokeWorkspace {
+                    points: &mut points, contours: &mut contours, edges: &mut edges,
+                    intersections: &mut intersections, row_coverage: &mut row_coverage,
+                }).unwrap();
+            black_box(&pixels);
+        }));
+    }
+    render_group.finish();
+
+    let mut expand_group = c.benchmark_group("stroke_expand");
+    let scenes = [
+        ("butt_miter_polyline", stroke_polyline_scene(),
+            AnalyticStrokeOptions { stroke: base, ..Default::default() }),
+        ("round_polyline", stroke_polyline_scene(), AnalyticStrokeOptions {
+            stroke: base.with_cap(LineCap::Round).with_join(LineJoin::Round),
+            ..Default::default()
+        }),
+        ("butt_miter_curves", stroke_curve_scene(),
+            AnalyticStrokeOptions { stroke: base, ..Default::default() }),
+    ];
+    for (name, path, options) in scenes {
+        let (point_count, contour_count, edge_count) =
+            stroke_requirements(&path, options);
+        let scratch = format!("{point_count}p_{contour_count}c_{edge_count}e");
+        let (mut points, mut contours) = (
+            vec![Default::default(); point_count],
+            vec![StrokeContour::default(); contour_count],
+        );
+        expand_group.throughput(Throughput::Elements(edge_count as _));
+        expand_group.bench_function(BenchmarkId::new(name, scratch), |b| b.iter(|| {
+            let mut workspace = StrokePathWorkspace {
+                points: &mut points, contours: &mut contours,
+            };
+            let flattened = flatten_stroke_path(&path, Affine::identity(), options.flatten,
+                &mut workspace).unwrap();
+            let mut emitted = 0;
+            for (points, closed) in flattened.contours() {
+                stroke_polyline(points, closed, options.stroke, &mut |_| {
+                    emitted += 1;  Ok::<_, core::convert::Infallible>(())
+                }).unwrap();
+            }
+            black_box(emitted);
+        }));
+    }
+    expand_group.finish();
 }
 
 fn sample_checksum(sampler: &impl PaintSampler) -> u64 {
@@ -333,6 +455,7 @@ fn benchmark_paint(c: &mut Criterion) {
 fn  benchmarks(c: &mut Criterion) {
     #[cfg(feature = "fixed")] benchmark_fixed(c);
     benchmark_f32(c);
+    benchmark_stroke(c);
     benchmark_paint(c);
 }
 
