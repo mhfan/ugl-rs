@@ -114,6 +114,20 @@ strip descriptor is 12 bytes and each uniform non-zero coverage run is 12
 bytes (`u32` x/length plus `u8` row/coverage). It therefore does not impose a
 full-frame mask, and callers choose an explicit bounded run capacity.
 
+Commit `c2de47a` adds a separate retained-tile composite entry point, so a
+stable coverage mask can be reused with another color or destination without
+rasterizing its geometry again. A focused run on the same machine used
+Criterion's default 3-second warm-up, 5-second measurement, and 100 samples.
+Both paths clear and composite the RGBA8888 destination; `cached` excludes the
+one-time rasterization and tile encoding cost:
+
+| Scene | rasterize + tiled composite | cached tiled composite | Speedup |
+| --- | ---: | ---: | ---: |
+| 64 fractional rectangles | 343.00 µs | 41.220 µs | 8.3× |
+| 16 sparse rectangles | 55.516 µs | 3.7166 µs | 14.9× |
+| 256 short-edge rectangles | 238.48 µs | 22.116 µs | 10.8× |
+| 16 full-tile rectangles | 100.08 µs | 10.607 µs | 9.4× |
+
 A focused raster-only comparison after `0c625fc` used the same machine and
 20-sample/2-second Criterion settings. `stream` sends runs to a counting sink;
 `encode` writes retained strips; `encode + replay` also walks them through that
