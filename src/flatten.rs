@@ -21,6 +21,9 @@ pub trait LineSink { type Error;
 
     fn line(&mut self, from: Point, to: Point) -> Result<(), Self::Error>;
 
+    /// Reports an explicit path close after its closing line has been emitted.
+    fn close_subpath(&mut self) -> Result<(), Self::Error> { Ok(()) }
+
     fn end_subpath(&mut self) -> Result<(), Self::Error> { Ok(()) }
 }
 
@@ -65,6 +68,7 @@ pub fn flatten_path<S>(path: &Path, transform: Affine, options: FlattenOptions,
                     transformed(transform, to)?,
                 );
                 emit_line(from, to, sink)?;
+                sink.close_subpath().map_err(FlattenError::Sink)?;
                 current = Some(to);
             }
             PathSegment::QuadTo { ctrl, to } => {

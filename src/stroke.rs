@@ -1,7 +1,11 @@
 //! Stroke expansion options and scalar reference implementation.
 
 use core::f32::consts::{FRAC_PI_2, PI};
-use crate::{edge::{Edge, EdgeSink}, geometry::Point};
+use crate::{
+    edge::{Edge, EdgeSink},
+    flatten::{flatten_path, FlattenError, FlattenOptions, LineSink},
+    geometry::{Affine, Path, Point},
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum LineCap { #[default] Butt, Round, Square, }
@@ -65,6 +69,122 @@ impl Default for StrokeOptions {
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum StrokeExpandError<E> {
     NonFinitePoint, ArcSegmentLimit { needed: usize, maximum: u16 }, Sink(E),
+}
+
+/// Compact descriptor for one flattened stroke subpath.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StrokeContour { start: u32, len: u32, closed: bool }
+
+impl StrokeContour {
+    pub fn is_closed(&self) -> bool { self.closed }
+    pub fn len(&self) -> usize { self.len as _ }
+    pub fn is_empty(&self) -> bool { self.len == 0 }
+}
+
+/// Caller-owned storage used while flattening a path for stroke expansion.
+pub struct StrokePathWorkspace<'a> {
+    pub points: &'a mut [Point],
+    pub contours: &'a mut [StrokeContour],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StrokeWorkspaceError {
+    PointCapacity { needed_at_least: usize },
+    ContourCapacity { needed_at_least: usize },
+    IndexOverflow,
+}
+
+/// Borrowed flattened path backed by a [`StrokePathWorkspace`].
+pub struct FlattenedStrokePath<'a> {
+    points: &'a [Point],
+    contours: &'a [StrokeContour],
+}
+
+impl<'a> FlattenedStrokePath<'a> {
+    pub fn contours(&self) -> impl ExactSizeIterator<Item = (&'a [Point], bool)> + 'a {
+        self.contours.iter().map(|contour| {
+            let start: usize = contour.start as _;
+            (&self.points[start..start + contour.len()], contour.is_closed())
+        })
+    }
+}
+
+/// Flattens a transformed path into caller-owned, compact stroke storage.
+pub fn flatten_stroke_path<'a>(path: &Path, transform: Affine, options: FlattenOptions,
+    workspace: &'a mut StrokePathWorkspace<'_>) ->
+    Result<FlattenedStrokePath<'a>, FlattenError<StrokeWorkspaceError>> {
+    let (point_len, contour_len) = {
+        let mut sink = StrokePathSink {
+            points: workspace.points,
+            contours: workspace.contours,
+            point_len: 0,
+            contour_len: 0,
+            current_start: None,
+            current_closed: false,
+        };
+        flatten_path(path, transform, options, &mut sink)?;
+        (sink.point_len, sink.contour_len)
+    };
+    Ok(FlattenedStrokePath {
+        points: &workspace.points[..point_len],
+        contours: &workspace.contours[..contour_len],
+    })
+}
+
+struct StrokePathSink<'a> {
+    points: &'a mut [Point],
+    contours: &'a mut [StrokeContour],
+    point_len: usize,
+    contour_len: usize,
+    current_start: Option<usize>,
+    current_closed: bool,
+}
+
+impl StrokePathSink<'_> {
+    fn push_point(&mut self, point: Point) -> Result<(), StrokeWorkspaceError> {
+        let needed = self.point_len.checked_add(1).ok_or(StrokeWorkspaceError::IndexOverflow)?;
+        let slot = self.points.get_mut(self.point_len)
+            .ok_or(StrokeWorkspaceError::PointCapacity { needed_at_least: needed })?;
+        *slot = point;
+        self.point_len = needed;
+        Ok(())
+    }
+}
+
+impl LineSink for StrokePathSink<'_> {
+    type Error = StrokeWorkspaceError;
+
+    fn begin_subpath(&mut self, at: Point) -> Result<(), Self::Error> {
+        self.current_start = Some(self.point_len);
+        self.current_closed = false;
+        self.push_point(at)
+    }
+
+    fn line(&mut self, _: Point, to: Point) -> Result<(), Self::Error> {
+        self.push_point(to)
+    }
+
+    fn close_subpath(&mut self) -> Result<(), Self::Error> {
+        self.current_closed = true;
+        Ok(())
+    }
+
+    fn end_subpath(&mut self) -> Result<(), Self::Error> {
+        let Some(start) = self.current_start.take() else { return Ok(()) };
+        let len = self.point_len - start;
+        let needed = self.contour_len.checked_add(1)
+            .ok_or(StrokeWorkspaceError::IndexOverflow)?;
+        let descriptor = StrokeContour {
+            start: u32::try_from(start).map_err(|_| StrokeWorkspaceError::IndexOverflow)?,
+            len: u32::try_from(len).map_err(|_| StrokeWorkspaceError::IndexOverflow)?,
+            closed: self.current_closed,
+        };
+        let slot = self.contours.get_mut(self.contour_len)
+            .ok_or(StrokeWorkspaceError::ContourCapacity { needed_at_least: needed })?;
+        *slot = descriptor;
+        self.contour_len = needed;
+        Ok(())
+    }
 }
 
 /// Expands one line into a consistently wound closed fill contour.
@@ -289,12 +409,61 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
 #[cfg(test)] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
+    use crate::geometry::PathBuilder;
 
     fn collect_line(from: impl Into<Point>, to: impl Into<Point>, cap: LineCap) -> Vec<Edge> {
         let mut edges = Vec::new();
         stroke_line(from.into(), to.into(), StrokeOptions::new(2.0).unwrap().with_cap(cap),
             &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
         edges
+    }
+
+    #[test] fn stroke_path_workspace_preserves_subpaths_and_explicit_close() {
+        let mut builder = PathBuilder::new();
+        builder.move_to((1.0, 2.0)).line_to((3.0, 4.0)).close()
+            .move_to((5.0, 6.0));
+        let mut points = [Point::default(); 4];
+        let mut contours = [StrokeContour::default(); 2];
+        let mut workspace = StrokePathWorkspace {
+            points: &mut points,
+            contours: &mut contours,
+        };
+        let flattened = flatten_stroke_path(&builder.build(), Affine::identity(),
+            FlattenOptions::default(), &mut workspace).unwrap();
+        let contours: Vec<_> = flattened.contours().collect();
+        assert_eq!(contours, [
+            (&[(1.0, 2.0).into(), (3.0, 4.0).into(), (1.0, 2.0).into()][..], true),
+            (&[(5.0, 6.0).into()][..], false),
+        ]);
+    }
+
+    #[test] fn stroke_path_workspace_reports_exact_capacity_class() {
+        let mut builder = PathBuilder::new();
+        builder.move_to((1.0, 2.0)).line_to((3.0, 4.0));
+        let path = builder.build();
+        let mut points = [Point::default(); 1];
+        let mut contours = [StrokeContour::default(); 1];
+        let mut workspace = StrokePathWorkspace {
+            points: &mut points,
+            contours: &mut contours,
+        };
+        assert_eq!(flatten_stroke_path(&path, Affine::identity(), FlattenOptions::default(),
+            &mut workspace).err(),
+            Some(FlattenError::Sink(StrokeWorkspaceError::PointCapacity {
+                needed_at_least: 2,
+            })));
+
+        let mut points = [Point::default(); 2];
+        let mut contours = [];
+        let mut workspace = StrokePathWorkspace {
+            points: &mut points,
+            contours: &mut contours,
+        };
+        assert_eq!(flatten_stroke_path(&path, Affine::identity(), FlattenOptions::default(),
+            &mut workspace).err(),
+            Some(FlattenError::Sink(StrokeWorkspaceError::ContourCapacity {
+                needed_at_least: 1,
+            })));
     }
 
     #[test] fn stroke_options_reject_invalid_geometric_states() {
