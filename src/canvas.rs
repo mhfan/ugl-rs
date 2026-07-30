@@ -4,8 +4,9 @@ use core::convert::Infallible;
 use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticIntersection, AnalyticWorkspace, rasterize_edges_analytic},
     flatten::{FlattenError, FlattenOptions}, geometry::{Affine, Path, PathError, Rect},
-    raster::{CoverageSink, FillRule, Intersection, RasterError, RasterOptions,
-        RasterWorkspace, RectClipSink, rasterize_edges,
+    raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, Intersection,
+        MaskClipSink, RasterError, RasterOptions, RasterWorkspace, RectClipSink,
+        rasterize_edges,
     }
 };
 #[cfg(feature = "fixed")] use crate::raster_fixed::{
@@ -142,7 +143,7 @@ impl Default for AnalyticRenderOptions { fn default() -> Self {
     EdgeCapacity { needed_at_least: usize },
     RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
     #[cfg(feature = "fixed")] FixedRaster(FixedRasterError),
-    #[cfg(feature = "fixed")] CoverageDimensionsMismatch {
+    CoverageDimensionsMismatch {
         coverage: (u32, u32), target: (u32, u32),
     },
 }
@@ -159,7 +160,7 @@ pub fn render_solid(path: &Path, transform: Affine, color: RGBA<u8>, options: Re
     rasterize_edges(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, options.raster, &mut RasterWorkspace {
             intersections: workspace.intersections,
-            row_coverage: workspace.row_coverage,
+             row_coverage: workspace.row_coverage,
         }, &mut compositor,
     ).map_err(map_raster_error)
 }
@@ -206,11 +207,46 @@ pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: RGBA
     ).map_err(map_raster_error)
 }
 
+/// Rasterizes an analytic path clip into caller-owned 8-bit coverage.
+///
+/// The valid mask area is cleared after flattening succeeds. Callers must
+/// discard the mask if this function returns an error.
+pub fn rasterize_path_clip_analytic(path: &Path, transform: Affine,
+    options: AnalyticRenderOptions, mask: &mut CoverageMaskMut<'_>,
+    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
+    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    mask.clear();
+    rasterize_edges_analytic(&workspace.edges[..edge_count], mask.width(), mask.height(),
+        options.fill_rule, &mut AnalyticWorkspace {
+            intersections: workspace.intersections,
+            row_coverage: workspace.row_coverage,
+        }, mask,
+    ).map_err(map_raster_error)
+}
+
+/// Renders analytic solid coverage multiplied by a borrowed path clip mask.
+pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: RGBA<u8>,
+    mask: CoverageMask<'_>, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
+    if (mask.width(), mask.height()) != (target.width, target.height) {
+        return Err(RenderError::CoverageDimensionsMismatch {
+            coverage: (mask.width(), mask.height()), target: (target.width, target.height),
+        });
+    }
+    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    let mut compositor = SolidCompositor { target, color: color.premul() };
+    rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
+        compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
+            intersections: workspace.intersections,
+            row_coverage: workspace.row_coverage,
+        }, &mut MaskClipSink::new(mask, &mut compositor),
+    ).map_err(map_raster_error)
+}
+
 /// Renders prepared Q24.8 lines through the allocation-free fixed backend.
-#[cfg(feature = "fixed")]
-pub fn render_solid_fixed(lines: &[FixedLine], color: RGBA<u8>, fill_rule: FillRule,
-    target: &mut PixmapMut<'_>, workspace: &mut FixedRasterWorkspace<'_>) ->
-    Result<(), RenderError> {
+#[cfg(feature = "fixed")] pub fn render_solid_fixed(lines: &[FixedLine],
+    color: RGBA<u8>, fill_rule: FillRule, target: &mut PixmapMut<'_>,
+    workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
     let mut compositor = SolidCompositor { target, color: color.premul() };
     rasterize_lines(lines, compositor.target.width, compositor.target.height,
         fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
@@ -406,6 +442,35 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
             Some((96, 96, 96, 96).into()),
         ));
         assert_eq!(target.pixel(1, 1), Some(PremulRGBA::zeroed()));
+    }
+
+    #[test] fn analytic_path_clip_uses_reusable_caller_owned_coverage() {
+        let mut clip_builder = PathBuilder::new();
+        clip_builder.move_to((0.5, 0.0)).line_to((1.5, 0.0))
+            .line_to((1.5, 1.0)).line_to((0.5, 1.0));
+        let mut shape_builder = PathBuilder::new();
+        shape_builder.move_to((0.0, 0.0)).line_to((2.0, 0.0))
+            .line_to((2.0, 1.0)).line_to((0.0, 1.0));
+        let (clip, shape) = (clip_builder.build(), shape_builder.build());
+        let (mut mask_data, mut pixels) = ([17; 4], [0; 8]);
+        let (mut edges, mut intersections, mut row_coverage) = (
+            [Edge::default(); 4], [AnalyticIntersection::default(); 4], [0.0; 2]);
+        let mut workspace = AnalyticRenderWorkspace {
+            edges: &mut edges, intersections: &mut intersections,
+            row_coverage: &mut row_coverage,
+        };
+        {
+            let mut mask = CoverageMaskMut::new(&mut mask_data, 2, 1, 4).unwrap();
+            rasterize_path_clip_analytic(&clip, Affine::identity(),
+                AnalyticRenderOptions::default(), &mut mask, &mut workspace).unwrap();
+        }
+        assert_eq!(mask_data, [128, 128, 17, 17]);
+
+        let mask = CoverageMask::new(&mask_data, 2, 1, 4).unwrap();
+        render_solid_analytic_masked(&shape, Affine::identity(), RGBA::white(), mask,
+            AnalyticRenderOptions::default(),
+            &mut PixmapMut::new(&mut pixels, 2, 1, 8).unwrap(), &mut workspace).unwrap();
+        assert_eq!(pixels, [128; 8]);
     }
 
     #[cfg(feature = "fixed")]

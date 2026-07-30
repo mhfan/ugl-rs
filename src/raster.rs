@@ -3,6 +3,7 @@
 //! This module prioritizes a transparent contract over production throughput.
 //! It uses stratified vertical samples and exact horizontal span overlap.
 
+use core::convert::Infallible;
 use crate::{edge::Edge, geometry::Rect};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FillRule { NonZero, EvenOdd }
@@ -85,6 +86,126 @@ impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
             if clipped != 0 {
                 self.sink.span(run_start, y, cursor - run_start, clipped)?;
             }
+        }   Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CoverageMaskError {
+    StrideTooSmall { minimum: u32, actual: u32 },
+    BufferTooSmall { minimum: usize, actual: usize },
+    DimensionsOverflow,
+}
+
+/// Borrowed 8-bit coverage mask with explicit row stride.
+#[derive(Clone, Copy, Debug)]
+pub struct CoverageMask<'a> {
+    data: &'a [u8], width: u32, height: u32, stride: u32,
+}
+
+/// Mutable storage used to rasterize a coverage mask without allocation.
+#[derive(Debug)]
+pub struct CoverageMaskMut<'a> {
+    data: &'a mut [u8], width: u32, height: u32, stride: u32,
+}
+
+fn validate_mask_buffer(length: usize, width: u32, height: u32, stride: u32) ->
+    Result<(), CoverageMaskError> {
+    if stride < width {
+        return Err(CoverageMaskError::StrideTooSmall { minimum: width, actual: stride });
+    }
+    let (height, stride, width) = (
+        usize::try_from(height).map_err(|_| CoverageMaskError::DimensionsOverflow)?,
+        usize::try_from(stride).map_err(|_| CoverageMaskError::DimensionsOverflow)?,
+        usize::try_from(width).map_err(|_| CoverageMaskError::DimensionsOverflow)?,
+    );
+    let minimum = if height == 0 { 0 } else {
+        stride.checked_mul(height - 1).and_then(|offset| offset.checked_add(width))
+            .ok_or(CoverageMaskError::DimensionsOverflow)?
+    };
+    if length < minimum {
+        return Err(CoverageMaskError::BufferTooSmall { minimum, actual: length });
+    }   Ok(())
+}
+
+impl<'a> CoverageMask<'a> {
+    pub fn new(data: &'a [u8], width: u32, height: u32, stride: u32) ->
+        Result<Self, CoverageMaskError> {
+        validate_mask_buffer(data.len(), width, height, stride)?;
+        Ok(Self { data, width, height, stride })
+    }
+
+    pub fn width(&self) -> u32 { self.width }
+    pub fn height(&self) -> u32 { self.height }
+    pub fn stride(&self) -> u32 { self.stride }
+
+    fn coverage(&self, x: u32, y: u32) -> u8 {
+        self.data[y as usize * self.stride as usize + x as usize]
+    }
+}
+
+impl<'a> CoverageMaskMut<'a> {
+    pub fn new(data: &'a mut [u8], width: u32, height: u32, stride: u32) ->
+        Result<Self, CoverageMaskError> {
+        validate_mask_buffer(data.len(), width, height, stride)?;
+        Ok(Self { data, width, height, stride })
+    }
+
+    pub fn width(&self) -> u32 { self.width }
+    pub fn height(&self) -> u32 { self.height }
+    pub fn stride(&self) -> u32 { self.stride }
+    pub fn as_mask(&self) -> CoverageMask<'_> {
+        CoverageMask { data: self.data, width: self.width, height: self.height,
+            stride: self.stride }
+    }
+
+    pub fn clear(&mut self) {
+        for y in 0..self.height as usize {
+            let start = y * self.stride as usize;
+            self.data[start..start + self.width as usize].fill(0);
+        }
+    }
+}
+
+impl CoverageSink for CoverageMaskMut<'_> {
+    type Error = Infallible;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        if x >= self.width || y >= self.height { return Ok(()); }
+        let len = len.min(self.width - x);
+        let start = y as usize * self.stride as usize + x as usize;
+        self.data[start..start + len as usize].fill(coverage);
+        Ok(())
+    }
+}
+
+/// Coverage adapter that multiplies incoming spans by a borrowed mask.
+pub struct MaskClipSink<'a, S> { mask: CoverageMask<'a>, sink: &'a mut S }
+
+impl<'a, S> MaskClipSink<'a, S> {
+    pub fn new(mask: CoverageMask<'a>, sink: &'a mut S) -> Self { Self { mask, sink } }
+}
+
+impl<S> CoverageSink for MaskClipSink<'_, S> where S: CoverageSink {
+    type Error = S::Error;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        if y >= self.mask.height { return Ok(()); }
+        let (mut cursor, end) = (x, (x + len).min(self.mask.width));
+        while cursor < end {
+            let clipped = (coverage as u16 * self.mask.coverage(cursor, y) as u16 + 127)
+                .div_euclid(255) as u8;
+            let start = cursor;
+            cursor += 1;
+            while cursor < end {
+                let next = (coverage as u16 * self.mask.coverage(cursor, y) as u16 + 127)
+                    .div_euclid(255) as u8;
+                if next != clipped { break; }
+                cursor += 1;
+            }
+            if clipped != 0 { self.sink.span(start, y, cursor - start, clipped)?; }
         }   Ok(())
     }
 }
@@ -270,6 +391,24 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
         let rect = Rect::from_ltrb(1.0, 0.0, 4.0, 1.0).unwrap();
         RectClipSink::new(rect, &mut spans).span(0, 0, 5, 128).unwrap();
         assert_eq!(spans.0, [(1, 0, 3, 128)]);
+    }
+
+    #[test] fn coverage_masks_validate_storage_preserve_padding_and_coalesce() {
+        assert_eq!(CoverageMask::new(&[0; 4], 3, 2, 2).unwrap_err(),
+            CoverageMaskError::StrideTooSmall { minimum: 3, actual: 2 });
+        assert_eq!(CoverageMask::new(&[0; 6], 3, 2, 4).unwrap_err(),
+            CoverageMaskError::BufferTooSmall { minimum: 7, actual: 6 });
+
+        let mut data = [9; 8];
+        {
+            let mut mask = CoverageMaskMut::new(&mut data, 3, 2, 4).unwrap();
+            mask.clear();
+            mask.span(1, 0, 8, 128).unwrap();
+            let mut spans = SpanRecorder::default();
+            MaskClipSink::new(mask.as_mask(), &mut spans).span(0, 0, 3, 128).unwrap();
+            assert_eq!(spans.0, [(1, 0, 2, 64)]);
+        }
+        assert_eq!(data, [0, 128, 128, 9, 0, 0, 0, 9]);
     }
 
     #[test] fn non_zero_and_even_odd_differ_for_nested_same_direction_subpaths() {
