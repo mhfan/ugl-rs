@@ -80,15 +80,13 @@ fn sample_checksum(sampler: &impl PaintSampler) -> u64 {
             checksum = color.to_array().into_iter().fold(checksum,
                 |checksum, channel| checksum.wrapping_mul(257).wrapping_add(channel as _));
         }
-    }   checksum
+    }       checksum
 }
 
 fn benchmark_paint(c: &mut Criterion) {
-    let stops = [
-        GradientStop::new(0.0, RGBA::new(240, 20, 80, 32)),
-        GradientStop::new(0.35, RGBA::new(10, 220, 40, 160)),
-        GradientStop::new(1.0, RGBA::new(30, 60, 250, 224)),
-    ];
+    let stops = [GradientStop::new( 0.0, RGBA::new(240, 20, 80,  32)),
+                 GradientStop::new(0.35, RGBA::new(10, 220, 40, 160)),
+                 GradientStop::new( 1.0, RGBA::new(30, 60, 250, 224)) ];
     let stops = GradientStops::new(&stops).unwrap();
     let solid = SolidPaint::new(RGBA::new(40, 120, 220, 192));
     let linear = LinearGradient::new((0.0, 0.0), (WIDTH as _, HEIGHT as _),

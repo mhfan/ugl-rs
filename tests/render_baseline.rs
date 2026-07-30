@@ -1,8 +1,8 @@
 
 use ugl_rs::{analytic::AnalyticIntersection, color::{PRGB32, RGBA}, edge::Edge,
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut,
-        render_paint_analytic, render_solid_analytic},
-    geometry::{Affine, PathBuilder}, raster::FillRule,
+        render_paint_analytic, render_solid_analytic
+    }, geometry::{Affine, PathBuilder}, raster::FillRule,
     sampler::{GradientStop, GradientStops, LinearGradient, PaintSampler, SpreadMode},
 };
 
@@ -38,8 +38,8 @@ fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
             row_coverage: &mut row_coverage,
         },
     ).unwrap();
-    core::array::from_fn(|index| target.pixel(index as u32 % WIDTH,
-                                               index as u32 / WIDTH).unwrap())
+    core::array::from_fn(|index|
+        target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
 }
 
 #[test] fn aligned_rectangle_rgba_golden() {

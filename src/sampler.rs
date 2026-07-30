@@ -404,11 +404,9 @@ impl PaintSampler for ConicGradient<'_> {
     }
 
     #[test] fn randomized_gradient_samples_remain_valid_premultiplied_colors() {
-        let stops = [
-            GradientStop::new(0.0, RGBA::new(240, 20, 80, 32)),
-            GradientStop::new(0.3, RGBA::new(10, 220, 40, 160)),
-            GradientStop::new(1.0, RGBA::new(30, 60, 250, 224)),
-        ];
+        let stops = [GradientStop::new(0.0, RGBA::new(240, 20, 80, 32)),
+                     GradientStop::new(0.3, RGBA::new(10, 220, 40, 160)),
+                     GradientStop::new(1.0, RGBA::new(30, 60, 250, 224))];
         let stops = GradientStops::new(&stops).unwrap();
         let linear = LinearGradient::new((-2.0, 1.0), (3.0, 4.0),
             stops, SpreadMode::Reflect).unwrap();

@@ -68,10 +68,8 @@ impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
         };
         let vertical = overlap(self.rect.top(), self.rect.bottom(), y);
         if  vertical == 0.0 { return Ok(()); }
-        let (start, end) = (
-            x.max(libm::floorf(self.rect.left()).max(0.0) as _),
-            (x + len).min(libm::ceilf(self.rect.right()).max(0.0) as _),
-        );
+        let (start, end) = (x.max(libm::floorf(self.rect. left()).max(0.0) as _),
+                    (x + len).min(libm:: ceilf(self.rect.right()).max(0.0) as _));
         if start >= end { return Ok(()); }
         let combined = |x| {
             let clip = overlap(self.rect.left(), self.rect.right(), x) * vertical;

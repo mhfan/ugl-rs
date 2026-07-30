@@ -102,10 +102,10 @@ impl Affine<f32> {
         if ![self.a, self.b, self.c, self.d, self.e, self.f]
             .into_iter().all(f32::is_finite) { return None; }
         let determinant = self.a * self.d - self.b * self.c;
-        if determinant == 0.0 || !determinant.is_finite() { return None; }
+        if  determinant == 0.0 || !determinant.is_finite() { return None; }
         let inverse = Self {
-            a:  self.d / determinant, b: -self.b / determinant,
-            c: -self.c / determinant, d:  self.a / determinant,
+            a:  self.d / determinant,  b: -self.b  / determinant,
+            c: -self.c / determinant,  d:  self.a  / determinant,
             e: (self.c * self.f - self.d * self.e) / determinant,
             f: (self.b * self.e - self.a * self.f) / determinant,
         };
