@@ -249,20 +249,66 @@ pub fn render_stroke_paint_analytic<S: PaintSampler>(path: &Path, transform: Aff
     let AnalyticStrokeWorkspace {
         points, contours, edges, intersections, row_coverage,
     } = workspace;
-    let mut path_workspace = StrokePathWorkspace { points, contours };
-    let flattened = flatten_stroke_path(path, transform, options.flatten,
-        &mut path_workspace).map_err(map_stroke_flatten_error)?;
-    let mut edge_sink = EdgeSliceSink { edges, len: 0 };
-    for (points, closed) in flattened.contours() {
-        stroke_polyline(points, closed, options.stroke, &mut edge_sink)
-            .map_err(map_stroke_expand_error)?;
-    }
-    let edge_count = edge_sink.len;
+    let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
     let mut compositor = PaintCompositor { target, sampler };
-    rasterize_edges_analytic(&edge_sink.edges[..edge_count], compositor.target.width,
+    rasterize_edges_analytic(&edges[..edge_count], compositor.target.width,
         compositor.target.height, FillRule::NonZero, &mut AnalyticWorkspace {
             intersections, row_coverage,
         }, &mut compositor,
+    ).map_err(map_raster_error)
+}
+
+/// Renders a solid analytic stroke through an antialiased rectangle clip.
+pub fn render_stroke_solid_analytic_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
+    clip: Rect, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
+    render_stroke_paint_analytic_clipped(
+        path, transform, &SolidPaint::new(color), clip, options, target, workspace)
+}
+
+/// Renders analytic stroke paint through an antialiased rectangle clip.
+pub fn render_stroke_paint_analytic_clipped<S: PaintSampler>(path: &Path, transform: Affine,
+    sampler: &S, clip: Rect, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
+    let AnalyticStrokeWorkspace {
+        points, contours, edges, intersections, row_coverage,
+    } = workspace;
+    let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
+    let mut compositor = PaintCompositor { target, sampler };
+    rasterize_edges_analytic(&edges[..edge_count], compositor.target.width,
+        compositor.target.height, FillRule::NonZero, &mut AnalyticWorkspace {
+            intersections, row_coverage,
+        }, &mut RectClipSink::new(clip, &mut compositor),
+    ).map_err(map_raster_error)
+}
+
+/// Renders a solid analytic stroke multiplied by a borrowed path clip mask.
+pub fn render_stroke_solid_analytic_masked(path: &Path, transform: Affine, color: RGBA<u8>,
+    mask: CoverageMask<'_>, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
+    render_stroke_paint_analytic_masked(
+        path, transform, &SolidPaint::new(color), mask, options, target, workspace)
+}
+
+/// Renders analytic stroke paint multiplied by a borrowed path clip mask.
+pub fn render_stroke_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Affine,
+    sampler: &S, mask: CoverageMask<'_>, options: AnalyticStrokeOptions,
+    target: &mut PixmapMut<'_>, workspace: &mut AnalyticStrokeWorkspace<'_>) ->
+    Result<(), RenderError> {
+    if (mask.width(), mask.height()) != (target.width, target.height) {
+        return Err(RenderError::CoverageDimensionsMismatch {
+            coverage: (mask.width(), mask.height()), target: (target.width, target.height),
+        });
+    }
+    let AnalyticStrokeWorkspace {
+        points, contours, edges, intersections, row_coverage,
+    } = workspace;
+    let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
+    let mut compositor = PaintCompositor { target, sampler };
+    rasterize_edges_analytic(&edges[..edge_count], compositor.target.width,
+        compositor.target.height, FillRule::NonZero, &mut AnalyticWorkspace {
+            intersections, row_coverage,
+        }, &mut MaskClipSink::new(mask, &mut compositor),
     ).map_err(map_raster_error)
 }
 
@@ -386,6 +432,20 @@ fn build_edges(path: &Path, transform: Affine, options: FlattenOptions, edges: &
     Result<usize, RenderError> {
     let mut sink = EdgeSliceSink { edges, len: 0 };
     build_fill_edges(path, transform, options, &mut sink).map_err(map_flatten_error)?;
+    Ok(sink.len)
+}
+
+fn build_stroke_edges(path: &Path, transform: Affine, options: AnalyticStrokeOptions,
+    points: &mut [Point], contours: &mut [StrokeContour], edges: &mut [Edge]) ->
+    Result<usize, RenderError> {
+    let mut path_workspace = StrokePathWorkspace { points, contours };
+    let flattened = flatten_stroke_path(path, transform, options.flatten,
+        &mut path_workspace).map_err(map_stroke_flatten_error)?;
+    let mut sink = EdgeSliceSink { edges, len: 0 };
+    for (points, closed) in flattened.contours() {
+        stroke_polyline(points, closed, options.stroke, &mut sink)
+            .map_err(map_stroke_expand_error)?;
+    }
     Ok(sink.len)
 }
 
@@ -604,6 +664,41 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
             });
         assert_eq!(error, Err(RenderError::StrokePointCapacity { needed_at_least: 2 }));
         assert_eq!(pixels, [17; 12]);
+    }
+
+    #[test] fn analytic_gradient_stroke_composes_through_rectangle_and_path_clips() {
+        use crate::sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode};
+
+        let mut builder = PathBuilder::new();
+        builder.move_to((0.0, 0.5)).line_to((2.0, 0.5));
+        let path = builder.build();
+        let stops = [GradientStop::new(0.0, RGBA::red()),
+                     GradientStop::new(1.0, RGBA::blue())];
+        let gradient = LinearGradient::new((0.0, 0.0), (2.0, 0.0),
+            GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
+        let (mut points, mut contours, mut edges) = (
+            [Point::default(); 2], [StrokeContour::default(); 1], [Edge::default(); 4],
+        );
+        let (mut intersections, mut row_coverage) =
+            ([AnalyticIntersection::default(); 4], [0.0; 2]);
+        let mut workspace = AnalyticStrokeWorkspace {
+            points: &mut points, contours: &mut contours, edges: &mut edges,
+            intersections: &mut intersections, row_coverage: &mut row_coverage,
+        };
+
+        let mut clipped = [0; 8];
+        render_stroke_paint_analytic_clipped(&path, Affine::identity(), &gradient,
+            Rect::from_ltrb(0.5, 0.0, 1.5, 1.0).unwrap(), AnalyticStrokeOptions::default(),
+            &mut PixmapMut::new(&mut clipped, 2, 1, 8).unwrap(), &mut workspace).unwrap();
+        assert_eq!(clipped, [96, 0, 32, 128, 32, 0, 96, 128]);
+
+        let mask_data = [128, 255];
+        let mut masked = [0; 8];
+        render_stroke_paint_analytic_masked(&path, Affine::identity(), &gradient,
+            CoverageMask::new(&mask_data, 2, 1, 2).unwrap(),
+            AnalyticStrokeOptions::default(),
+            &mut PixmapMut::new(&mut masked, 2, 1, 8).unwrap(), &mut workspace).unwrap();
+        assert_eq!(masked, [96, 0, 32, 128, 64, 0, 191, 255]);
     }
 
     #[test] fn analytic_linear_gradient_renders_end_to_end() {
