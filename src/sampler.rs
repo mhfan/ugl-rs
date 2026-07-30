@@ -298,6 +298,10 @@ impl PaintSampler for ConicGradient<'_> {
 
     #[test] fn gradient_stops_validate_and_interpolate_premultiplied_colors() {
         assert_eq!(GradientStops::new(&[]).unwrap_err(), GradientError::EmptyStops);
+        assert_eq!(GradientStops::new(&[GradientStop::new(f32::NAN, RGBA::red())])
+            .unwrap_err(), GradientError::NonFiniteOffset);
+        assert_eq!(GradientStops::new(&[GradientStop::new(1.25, RGBA::red())])
+            .unwrap_err(), GradientError::OffsetOutOfRange);
         assert_eq!(GradientStops::new(&[GradientStop::new(0.75, RGBA::red()),
                                         GradientStop::new(0.25, RGBA::blue()),
         ]).unwrap_err(), GradientError::UnorderedStops);
@@ -305,6 +309,17 @@ impl PaintSampler for ConicGradient<'_> {
         let stops = [GradientStop::new(0.0, RGBA::new(255, 0, 0, 0)),
                      GradientStop::new(1.0, RGBA::new(0, 0, 255, 255))];
         assert_eq!(GradientStops::new(&stops).unwrap().sample(0.5), (0, 0, 128, 128).into());
+
+        let single = [GradientStop::new(0.4, RGBA::green())];
+        let single = GradientStops::new(&single).unwrap();
+        assert_eq!(single.sample(-10.0), single.sample(10.0));
+        let hard = [GradientStop::new(0.0, RGBA::red()),
+                    GradientStop::new(0.5, RGBA::red()),
+                    GradientStop::new(0.5, RGBA::blue()),
+                    GradientStop::new(1.0, RGBA::blue())];
+        let hard = GradientStops::new(&hard).unwrap();
+        assert_eq!(hard.sample(0.5 - f32::EPSILON), RGBA::<u8>::red().premul());
+        assert_eq!(hard.sample(0.5), RGBA::<u8>::blue().premul());
     }
 
     #[test] fn linear_gradient_projects_device_coordinates_and_spreads() {
@@ -340,6 +355,13 @@ impl PaintSampler for ConicGradient<'_> {
         assert_eq!(focal.sample(-4.0, 0.0), RGBA::<u8>::blue().premul());
         assert_eq!(RadialGradient::new((0.0, 0.0), -1.0, stops, SpreadMode::Pad)
             .unwrap_err(), GradientError::NegativeRadius);
+        assert_eq!(RadialGradient::two_circle((0.0, 0.0), 1.0, (0.0, 0.0), 1.0,
+            stops, SpreadMode::Pad).unwrap_err(), GradientError::DegenerateGeometry);
+
+        let tangent = RadialGradient::two_circle((0.0, 0.0), 0.0, (1.0, 0.0), 1.0,
+            stops, SpreadMode::Pad).unwrap();
+        assert_eq!(tangent.sample(0.5, 0.0), (191, 0, 64, 255).into());
+        assert_eq!(tangent.sample(0.0, 1.0), PRGB32::zeroed());
     }
 
     #[test] fn conic_gradient_wraps_a_full_turn_from_its_start_angle() {
@@ -353,6 +375,8 @@ impl PaintSampler for ConicGradient<'_> {
 
         let rotated = ConicGradient::new((2.0, 3.0), TAU / 4.0, stops).unwrap();
         assert_eq!(rotated.sample(2.0, 4.0), RGBA::<u8>::red().premul());
+        assert_eq!(conic.sample(3.0, 3.0 + 1e-4), RGBA::<u8>::red().premul());
+        assert_eq!(conic.sample(3.0, 3.0 - 1e-4), RGBA::<u8>::blue().premul());
     }
 
     #[test] fn transformed_paint_maps_device_coordinates_and_preserves_solid_fast_path() {
@@ -371,5 +395,36 @@ impl PaintSampler for ConicGradient<'_> {
         assert_eq!(TransformedPaint::new(solid,
             Affine::new(1.0, 2.0, 2.0, 4.0, 0.0, 0.0)).unwrap_err(),
             PaintTransformError::NonInvertibleTransform);
+
+        let radial = RadialGradient::new((0.0, 0.0), 2.0,
+            GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
+        let ellipse = TransformedPaint::new(radial,
+            Affine::new(2.0, 0.0, 0.0, 1.0, 0.0, 0.0)).unwrap();
+        assert_eq!(ellipse.sample(2.0, 0.0), ellipse.sample(0.0, 1.0));
+    }
+
+    #[test] fn randomized_gradient_samples_remain_valid_premultiplied_colors() {
+        let stops = [
+            GradientStop::new(0.0, RGBA::new(240, 20, 80, 32)),
+            GradientStop::new(0.3, RGBA::new(10, 220, 40, 160)),
+            GradientStop::new(1.0, RGBA::new(30, 60, 250, 224)),
+        ];
+        let stops = GradientStops::new(&stops).unwrap();
+        let linear = LinearGradient::new((-2.0, 1.0), (3.0, 4.0),
+            stops, SpreadMode::Reflect).unwrap();
+        let radial = RadialGradient::two_circle((0.5, -0.5), 0.25, (1.0, 1.5), 4.0,
+            stops, SpreadMode::Repeat).unwrap();
+        let conic = ConicGradient::new((-1.0, 2.0), 0.37, stops).unwrap();
+        let mut state = 0xA341_316C_u32;
+        for _ in 0..2048 {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let x = (state >> 8) as f32 / 0x00FF_FFFF_u32 as f32 * 40.0 - 20.0;
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let y = (state >> 8) as f32 / 0x00FF_FFFF_u32 as f32 * 40.0 - 20.0;
+            for color in [linear.sample(x, y), radial.sample(x, y), conic.sample(x, y)] {
+                let [r, g, b, a] = color.to_array();
+                assert!(r <= a && g <= a && b <= a);
+            }
+        }
     }
 }

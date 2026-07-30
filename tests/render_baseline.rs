@@ -1,7 +1,9 @@
 
 use ugl_rs::{analytic::AnalyticIntersection, color::{PRGB32, RGBA}, edge::Edge,
-    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut, render_solid_analytic},
+    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut,
+        render_paint_analytic, render_solid_analytic},
     geometry::{Affine, PathBuilder}, raster::FillRule,
+    sampler::{GradientStop, GradientStops, LinearGradient, PaintSampler, SpreadMode},
 };
 
 const  WIDTH: u32 = 4;
@@ -21,6 +23,23 @@ fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PRGB32<u8>; 16
         },
     ).unwrap();
     core::array::from_fn(|index| target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
+}
+
+fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
+    [PRGB32<u8>; 16] {
+    let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
+    let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+    let (mut edges, mut intersections, mut row_coverage) = (
+        [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
+    );
+    render_paint_analytic(&builder.build(), Affine::identity(), sampler,
+        AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+            edges: &mut edges, intersections: &mut intersections,
+            row_coverage: &mut row_coverage,
+        },
+    ).unwrap();
+    core::array::from_fn(|index| target.pixel(index as u32 % WIDTH,
+                                               index as u32 / WIDTH).unwrap())
 }
 
 #[test] fn aligned_rectangle_rgba_golden() {
@@ -51,6 +70,22 @@ fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PRGB32<u8>; 16
         transparent, transparent, transparent, transparent,
         transparent, transparent, transparent, transparent,
     ]);
+}
+
+#[test] fn linear_gradient_rgba_golden() {
+    let mut path = PathBuilder::new();
+    path.move_to((0.0, 0.0)).line_to((4.0, 0.0))
+        .line_to((4.0, 4.0)).line_to((0.0, 4.0));
+    let stops = [GradientStop::new(0.0, RGBA::red()),
+                 GradientStop::new(1.0, RGBA::blue())];
+    let gradient = LinearGradient::new((0.0, 0.0), (4.0, 0.0),
+        GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
+    let row: [PRGB32<u8>; 4] = [
+        (223, 0, 32, 255).into(), (159, 0, 96, 255).into(),
+        (96, 0, 159, 255).into(), (32, 0, 223, 255).into(),
+    ];
+    assert_eq!(render_analytic_paint(path, &gradient),
+        core::array::from_fn(|index| row[index % row.len()]));
 }
 
 #[cfg(feature = "fixed")]
