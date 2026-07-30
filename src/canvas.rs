@@ -502,6 +502,32 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
         assert_eq!(target.pixel(1, 0), Some((64, 0, 191, 255).into()));
     }
 
+    #[test] fn analytic_radial_gradient_renders_end_to_end() {
+        use crate::sampler::{GradientStop, GradientStops, RadialGradient, SpreadMode};
+
+        let mut builder = PathBuilder::new();
+        builder.move_to((0.0, 0.0)).line_to((3.0, 0.0))
+               .line_to((3.0, 1.0)).line_to((0.0, 1.0));
+        let stops = [
+            GradientStop::new(0.0, RGBA::red()), GradientStop::new(1.0, RGBA::blue()),
+        ];
+        let gradient = RadialGradient::new((1.5, 0.5), 1.5,
+            GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
+        let mut pixels = [0; 12];
+        let mut target = PixmapMut::new(&mut pixels, 3, 1, 12).unwrap();
+        let (mut edges, mut intersections, mut row_coverage) = (
+            [Edge::default(); 4], [AnalyticIntersection::default(); 4], [0.0; 3]);
+        render_paint_analytic(&builder.build(), Affine::identity(), &gradient,
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut intersections,
+                row_coverage: &mut row_coverage,
+            },
+        ).unwrap();
+        assert_eq!(target.pixel(0, 0), Some((85, 0, 170, 255).into()));
+        assert_eq!(target.pixel(1, 0), Some((255, 0, 0, 255).into()));
+        assert_eq!(target.pixel(2, 0), target.pixel(0, 0));
+    }
+
     #[test] fn analytic_rectangle_clip_multiplies_coverage_end_to_end() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0)).line_to((3.0, 0.0))

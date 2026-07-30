@@ -63,7 +63,7 @@ impl GradientStop {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum GradientError {
     EmptyStops, NonFiniteOffset, OffsetOutOfRange, UnorderedStops,
-    NonFiniteGeometry, DegenerateGeometry,
+    NonFiniteGeometry, NegativeRadius, DegenerateGeometry,
 }
 
 /// Validated, caller-owned gradient stops.
@@ -151,6 +151,85 @@ impl PaintSampler for LinearGradient<'_> {
     }
 }
 
+/// A two-circle radial gradient.
+///
+/// Circle center and radius are linearly interpolated by the gradient
+/// parameter. Samples outside the cone formed by the circles are transparent.
+#[derive(Clone, Copy, Debug)] pub struct RadialGradient<'a> {
+    start: Point, center_delta: Point, start_radius: f32, radius_delta: f32,
+    quadratic: f32, stops: GradientStops<'a>, spread: SpreadMode,
+}
+
+impl<'a> RadialGradient<'a> {
+    /// Creates a concentric gradient from radius zero to `radius`.
+    pub fn new(center: impl Into<Point>, radius: f32, stops: GradientStops<'a>,
+        spread: SpreadMode) -> Result<Self, GradientError> {
+        let center = center.into();
+        Self::two_circle(center, 0.0, center, radius, stops, spread)
+    }
+
+    pub fn two_circle(start: impl Into<Point>, start_radius: f32,
+        end: impl Into<Point>, end_radius: f32, stops: GradientStops<'a>,
+        spread: SpreadMode) -> Result<Self, GradientError> {
+        let (start, end) = (start.into(), end.into());
+        if !start.x.is_finite() || !start.y.is_finite() ||
+             !end.x.is_finite() ||   !end.y.is_finite() ||
+             !start_radius.is_finite() || !end_radius.is_finite() {
+            return Err(GradientError::NonFiniteGeometry);
+        }
+        if start_radius < 0.0 || end_radius < 0.0 {
+            return Err(GradientError::NegativeRadius);
+        }
+        let center_delta: Point = (end.x - start.x, end.y - start.y).into();
+        let radius_delta = end_radius - start_radius;
+        let quadratic = center_delta.x * center_delta.x +
+                        center_delta.y * center_delta.y - radius_delta * radius_delta;
+        if !center_delta.x.is_finite() || !center_delta.y.is_finite() ||
+           !radius_delta.is_finite() || !quadratic.is_finite() {
+            return Err(GradientError::NonFiniteGeometry);
+        }
+        if center_delta.x == 0.0 && center_delta.y == 0.0 && radius_delta == 0.0 {
+            return Err(GradientError::DegenerateGeometry);
+        }
+        Ok(Self { start, center_delta, start_radius, radius_delta, quadratic,
+                  stops, spread })
+    }
+
+    fn parameter(&self, x: f32, y: f32) -> Option<f32> {
+        let point: Point = (x - self.start.x, y - self.start.y).into();
+        let linear = -2.0 * (point.x * self.center_delta.x +
+                            point.y * self.center_delta.y +
+                            self.start_radius * self.radius_delta);
+        let constant = point.x * point.x + point.y * point.y -
+                       self.start_radius * self.start_radius;
+        if self.quadratic == 0.0 {
+            if linear == 0.0 {
+                return if constant == 0.0 { Some(0.0) } else { None };
+            }
+            let t = -constant / linear;
+            return (self.start_radius + t * self.radius_delta >= 0.0).then_some(t);
+        }
+        let discriminant = linear * linear - 4.0 * self.quadratic * constant;
+        if discriminant < 0.0 || !discriminant.is_finite() { return None; }
+        let root = libm::sqrtf(discriminant);
+        let q = -0.5 * (linear + root.copysign(linear));
+        let (first, second) = if q == 0.0 {
+            let root = -linear / (2.0 * self.quadratic);
+            (root, root)
+        } else { (q / self.quadratic, constant / q) };
+        [first, second].into_iter().filter(|t|
+            t.is_finite() && self.start_radius + *t * self.radius_delta >= 0.0
+        ).max_by(|a, b| a.total_cmp(b))
+    }
+}
+
+impl PaintSampler for RadialGradient<'_> {
+    fn sample(&self, x: f32, y: f32) -> PRGB32<u8> {
+        self.parameter(x, y).map_or_else(PRGB32::zeroed,
+            |t| self.stops.sample(self.spread.map(t)))
+    }
+}
+
 #[cfg(test)] mod tests { use super::*;
     #[test] fn solid_paint_is_position_independent_and_premultiplied() {
         let paint = SolidPaint::new(RGBA::new(200, 100, 50, 128));
@@ -189,5 +268,22 @@ impl PaintSampler for LinearGradient<'_> {
         assert_eq!(repeat.sample(1.25, 0.0), repeat.sample(0.25, 0.0));
         assert_eq!(reflect.sample(1.25, 0.0), reflect.sample(0.75, 0.0));
         assert_eq!(reflect.sample(-0.25, 0.0), reflect.sample(0.25, 0.0));
+    }
+
+    #[test] fn radial_gradient_supports_concentric_and_focal_circles() {
+        let stops = red_blue_stops();
+        let stops = GradientStops::new(&stops).unwrap();
+        let radial =
+            RadialGradient::new((2.0, 3.0), 4.0, stops, SpreadMode::Pad).unwrap();
+        assert_eq!(radial.sample(2.0, 3.0), RGBA::<u8>::red().premul());
+        assert_eq!(radial.sample(4.0, 3.0), (128, 0, 128, 255).into());
+        assert_eq!(radial.sample(10.0, 3.0), RGBA::<u8>::blue().premul());
+
+        let focal = RadialGradient::two_circle((1.0, 0.0), 0.0, (0.0, 0.0), 4.0,
+            stops, SpreadMode::Pad).unwrap();
+        assert_eq!(focal.sample(1.0, 0.0), RGBA::<u8>::red().premul());
+        assert_eq!(focal.sample(-4.0, 0.0), RGBA::<u8>::blue().premul());
+        assert_eq!(RadialGradient::new((0.0, 0.0), -1.0, stops, SpreadMode::Pad)
+            .unwrap_err(), GradientError::NegativeRadius);
     }
 }
