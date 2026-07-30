@@ -175,6 +175,26 @@ and SIMD layouts do not enter the common `Edge` representation.
   Encoding or decoding sRGB is an explicit input/output-boundary operation,
   not an implicit sampler step.
 
+## Strokes
+
+- The initial stroke width is positive, finite, and measured in device pixels
+  after the path transform. Zero-width hairlines are a separate future mode.
+- Open contours support butt, round, and square caps. Closed contours have no
+  caps and join their final non-degenerate segment to the first.
+- Joins support bevel, round, and miter. The miter limit is the maximum miter
+  length divided by half the stroke width; an exceeded miter falls back to
+  bevel.
+- Repeated zero-length segments are ignored for tangent/join selection. A
+  point-only contour is empty for butt caps and produces a centered shape for
+  round or square caps.
+- The scalar reference flattens transformed curves before expanding the
+  centerline. A later desktop production stroker may offset curves directly,
+  but must preserve the documented device-space result within its error bound.
+- Stroke expansion can stream consistently wound fill contours into bounded
+  caller-owned storage. It must not require an owned intermediate `Path`.
+- Dash patterns are added only after undashed contour semantics and capacity
+  behavior are stable.
+
 ## Memory and failure
 
 - Rendering never owns the destination; it borrows a caller-provided buffer.

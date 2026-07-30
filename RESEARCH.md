@@ -515,3 +515,88 @@ and direct tiles for both fill rules and require identical raster errors.
 Benchmarks separate streaming, strip encoding/replay, tile encoding/replay,
 immediate composition, and retained composition across dense, sparse,
 short-edge, and full-tile scenes.
+
+## Decision record 5: stroke expansion
+
+### Primary sources and observations
+
+- micro{gl}/micro-tess path stroke exposes width, cap, join, miter limit, dash
+  array, and dash offset; it supports allocator-aware/static containers and
+  fixed-point number types. Its tessellation and buffer caching are useful
+  constrained-memory references:
+  <https://micro-gl.github.io/docs/micro-tess/algorithms/path-stroke>.
+- Blend2D exposes stroked paths separately from rasterization and its offset
+  sink consumes both sides of each figure, adding caps for open contours. It
+  also treats curve simplification/offsetting as a dedicated approximation
+  problem rather than flattening everything first:
+  <https://blend2d.com/doc/group__bl__geometry.html>,
+  <https://blend2d.com/research/precise_offset_curves.pdf>.
+- tiny-skia's Skia-derived stroker maintains separate inner and outer
+  builders, reverses the inner side when closing an outline, recursively
+  approximates offset curves, detects curve reductions/cusps, and gives
+  zero-length segments explicit cap semantics:
+  <https://github.com/RazrFalcon/tiny-skia/blob/master/path/src/stroker.rs>.
+- GPU-oriented polar and minimal-arc expansion are valuable later references,
+  but they do not by themselves satisfy the current caller-owned CPU/fixed
+  workspace contract:
+  <https://arxiv.org/abs/2007.00308>,
+  <https://arxiv.org/abs/2405.00127>.
+
+### Decision
+
+M3 uses two implementation levels behind the same stroke semantics:
+
+1. The scalar behavioral reference transforms and flattens the centerline in
+   device space, then expands line segments with explicit caps and joins.
+   Width and miter limit are therefore measured in device pixels. This reuses
+   the existing post-transform tolerance contract and is straightforward to
+   differential-test.
+2. A later desktop/mobile production stroker may offset quadratic and cubic
+   curves directly, subdividing around inflections, cusps, and approximation
+   failures. It must match the scalar reference within a documented pixel
+   tolerance.
+
+The MCU/fixed backend may retain bounded flatten-first expansion when direct
+curve offsetting would increase code size or scratch memory without a measured
+benefit. Direct curve offsetting is not forced into a generic numeric trait.
+
+The first stroke slice supports positive finite width, butt/round/square caps,
+bevel/round/miter joins, and a finite miter-limit ratio. Miter joins fall back
+to bevel when the intersection exceeds `miter_limit × half_width`. Dash
+patterns and zero-width hairlines remain deferred.
+
+Open contours receive caps and are never implicitly closed. Closed contours
+join their last and first non-degenerate segments and receive no caps.
+Repeated zero-length segments do not create joins. A contour containing only
+one point is empty with butt caps; round and square caps produce a centered
+shape, following the established Skia behavior.
+
+### Memory and output strategy
+
+The reference expander writes fillable stroke geometry through a bounded sink;
+it does not require an owned output `Path`. Segment bodies, joins, and caps may
+be emitted as consistently wound closed contours, so a streaming MCU path does
+not need to retain and reverse an entire inner outline. A retained-outline
+adapter can still build an owned `Path` for caching, debugging, and desktop
+curve-offset work.
+
+Capacity failure reports required output progress and invalid or non-finite
+style/geometry fails before successful rendering. Fixed-point implementation
+must widen normalization, cross products, line intersections, and miter tests;
+Q24.8 storage alone is insufficient for these intermediates.
+
+### Deferred alternatives and falsification
+
+- Direct offset curves are deferred from the first slice, not rejected.
+- Hairlines are deferred because device coverage semantics differ from a
+  geometric stroke of width zero.
+- Dashes follow only after contour/cap/join behavior is stable.
+- A triangle mesh is not the common core output because the CPU fill
+  rasterizers already consume paths/edges and a mesh would impose indexing and
+  extra storage on MCU callers.
+
+Tests must cover every cap/join, miter fallback, open versus closed contours,
+repeated and point-only contours, reversals, acute/obtuse corners,
+self-intersections, transformed curves, capacity failure, and randomized
+comparison against the filled expanded outline. Benchmarks separate expansion,
+rasterization, and end-to-end stroke rendering.
