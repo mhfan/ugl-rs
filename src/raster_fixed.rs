@@ -9,7 +9,7 @@ use crate::{edge::Edge, geometry::{FixedScalar, Point}, raster::{CoverageSink, F
 /// every line-intersection multiply-add to remain in `i64`.
 pub const   SUBPIXEL_SCALE: u32 = 1 << 8;
 pub const DEVICE_RAW_LIMIT: i32 = 1 << 29;
-pub const FIXED_STRIP_HEIGHT: u32 = 16;
+const FIXED_STRIP_HEIGHT: u32 = 16;
 const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FixedRasterError {
@@ -365,10 +365,9 @@ pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
                 FixedRasterError::WorkspaceTooSmall { kind, required }));
         }
     }
+    let Some((first_line, rest)) = lines.split_first() else { return Ok(()); };
     let bins = build_strip_bins(lines, height,
         workspace.strip_offsets, workspace.strip_indices).map_err(FixedRenderError::Raster)?;
-
-    let Some((first_line, rest)) = lines.split_first() else { return Ok(()); };
     let (mut minimum_y, mut maximum_y) =
         (first_line.y0, first_line.y0 + first_line.dy as i32);
     for line in rest {
@@ -380,35 +379,49 @@ pub fn rasterize_lines<S>(lines: &[FixedLine], width: u32, height: u32,
     let last_row = (maximum_y.div_euclid(scale) +
         (maximum_y.rem_euclid(scale) != 0) as i32).clamp(0, height as i32) as u32;
 
+    let (mut current_strip, mut pending, mut active_count) = (usize::MAX, 0, 0);
     for y in first_row..last_row {
         let strip = y as usize / FIXED_STRIP_HEIGHT as usize;
         let strip_lines = bins.indices(strip);
+        if strip != current_strip {
+            current_strip = strip;
+            pending = 0;
+            active_count = 0;
+        }
         let row = &mut workspace.row_area[..width_usize];  row.fill(0);
         let (mut top, bottom) = (FixedScalar::from_bits(extent(y)     as i32),
                                  FixedScalar::from_bits(extent(y + 1) as i32));
         while top < bottom {
-            let vertex_boundary = next_indexed_slab_boundary(lines, strip_lines, top, bottom)
-                .map_err(FixedRenderError::Raster)?;
-            let mut segment_count =
-                collect_indexed_segments(lines, strip_lines,
-                    top, vertex_boundary, workspace.segments)
-                .map_err(FixedRenderError::Raster)?;
+            active_count = retain_active_lines(
+                lines, workspace.segments, active_count, top);
+            activate_pending_lines(lines, strip_lines, &mut pending, top,
+                workspace.segments, &mut active_count);
+            let vertex_boundary = next_active_slab_boundary(lines, strip_lines, pending,
+                &workspace.segments[..active_count], top, bottom);
+            if active_count == 0 {
+                if vertex_boundary >= bottom { break; }
+                top = vertex_boundary;
+                continue;
+            }
+            prepare_active_segments(lines, &mut workspace.segments[..active_count],
+                top, vertex_boundary).map_err(FixedRenderError::Raster)?;
             let (next, snap_top, snap_bottom) = next_crossing_boundary(lines,
-                &mut workspace.segments[..segment_count], top, vertex_boundary)
+                &mut workspace.segments[..active_count], top, vertex_boundary)
                 .map_err(FixedRenderError::Raster)?;
             if next != vertex_boundary {
-                segment_count = collect_indexed_segments(
-                    lines, strip_lines, top, next, workspace.segments)
+                prepare_active_segments(lines,
+                    &mut workspace.segments[..active_count], top, next)
                     .map_err(FixedRenderError::Raster)?;
             }
             if snap_top {
-                snap_crossing_events(lines, top, &mut workspace.segments[..segment_count], true);
+                snap_crossing_events(lines, top,
+                    &mut workspace.segments[..active_count], true);
             }
             if snap_bottom {
                 snap_crossing_events(lines, next,
-                    &mut workspace.segments[..segment_count], false);
+                    &mut workspace.segments[..active_count], false);
             }
-            let segments = &mut workspace.segments[..segment_count];
+            let segments = &mut workspace.segments[..active_count];
             let trapezoid_count = if next == vertex_boundary && !snap_top && !snap_bottom {
                 collect_ordered_trapezoids(segments, fill_rule, workspace.trapezoids)
             } else {
@@ -477,7 +490,72 @@ fn build_strip_bins<'a>(lines: &[FixedLine], height: u32, offsets: &'a mut [u32]
     }
     for strip in (1..offsets.len()).rev() { offsets[strip] = offsets[strip - 1]; }
     offsets[0] = 0;
+    for strip in 0..offsets.len() - 1 {
+        let (start, end) = (offsets[strip] as usize, offsets[strip + 1] as usize);
+        indices[start..end].sort_unstable_by(|left, right| {
+            let (left, right) = (lines[*left as usize], lines[*right as usize]);
+            left.y0.cmp(&right.y0)
+                .then_with(|| (left.y0 + left.dy as i32).cmp(&(right.y0 + right.dy as i32)))
+        });
+    }
     Ok(FixedStripBins { offsets, indices })
+}
+
+fn retain_active_lines(lines: &[FixedLine], segments: &mut [FixedSegment],
+    count: usize, top: FixedScalar) -> usize {
+    let top = top.to_bits();
+    let mut retained = 0;
+    for index in 0..count {
+        let line = lines[segments[index].line_index as usize];
+        if line.y0 + line.dy as i32 > top {
+            segments[retained] = segments[index];
+            retained += 1;
+        }
+    }
+    retained
+}
+
+fn activate_pending_lines(lines: &[FixedLine], strip_lines: &[u32], pending: &mut usize,
+    top: FixedScalar, segments: &mut [FixedSegment], active_count: &mut usize) {
+    let top = top.to_bits();
+    while let Some(&line_index) = strip_lines.get(*pending) {
+        let line = lines[line_index as usize];
+        if line.y0 > top { break; }
+        if line.y0 + line.dy as i32 > top {
+            segments[*active_count] =
+                FixedSegment { line_index, ..FixedSegment::default() };
+            *active_count += 1;
+        }
+        *pending += 1;
+    }
+}
+
+fn next_active_slab_boundary(lines: &[FixedLine], strip_lines: &[u32], pending: usize,
+    active: &[FixedSegment], top: FixedScalar, bottom: FixedScalar) -> FixedScalar {
+    let (top, mut boundary) = (top.to_bits(), bottom.to_bits());
+    if let Some(&index) = strip_lines.get(pending) {
+        let start = lines[index as usize].y0;
+        if top < start && start < boundary { boundary = start; }
+    }
+    for segment in active {
+        let end = {
+            let line = lines[segment.line_index as usize];
+            line.y0 + line.dy as i32
+        };
+        if top < end && end < boundary { boundary = end; }
+    }
+    FixedScalar::from_bits(boundary)
+}
+
+fn prepare_active_segments(lines: &[FixedLine], segments: &mut [FixedSegment],
+    top: FixedScalar, bottom: FixedScalar) -> Result<(), FixedRasterError> {
+    let (top, bottom) = (top.to_bits(), bottom.to_bits());
+    for segment in segments {
+        *segment = lines[segment.line_index as usize]
+            .segment_in_slab(segment.line_index, top, bottom)
+            .ok_or(FixedRasterError::InvalidSlabPartition)?;
+    }
+    Ok(())
 }
 
 /// Validates and widens fixed-point edges into caller-owned raster storage.
@@ -513,19 +591,6 @@ pub fn next_slab_boundary(lines: &[FixedLine], top: FixedScalar, bottom: FixedSc
     Ok(FixedScalar::from_bits(boundary))
 }
 
-fn next_indexed_slab_boundary(lines: &[FixedLine], indices: &[u32],
-    top: FixedScalar, bottom: FixedScalar) -> Result<FixedScalar, FixedRasterError> {
-    let (top, bottom) = validate_slab(top, bottom)?;
-    let mut boundary = bottom;
-    for &index in indices {
-        let line = lines.get(index as usize).ok_or(FixedRasterError::InvalidEdge)?;
-        for vertex in [line.y0, line.y0 + line.dy as i32] {
-            if top < vertex && vertex < boundary { boundary = vertex; }
-        }
-    }
-    Ok(FixedScalar::from_bits(boundary))
-}
-
 /// Clips prepared lines to a horizontal slab without rounding x coordinates.
 ///
 /// Only overlapping fragments are emitted. Capacity is checked before output
@@ -547,31 +612,6 @@ pub fn collect_segments(lines: &[FixedLine], top: FixedScalar, bottom: FixedScal
         line.segment_in_slab(index as _, top, bottom)) {
         output[count] = segment;  count += 1;
     }       Ok(count)
-}
-
-fn collect_indexed_segments(lines: &[FixedLine], indices: &[u32],
-    top: FixedScalar, bottom: FixedScalar, output: &mut [FixedSegment]) ->
-    Result<usize, FixedRasterError> {
-    let (top, bottom) = validate_slab(top, bottom)?;
-    let mut required = 0;
-    for &index in indices {
-        let line = lines.get(index as usize).ok_or(FixedRasterError::InvalidEdge)?;
-        required += line.segment_in_slab(index, top, bottom).is_some() as usize;
-    }
-    if output.len() < required {
-        return Err(FixedRasterError::WorkspaceTooSmall {
-            kind: FixedWorkspace::Segments, required,
-        });
-    }
-    let mut count = 0;
-    for &index in indices {
-        let line = lines.get(index as usize).ok_or(FixedRasterError::InvalidEdge)?;
-        if let Some(segment) = line.segment_in_slab(index, top, bottom) {
-            output[count] = segment;
-            count += 1;
-        }
-    }
-    Ok(count)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] struct FixedCrossing { y: i32, x: i64 }
