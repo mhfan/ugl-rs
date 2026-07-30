@@ -58,6 +58,50 @@ order, and milestones are maintained in [DESIGN.md](DESIGN.md). External
 renderer research and explicit adoption decisions are tracked in
 [RESEARCH.md](RESEARCH.md).
 
+## Benchmarking
+
+Run the scalar rasterizer comparison with:
+
+```text
+cargo bench --bench raster --all-features
+```
+
+The baseline scene contains 64 fractional rectangles in a 256 × 256
+premultiplied RGBA8888 target. Path construction, fixed-line preparation, and
+all heap allocation happen before Criterion starts each measured iteration.
+The measured loop clears the destination and performs scan conversion plus
+source-over compositing.
+
+Current development baseline, measured on 2026-07-30:
+
+- commit: `5f98d43`;
+- platform: Darwin arm64;
+- compiler: `rustc 1.97.1`, LLVM 22.1.6;
+- Criterion parameters: 1 s warm-up, 1 s measurement, 10 samples.
+
+| Backend | Time estimate | Reported interval | Throughput |
+| --- | ---: | ---: | ---: |
+| sampled `f32` | 15.820 ms | 15.625–16.031 ms | 4.14 Mpixel/s |
+| analytic `f32` | 213.10 µs | 205.48–235.39 µs | 307.53 Mpixel/s |
+| Q24.8 fixed | 315.43 µs | 312.93–319.83 µs | 207.77 Mpixel/s |
+
+These short-run numbers are a regression reference for this machine, not a
+cross-platform ranking. Published comparisons should use longer measurements
+and record CPU model, power state, compiler, and commit.
+
+The initial caller-owned scratch budgets are:
+
+| Backend | Edge/segment storage | Crossing storage | Row storage |
+| --- | ---: | ---: | ---: |
+| sampled `f32` | 128 `Edge` | 128 `Intersection` | 256 `f32` |
+| analytic `f32` | 128 `Edge` | 128 `AnalyticIntersection` | 256 `f32` |
+| Q24.8 fixed | 128 `FixedSegment` + 64 `FixedTrapezoid` | none | 256 `u64` |
+
+Renderer allocation count inside the measured path is zero by API
+construction: every mutable geometry, crossing, area, and destination buffer
+is borrowed from the benchmark. Criterion's own allocations are outside that
+contract.
+
 ## Non-goals for the core
 
 The initial core does not include window-system integration, SVG parsing, image

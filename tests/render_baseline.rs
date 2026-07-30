@@ -1,22 +1,17 @@
-use ugl_rs::{
-    analytic::AnalyticIntersection,
+
+use ugl_rs::{analytic::AnalyticIntersection, color::{PremulRGBA, RGBA}, edge::Edge,
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut, render_solid_analytic},
-    color::{PremulRGBA, RGBA},
-    edge::Edge,
-    geometry::{Affine, PathBuilder},
-    raster::FillRule,
+    geometry::{Affine, PathBuilder}, raster::FillRule,
 };
 
-const WIDTH: u32 = 4;
+const  WIDTH: u32 = 4;
 const HEIGHT: u32 = 4;
 
 fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
-        [Edge::default(); 8],
-        [AnalyticIntersection::default(); 8],
-        [0.0; WIDTH as usize],
+        [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
     );
     render_solid_analytic(&builder.build(), Affine::identity(), RGBA::new(20, 200, 40, 160),
         AnalyticRenderOptions { fill_rule, ..Default::default() }, &mut target,
@@ -28,8 +23,7 @@ fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>
     core::array::from_fn(|index| target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
 }
 
-#[test]
-fn aligned_rectangle_rgba_golden() {
+#[test] fn aligned_rectangle_rgba_golden() {
     let mut path = PathBuilder::new();
     path.move_to((1.0, 1.0)).line_to((3.0, 1.0))
         .line_to((3.0, 3.0)).line_to((1.0, 3.0));
@@ -44,8 +38,7 @@ fn aligned_rectangle_rgba_golden() {
     ]);
 }
 
-#[test]
-fn diagonal_triangle_rgba_golden() {
+#[test] fn diagonal_triangle_rgba_golden() {
     let mut path = PathBuilder::new();
     path.move_to((0.0, 0.0)).line_to((2.0, 0.0)).line_to((0.0, 2.0));
 
@@ -61,14 +54,10 @@ fn diagonal_triangle_rgba_golden() {
 }
 
 #[cfg(feature = "fixed")]
-#[test]
-fn fixed_triangles_track_the_analytic_pipeline() {
-    use ugl_rs::{
-        canvas::render_solid_fixed,
-        geometry::{FixedScalar, Point},
-        raster_fixed::{
-            FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines,
-        },
+#[test] fn fixed_triangles_track_the_analytic_pipeline() {
+    use ugl_rs::{canvas::render_solid_fixed, geometry::{FixedScalar, Point},
+        raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
+            prepare_lines},
     };
 
     fn fixed_edge(from: Point<FixedScalar>, to: Point<FixedScalar>) ->
@@ -77,9 +66,7 @@ fn fixed_triangles_track_the_analytic_pipeline() {
             Some(Edge { upper: from, lower: to, winding: 1 })
         } else if from.y > to.y {
             Some(Edge { upper: to, lower: from, winding: -1 })
-        } else {
-            None
-        }
+        } else { None }
     }
 
     let scenes = [

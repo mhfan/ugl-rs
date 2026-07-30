@@ -14,9 +14,7 @@ use crate::{edge::Edge,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct AnalyticIntersection {
-    x0: f32, x1: f32, slope: f32, y_end: f32, winding: i8,
-}
+pub struct AnalyticIntersection { x0: f32, x1: f32, slope: f32, y_end: f32, winding: i8 }
 
 pub struct AnalyticWorkspace<'a> {
     pub intersections: &'a mut [AnalyticIntersection],
@@ -43,11 +41,10 @@ pub fn rasterize_edges_analytic<S>(edges: &[Edge], width: u32, height: u32,
         }
         let row = &mut workspace.row_coverage[..width];
         row.fill(0.0);
-        active_count = integrate_row(edges, y as _, fill_rule, workspace.intersections,
-            active_count, first_slab, row);
-        first_slab = false;
+        active_count = integrate_row(edges, y as _, fill_rule,
+            workspace.intersections, active_count, first_slab, row);
         emit_coverage_runs(row, y, sink)?;
-        y += 1;
+        first_slab = false;     y += 1;
     }   Ok(())
 }
 
@@ -66,13 +63,12 @@ fn integrate_row(edges: &[Edge], row_y: f32, fill_rule: FillRule,
             if next >= row_end { break; }
             y0 = next;  continue;
         }
-        let y1 = prepare_active_slab(edges, y0, row_end, &mut active[..active_count]);
+        let  y1 = prepare_active_slab(edges, y0, row_end, &mut active[..active_count]);
         if   y1 <= y0 { break; }
         integrate_spans(&active[..active_count], y1 - y0, fill_rule, row);
         for edge in &mut active[..active_count] { edge.x0 = edge.x1; }
         y0 = y1;
-    }
-    active_count
+    }   active_count
 }
 
 fn occupied_rows(edges: &[Edge], height: u32) -> Option<(u32, u32)> {
@@ -97,8 +93,7 @@ fn retain_active(active: &mut [AnalyticIntersection], count: usize, y: f32) -> u
             active[retained] = active[index];
             retained += 1;
         }
-    }
-    retained
+    }       retained
 }
 
 fn activate_edges(edges: &[Edge], y: f32, include_spanning: bool,
@@ -111,8 +106,7 @@ fn activate_edges(edges: &[Edge], y: f32, include_spanning: bool,
             };
             count += 1;
         }
-    }
-    count
+    }       count
 }
 
 fn prepare_active_slab(edges: &[Edge], y0: f32, limit: f32,
@@ -128,11 +122,11 @@ fn prepare_active_slab(edges: &[Edge], y0: f32, limit: f32,
             let mut boundary = if edge.slope > 0.0 { libm::floorf(edge.x0) + 1.0 }
                 else { libm::ceilf(edge.x0) - 1.0 };
             let mut y = y0 + (boundary - edge.x0) / edge.slope;
-            if y <= y0 {
+            if  y <= y0 {
                 boundary += step;
-                y = y0 + (boundary - edge.x0) / edge.slope;
+                y =  y0 + (boundary - edge.x0) / edge.slope;
             }
-            if y > y0 && y < next && y < edge.y_end { next = y; }
+            if  y >  y0 && y < next && y < edge.y_end { next = y; }
         }
     }
     active.sort_unstable_by(|a, b|
@@ -228,9 +222,7 @@ fn integrate_span(left: &AnalyticIntersection,
     }
 
     #[test] fn invalid_public_edges_are_rejected_before_rasterization() {
-        let edges = [Edge {
-            upper: (0.0, 1.0).into(), lower: (0.0, 0.0).into(), winding: 1,
-        }];
+        let edges = [Edge { upper: (0.0, 1.0).into(), lower: (0.0, 0.0).into(), winding: 1 }];
         let (mut intersections, mut row) =
             ([AnalyticIntersection::default(); 1], [0.0; 1]);
         let result = rasterize_edges_analytic(&edges, 1, 1, FillRule::NonZero,
