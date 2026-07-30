@@ -12,6 +12,7 @@ pub mod shader;     // reserved for a future optional 3D layer
 pub mod geometry;   // shape, curve, free path
 
 pub mod raster;
+pub mod stroke;
 pub mod flatten;
 pub mod analytic;
 #[cfg(feature = "fixed")] pub mod raster_fixed;
