@@ -1,7 +1,7 @@
 //! Borrowed pixel targets and the first complete reference rendering path.
 
 use core::convert::Infallible;
-use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
+use crate::{color::{PRGB32, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticIntersection, AnalyticWorkspace, rasterize_edges_analytic},
     flatten::{FlattenError, FlattenOptions}, geometry::{Affine, Path, PathError, Rect},
     sampler::{PaintSampler, SolidPaint},
@@ -57,7 +57,7 @@ impl<'a> PixmapMut<'a> {
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
 
-    pub fn pixel(&self, x: u32, y: u32) -> Option<PremulRGBA<u8>> {
+    pub fn pixel(&self, x: u32, y: u32) -> Option<PRGB32<u8>> {
         if x >= self.width || y >= self.height { return None; }
         let offset = y as usize * self.stride as usize +
                      x as usize * BYTES_PER_PIXEL as usize;
@@ -66,7 +66,7 @@ impl<'a> PixmapMut<'a> {
     }
 
     fn blend_solid_span(&mut self, x: u32, y: u32, len: u32,
-        color: PremulRGBA<u8>, coverage: u8) {
+        color: PRGB32<u8>, coverage: u8) {
         let terms = solid_blend_terms(color, coverage);
         let start = y as usize * self.stride as usize
             + x as usize * BYTES_PER_PIXEL as usize;
@@ -87,7 +87,7 @@ impl<'a> PixmapMut<'a> {
     }
 
     #[cfg(feature = "fixed")] fn blend_solid_tile(&mut self, x: u32, y: u32,
-        width: u32, height: u32, color: PremulRGBA<u8>) {
+        width: u32, height: u32, color: PRGB32<u8>) {
         let terms = solid_blend_terms(color, u8::MAX);
         for row in y..y + height {
             let start = row as usize * self.stride as usize
@@ -98,7 +98,7 @@ impl<'a> PixmapMut<'a> {
     }
 }
 
-fn solid_blend_terms(color: PremulRGBA<u8>, coverage: u8) -> ([u8; 3], u8, u8) {
+fn solid_blend_terms(color: PRGB32<u8>, coverage: u8) -> ([u8; 3], u8, u8) {
     let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
     let [r, g, b, a] = color.to_array();
     let alpha = mul_div_255(a, coverage);
@@ -417,10 +417,10 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
                 row_coverage: &mut row_coverage,
             },
         ).unwrap();
-        assert_eq!(target.pixel(0, 0), Some(PremulRGBA::zeroed()));
+        assert_eq!(target.pixel(0, 0), Some(PRGB32::zeroed()));
         assert_eq!(target.pixel(1, 1), Some((128, 0, 0, 128).into()));
         assert_eq!(target.pixel(2, 2), Some((128, 0, 0, 128).into()));
-        assert_eq!(target.pixel(3, 3), Some(PremulRGBA::zeroed()));
+        assert_eq!(target.pixel(3, 3), Some(PRGB32::zeroed()));
     }
 
     #[test] fn edge_capacity_failure_reports_required_lower_bound() {
@@ -455,7 +455,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
     #[test] fn analytic_sampled_paint_uses_device_pixel_centers_and_coverage() {
         struct CoordinatePaint;
         impl PaintSampler for CoordinatePaint {
-            fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
+            fn sample(&self, x: f32, y: f32) -> PRGB32<u8> {
                 ((x * 40.0) as u8, (y * 40.0) as u8, 0, u8::MAX).into()
             }
         }
@@ -495,7 +495,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
             Some((96, 96, 96, 96).into()), Some((191, 191, 191, 191).into()),
             Some((96, 96, 96, 96).into()),
         ));
-        assert_eq!(target.pixel(1, 1), Some(PremulRGBA::zeroed()));
+        assert_eq!(target.pixel(1, 1), Some(PRGB32::zeroed()));
     }
 
     #[test] fn analytic_path_clip_uses_reusable_caller_owned_coverage() {

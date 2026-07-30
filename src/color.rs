@@ -29,7 +29,7 @@ pub type Color = RGBA<u8>;
 /// This is a distinct type so straight-alpha [`RGBA`] values cannot accidentally
 /// enter a premultiplied compositing pipeline.
 #[derive(Clone, Copy, Debug, PartialEq)] #[repr(transparent)]
-pub struct PremulRGBA<T: ColorChannel>(RGBA<T>);
+pub struct PRGB32<T: ColorChannel>(RGBA<T>);
 
 pub trait ColorChannel: Copy { const MAX: Self; const MIN: Self; }
 impl ColorChannel for u8  { const MAX: Self = u8 ::MAX; const MIN: Self = 0; }
@@ -54,16 +54,16 @@ impl<T: ColorChannel> RGBA<T> {
     pub fn purple() -> Self { Self { r: T::MAX, g: T::MIN, b: T::MAX, a: T::MAX } }
 }
 
-impl<T: ColorChannel> PremulRGBA<T> {
+impl<T: ColorChannel> PRGB32<T> {
     pub fn alpha(&self) -> T { self.0.a }
     pub fn zeroed() -> Self { Self(RGBA::zeroed()) }
     pub fn to_array(self) -> [T; 4] { [self.0.r, self.0.g, self.0.b, self.0.a] }
 }
 
-impl<T: ColorChannel> Default for PremulRGBA<T> { fn default() -> Self { Self::zeroed() } }
+impl<T: ColorChannel> Default for PRGB32<T> { fn default() -> Self { Self::zeroed() } }
 
 /// Constructs a color from channels that are already premultiplied.
-impl<T: ColorChannel> From<(T, T, T, T)> for PremulRGBA<T> {
+impl<T: ColorChannel> From<(T, T, T, T)> for PRGB32<T> {
     fn from(rgba: (T, T, T, T)) -> Self { Self(rgba.into()) }
 }
 
@@ -161,14 +161,14 @@ impl RGBA<u8> {
     pub fn packed(&self) -> u32 { unsafe { core::mem::transmute(*self) } }
         //((self.b as u32) << 24) | ((self.g as u32) << 16) |
         //((self.r as u32) <<  8) |  (self.a as u32)
-    pub fn premul(self) -> PremulRGBA<u8> {
+    pub fn premul(self) -> PRGB32<u8> {
         let (half, alpha) = ((u8::MAX / 2) as u16, self.a as u16);
         let premul = |channel| ((channel as u16 * alpha + half) /  u8::MAX as u16) as _;
         (premul(self.r), premul(self.g), premul(self.b), self.a).into()
     }
 }
 
-impl PremulRGBA<u8> {
+impl PRGB32<u8> {
     /// Converts to straight alpha. This is lossy for translucent integer colors.
     pub fn unpremul(self) -> RGBA<u8> {
         let [r, g, b, a] = self.to_array();
@@ -187,14 +187,14 @@ impl RGBA<u16> {
     pub fn packed(&self) -> u64 { unsafe { core::mem::transmute(*self) } }
         //((self.b as u64) << 48) | ((self.g as u64) << 32) |
         //((self.r as u64) << 16) |  (self.a as u64)
-    pub fn premul(self) -> PremulRGBA<u16> {
+    pub fn premul(self) -> PRGB32<u16> {
         let (half, alpha) = ((u16::MAX / 2) as u32, self.a as u32);
         let premul = |channel| ((channel as u32 * alpha + half) / u16::MAX as u32) as _;
         (premul(self.r), premul(self.g), premul(self.b), self.a).into()
     }
 }
 
-impl PremulRGBA<u16> {
+impl PRGB32<u16> {
     /// Converts to straight alpha. This is lossy for translucent integer colors.
     pub fn unpremul(self) -> RGBA<u16> {
         let [r, g, b, a] = self.to_array();
@@ -208,7 +208,7 @@ impl PremulRGBA<u16> {
 }
 
 impl RGBA<f32> {    #![allow(unused)]
-    pub fn premul(self) -> PremulRGBA<f32> {
+    pub fn premul(self) -> PRGB32<f32> {
         (self.r * self.a, self.g * self.a, self.b * self.a, self.a).into()
     }
 
@@ -237,7 +237,7 @@ impl RGBA<f32> {    #![allow(unused)]
     } }
 }
 
-impl PremulRGBA<f32> {
+impl PRGB32<f32> {
     /// Converts to straight alpha, normalizing transparent colors to transparent black.
     pub fn unpremul(self) -> RGBA<f32> {
         let [r, g, b, a] = self.to_array();
@@ -247,15 +247,15 @@ impl PremulRGBA<f32> {
     }
 }
 
-impl From<RGBA<u8>>  for PremulRGBA<u8> {
+impl From<RGBA<u8>>  for PRGB32<u8> {
     fn from(color: RGBA<u8>)  -> Self { color.premul() }
 }
 
-impl From<RGBA<u16>> for PremulRGBA<u16> {
+impl From<RGBA<u16>> for PRGB32<u16> {
     fn from(color: RGBA<u16>) -> Self { color.premul() }
 }
 
-impl From<RGBA<f32>> for PremulRGBA<f32> {
+impl From<RGBA<f32>> for PRGB32<f32> {
     fn from(color: RGBA<f32>) -> Self { color.premul() }
 }
 
@@ -277,8 +277,8 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
     #[test] fn premultiplication_preserves_opaque_channels() {
         assert_eq!(RGBA::<u8> ::white().premul().to_array(), RGBA::<u8> ::white().to_array());
         assert_eq!(RGBA::<u16>::white().premul().to_array(), RGBA::<u16>::white().to_array());
-        assert_eq!(RGBA::<u8>::new(255, 127, 1, 0).premul(), PremulRGBA::zeroed());
-        assert_eq!(RGBA::<u16>::new(65535, 32767, 1, 0).premul(), PremulRGBA::zeroed());
+        assert_eq!(RGBA::<u8>::new(255, 127, 1, 0).premul(), PRGB32::zeroed());
+        assert_eq!(RGBA::<u16>::new(65535, 32767, 1, 0).premul(), PRGB32::zeroed());
     }
 
     #[test] fn unpremultiplication_is_explicit_lossy_and_normalizes_transparent_rgb() {
@@ -298,7 +298,7 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
         }
         assert_eq!(restored16.a, color16.a);
 
-        let transparent: PremulRGBA<u8> = (200, 100, 50, 0).into();
+        let transparent: PRGB32<u8> = (200, 100, 50, 0).into();
         assert_eq!(transparent.unpremul(), RGBA::zeroed());
         assert_eq!(RGBA::<f32>::new(0.4, 0.2, 0.1, 0.5).premul().unpremul(),
                           RGBA::new(0.4, 0.2, 0.1, 0.5));

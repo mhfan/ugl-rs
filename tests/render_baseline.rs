@@ -1,5 +1,5 @@
 
-use ugl_rs::{analytic::AnalyticIntersection, color::{PremulRGBA, RGBA}, edge::Edge,
+use ugl_rs::{analytic::AnalyticIntersection, color::{PRGB32, RGBA}, edge::Edge,
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut, render_solid_analytic},
     geometry::{Affine, PathBuilder}, raster::FillRule,
 };
@@ -7,7 +7,7 @@ use ugl_rs::{analytic::AnalyticIntersection, color::{PremulRGBA, RGBA}, edge::Ed
 const  WIDTH: u32 = 4;
 const HEIGHT: u32 = 4;
 
-fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>; 16] {
+fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PRGB32<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
@@ -28,8 +28,8 @@ fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>
     path.move_to((1.0, 1.0)).line_to((3.0, 1.0))
         .line_to((3.0, 3.0)).line_to((1.0, 3.0));
 
-    let transparent = PremulRGBA::zeroed();
-    let solid: PremulRGBA<u8> = (13, 125, 25, 160).into();
+    let transparent = PRGB32::zeroed();
+    let solid: PRGB32<u8> = (13, 125, 25, 160).into();
     assert_eq!(render_analytic(path, FillRule::NonZero), [
         transparent, transparent, transparent, transparent,
         transparent, solid,       solid,       transparent,
@@ -42,9 +42,9 @@ fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>
     let mut path = PathBuilder::new();
     path.move_to((0.0, 0.0)).line_to((2.0, 0.0)).line_to((0.0, 2.0));
 
-    let transparent = PremulRGBA::zeroed();
-    let solid: PremulRGBA<u8> = (13, 125, 25, 160).into();
-    let half: PremulRGBA<u8> = (7, 63, 13, 80).into();
+    let transparent = PRGB32::zeroed();
+    let solid: PRGB32<u8> = (13, 125, 25, 160).into();
+    let half: PRGB32<u8> = (7, 63, 13, 80).into();
     assert_eq!(render_analytic(path, FillRule::NonZero), [
         solid,       half,        transparent, transparent,
         half,        transparent, transparent, transparent,
