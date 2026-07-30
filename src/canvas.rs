@@ -3,12 +3,11 @@
 use core::convert::Infallible;
 use crate::{color::{PRGB32, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticIntersection, AnalyticWorkspace, rasterize_edges_analytic},
-    flatten::{FlattenError, FlattenOptions}, geometry::{Affine, Path, PathError, Point, Rect},
-    sampler::{PaintSampler, SolidPaint},
+    flatten::{FlattenError, FlattenOptions}, sampler::{PaintSampler, SolidPaint},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, Intersection,
         MaskClipSink, RasterError, RasterOptions, RasterWorkspace, RectClipSink,
         rasterize_edges,
-    },
+    }, geometry::{Affine, Path, PathError, Point, Rect},
     stroke::{flatten_stroke_path, stroke_polyline, StrokeContour, StrokeExpandError,
         StrokeOptions, StrokePathWorkspace, StrokeWorkspaceError},
 };
@@ -121,7 +120,7 @@ fn blend_solid_bytes(bytes: &mut [u8], (source, alpha, inverse): ([u8; 3], u8, u
 pub struct RenderWorkspace<'a> {
     pub edges: &'a mut [Edge],
     pub intersections: &'a mut [Intersection],
-    pub row_coverage: &'a mut [f32],
+    pub  row_coverage: &'a mut [f32],
 }
 
 pub struct AnalyticRenderWorkspace<'a> {
@@ -133,10 +132,10 @@ pub struct AnalyticRenderWorkspace<'a> {
 /// Caller-owned storage for the complete analytic stroke pipeline.
 pub struct AnalyticStrokeWorkspace<'a> {
     pub points: &'a mut [Point],
+    pub  edges: &'a mut [Edge],
     pub contours: &'a mut [StrokeContour],
-    pub edges: &'a mut [Edge],
     pub intersections: &'a mut [AnalyticIntersection],
-    pub row_coverage: &'a mut [f32],
+    pub  row_coverage: &'a mut [f32],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct RenderOptions {
@@ -153,8 +152,7 @@ impl Default for RenderOptions { fn default() -> Self {
 } }
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct AnalyticRenderOptions {
-    pub fill_rule: FillRule,
-    pub flatten: FlattenOptions,
+    pub fill_rule: FillRule, pub flatten: FlattenOptions,
 }
 
 impl Default for AnalyticRenderOptions { fn default() -> Self {
@@ -170,10 +168,9 @@ pub struct AnalyticStrokeOptions {
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RenderError {
     InvalidTolerance, InvalidDepth, NonFiniteCoordinate, FlattenDepthLimit,
     DimensionsOverflow, InvalidEdge, InvalidSampleCount, InvalidPath(PathError),
-    EdgeCapacity { needed_at_least: usize },
+    StrokeIndexOverflow, EdgeCapacity { needed_at_least: usize },
     StrokePointCapacity { needed_at_least: usize },
     StrokeContourCapacity { needed_at_least: usize },
-    StrokeIndexOverflow,
     StrokeArcSegmentLimit { needed: usize, maximum: u16 },
     #[cfg(feature = "fixed")] FixedRaster(FixedRasterError),
     RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
@@ -264,8 +261,7 @@ pub fn render_stroke_paint_analytic<S: PaintSampler>(path: &Path, transform: Aff
     let mut compositor = PaintCompositor { target, sampler };
     rasterize_edges_analytic(&edge_sink.edges[..edge_count], compositor.target.width,
         compositor.target.height, FillRule::NonZero, &mut AnalyticWorkspace {
-            intersections,
-            row_coverage,
+            intersections, row_coverage,
         }, &mut compositor,
     ).map_err(map_raster_error)
 }
@@ -588,9 +584,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
                 points: &mut points, contours: &mut contours, edges: &mut edges,
                 intersections: &mut intersections, row_coverage: &mut row_coverage,
             }).unwrap();
-        assert_eq!(pixels, [
-            128, 128, 128, 128, 255, 255, 255, 255, 128, 128, 128, 128,
-        ]);
+        assert_eq!(pixels, [128, 128, 128, 128, 255, 255, 255, 255, 128, 128, 128, 128]);
     }
 
     #[test] fn analytic_stroke_capacity_errors_leave_the_target_unchanged() {

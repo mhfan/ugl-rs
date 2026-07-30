@@ -3,9 +3,8 @@ use ugl_rs::{analytic::AnalyticIntersection, color::{PRGB32, RGBA}, edge::Edge,
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,
         render_stroke_solid_analytic,
-    }, geometry::{Affine, PathBuilder}, raster::FillRule,
+    }, geometry::{Affine, PathBuilder}, raster::FillRule, stroke::StrokeContour,
     sampler::{GradientStop, GradientStops, LinearGradient, PaintSampler, SpreadMode},
-    stroke::StrokeContour,
 };
 
 const  WIDTH: u32 = 4;
@@ -47,12 +46,9 @@ fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
 fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
-    let (mut points, mut contours, mut edges) = (
-        [Default::default(); 2], [StrokeContour::default(); 1], [Edge::default(); 4],
-    );
-    let (mut intersections, mut row_coverage) = (
-        [AnalyticIntersection::default(); 4], [0.0; WIDTH as usize],
-    );
+    let (mut contours, mut edges) = ([StrokeContour::default(); 1], [Edge::default(); 4]);
+    let (mut points, mut row_coverage) = ([Default::default(); 2], [0.0; WIDTH as usize]);
+    let mut intersections = [AnalyticIntersection::default(); 4];
     render_stroke_solid_analytic(&builder.build(), Affine::identity(),
         RGBA::new(20, 200, 40, 160), AnalyticStrokeOptions::default(), &mut target,
         &mut AnalyticStrokeWorkspace {
@@ -127,7 +123,7 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
 #[test] fn fixed_triangles_track_the_analytic_pipeline() {
     use ugl_rs::{canvas::render_solid_fixed, geometry::{FixedScalar, Point},
         raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
-            prepare_lines},
+            prepare_lines, fixed_strip_requirements},
     };
 
     fn fixed_edge(from: Point<FixedScalar>, to: Point<FixedScalar>) ->
@@ -139,11 +135,9 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
         } else { None }
     }
 
-    let scenes = [
-        [(0.25, 0.25), (3.5, 0.75), (0.75, 3.5)],
-        [(0.5, 3.5), (1.75, 0.125), (3.75, 3.25)],
-        [(-0.5, 1.0), (2.0, -0.25), (4.25, 3.75)],
-    ];
+    let scenes = [[(0.25, 0.25), (3.5, 0.75), (0.75, 3.5)],
+                  [(0.5, 3.5), (1.75, 0.125), (3.75, 3.25)],
+                  [(-0.5, 1.0), (2.0, -0.25), (4.25, 3.75)]];
     for points in scenes {
         let mut path = PathBuilder::new();
         path.move_to(points[0]).line_to(points[1]).line_to(points[2]);
@@ -158,17 +152,16 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
             [FixedTrapezoid::default(); 2], [0; WIDTH as usize],
         );
         let line_count = prepare_lines(&edges, &mut lines).unwrap();
-        let requirements =
-            ugl_rs::raster_fixed::fixed_strip_requirements(&lines[..line_count], HEIGHT).unwrap();
-        let (mut strip_offsets, mut strip_indices) =
-            (vec![0; requirements.offsets], vec![0; requirements.indices]);
+        let requirements = fixed_strip_requirements(&lines[..line_count], HEIGHT).unwrap();
+        let mut strip_offsets = vec![0; requirements.offsets];
+        let mut strip_indices = vec![0; requirements.indices];
         let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
         let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
         render_solid_fixed(&lines[..line_count], RGBA::new(20, 200, 40, 160),
             FillRule::NonZero, &mut target, &mut FixedRasterWorkspace {
                 segments: &mut segments, trapezoids: &mut trapezoids,
-                row_area: &mut row_area,
-                strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+                row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+                strip_indices: &mut strip_indices,
             },
         ).unwrap();
 

@@ -1,10 +1,8 @@
 //! Stroke expansion options and scalar reference implementation.
 
 use core::f32::consts::{FRAC_PI_2, PI};
-use crate::{
-    edge::{Edge, EdgeSink},
+use crate::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point},
     flatten::{flatten_path, FlattenError, FlattenOptions, LineSink},
-    geometry::{Affine, Path, Point},
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -83,21 +81,20 @@ impl StrokeContour {
 
 /// Caller-owned storage used while flattening a path for stroke expansion.
 pub struct StrokePathWorkspace<'a> {
-    pub points: &'a mut [Point],
     pub contours: &'a mut [StrokeContour],
+    pub   points: &'a mut [Point],
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StrokeWorkspaceError {
-    PointCapacity { needed_at_least: usize },
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum StrokeWorkspaceError {
+      PointCapacity { needed_at_least: usize },
     ContourCapacity { needed_at_least: usize },
     IndexOverflow,
 }
 
 /// Borrowed flattened path backed by a [`StrokePathWorkspace`].
 pub struct FlattenedStrokePath<'a> {
-    points: &'a [Point],
     contours: &'a [StrokeContour],
+      points: &'a [Point],
 }
 
 impl<'a> FlattenedStrokePath<'a> {
@@ -115,18 +112,14 @@ pub fn flatten_stroke_path<'a>(path: &Path, transform: Affine, options: FlattenO
     Result<FlattenedStrokePath<'a>, FlattenError<StrokeWorkspaceError>> {
     let (point_len, contour_len) = {
         let mut sink = StrokePathSink {
-            points: workspace.points,
-            contours: workspace.contours,
-            point_len: 0,
-            contour_len: 0,
-            current_start: None,
-            current_closed: false,
+            points: workspace.points, contours: workspace.contours,
+            point_len: 0, contour_len: 0, current_start: None, current_closed: false,
         };
         flatten_path(path, transform, options, &mut sink)?;
         (sink.point_len, sink.contour_len)
     };
     Ok(FlattenedStrokePath {
-        points: &workspace.points[..point_len],
+          points: &workspace.points[..point_len],
         contours: &workspace.contours[..contour_len],
     })
 }
@@ -145,9 +138,7 @@ impl StrokePathSink<'_> {
         let needed = self.point_len.checked_add(1).ok_or(StrokeWorkspaceError::IndexOverflow)?;
         let slot = self.points.get_mut(self.point_len)
             .ok_or(StrokeWorkspaceError::PointCapacity { needed_at_least: needed })?;
-        *slot = point;
-        self.point_len = needed;
-        Ok(())
+           *slot = point;   self.point_len = needed;    Ok(())
     }
 }
 
@@ -165,8 +156,7 @@ impl LineSink for StrokePathSink<'_> {
     }
 
     fn close_subpath(&mut self) -> Result<(), Self::Error> {
-        self.current_closed = true;
-        Ok(())
+        self.current_closed = true;     Ok(())
     }
 
     fn end_subpath(&mut self) -> Result<(), Self::Error> {
@@ -176,14 +166,12 @@ impl LineSink for StrokePathSink<'_> {
             .ok_or(StrokeWorkspaceError::IndexOverflow)?;
         let descriptor = StrokeContour {
             start: u32::try_from(start).map_err(|_| StrokeWorkspaceError::IndexOverflow)?,
-            len: u32::try_from(len).map_err(|_| StrokeWorkspaceError::IndexOverflow)?,
+              len: u32::try_from(len)  .map_err(|_| StrokeWorkspaceError::IndexOverflow)?,
             closed: self.current_closed,
         };
         let slot = self.contours.get_mut(self.contour_len)
             .ok_or(StrokeWorkspaceError::ContourCapacity { needed_at_least: needed })?;
-        *slot = descriptor;
-        self.contour_len = needed;
-        Ok(())
+        *slot = descriptor;     self.contour_len = needed;  Ok(())
     }
 }
 
@@ -204,8 +192,7 @@ pub fn stroke_polyline<S: EdgeSink>(points: &[Point], closed: bool, options: Str
             StrokeExpandError::ArcSegmentLimit { needed, maximum })?;
     }
     let Some(&point) = points.first() else { return Ok(()) };
-    let mut first = None;
-    let mut previous = None;
+    let (mut first, mut previous) = (None, None);
     let segment_slots = points.len().saturating_sub(1) +
                         usize::from(closed && points.len() > 1);
     for index in 0..segment_slots {
@@ -260,8 +247,7 @@ pub fn stroke_point<S: EdgeSink>(point: Point, options: StrokeOptions,
 fn point_is_finite(point: Point) -> bool { point.x.is_finite() && point.y.is_finite() }
 
 fn segment_at(points: &[Point], index: usize) -> (Point, Point) {
-    if index + 1 < points.len() {
-        (points[index], points[index + 1])
+    if index + 1 < points.len() { (points[index], points[index + 1])
     } else { (points[points.len() - 1], points[0]) }
 }
 
@@ -284,12 +270,10 @@ fn arc_segments(radius: f32, options: StrokeOptions) -> Result<usize, (usize, u1
 fn emit_segment_body<S: EdgeSink>(from: Point, to: Point, unit: Point, radius: f32,
     sink: &mut S) -> Result<(), StrokeExpandError<S::Error>> {
     let normal: Point = (-unit.y * radius, unit.x * radius).into();
-    emit_polygon(&[
-        (from.x + normal.x, from.y + normal.y).into(),
-        (from.x - normal.x, from.y - normal.y).into(),
-        (to.x - normal.x, to.y - normal.y).into(),
-        (to.x + normal.x, to.y + normal.y).into(),
-    ], sink)
+    emit_polygon(&[(from.x + normal.x, from.y + normal.y).into(),
+                   (from.x - normal.x, from.y - normal.y).into(),
+                     (to.x - normal.x,   to.y - normal.y).into(),
+                     (to.x + normal.x,   to.y + normal.y).into()], sink)
 }
 
 fn emit_cap<S: EdgeSink>(point: Point, unit: Point, start: bool, options: StrokeOptions,
@@ -320,7 +304,7 @@ fn emit_cap<S: EdgeSink>(point: Point, unit: Point, start: bool, options: Stroke
 fn emit_join<S: EdgeSink>(point: Point, before: Point, after: Point,
     options: StrokeOptions, sink: &mut S) -> Result<(), StrokeExpandError<S::Error>> {
     let cross = before.x * after.y - before.y * after.x;
-    let dot = before.x * after.x + before.y * after.y;
+    let   dot = before.x * after.x + before.y * after.y;
     if cross == 0.0 {
         return if dot < 0.0 && options.join == LineJoin::Round {
             stroke_point(point, options.with_cap(LineCap::Round), sink)
@@ -330,14 +314,14 @@ fn emit_join<S: EdgeSink>(point: Point, before: Point, after: Point,
     let before_outer: Point =
         (point.x - before.y * radius * side, point.y + before.x * radius * side).into();
     let after_outer: Point =
-        (point.x - after.y * radius * side, point.y + after.x * radius * side).into();
+        (point.x -  after.y * radius * side, point.y +  after.x * radius * side).into();
     match options.join {
         LineJoin::Bevel => emit_polygon(&[point, before_outer, after_outer], sink),
         LineJoin::Round => {
             let base_segments = arc_segments(radius, options).map_err(|(needed, maximum)|
                 StrokeExpandError::ArcSegmentLimit { needed, maximum })?;
             let start = libm::atan2f(before_outer.y - point.y, before_outer.x - point.x);
-            let end = libm::atan2f(after_outer.y - point.y, after_outer.x - point.x);
+            let   end = libm::atan2f( after_outer.y - point.y,  after_outer.x - point.x);
             let mut sweep = end - start;
             if cross > 0.0 && sweep < 0.0 { sweep += PI * 2.0; }
             if cross < 0.0 && sweep > 0.0 { sweep -= PI * 2.0; }
@@ -411,7 +395,8 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
     use core::convert::Infallible;
     use crate::geometry::PathBuilder;
 
-    fn collect_line(from: impl Into<Point>, to: impl Into<Point>, cap: LineCap) -> Vec<Edge> {
+    fn collect_line(from: impl Into<Point>,
+                      to: impl Into<Point>, cap: LineCap) -> Vec<Edge> {
         let mut edges = Vec::new();
         stroke_line(from.into(), to.into(), StrokeOptions::new(2.0).unwrap().with_cap(cap),
             &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
@@ -420,13 +405,11 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
 
     #[test] fn stroke_path_workspace_preserves_subpaths_and_explicit_close() {
         let mut builder = PathBuilder::new();
-        builder.move_to((1.0, 2.0)).line_to((3.0, 4.0)).close()
-            .move_to((5.0, 6.0));
+        builder.move_to((1.0, 2.0)).line_to((3.0, 4.0)).close().move_to((5.0, 6.0));
         let mut points = [Point::default(); 4];
         let mut contours = [StrokeContour::default(); 2];
         let mut workspace = StrokePathWorkspace {
-            points: &mut points,
-            contours: &mut contours,
+            points: &mut points, contours: &mut contours,
         };
         let flattened = flatten_stroke_path(&builder.build(), Affine::identity(),
             FlattenOptions::default(), &mut workspace).unwrap();
@@ -444,23 +427,20 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
         let mut points = [Point::default(); 1];
         let mut contours = [StrokeContour::default(); 1];
         let mut workspace = StrokePathWorkspace {
-            points: &mut points,
-            contours: &mut contours,
+            points: &mut points, contours: &mut contours,
         };
-        assert_eq!(flatten_stroke_path(&path, Affine::identity(), FlattenOptions::default(),
-            &mut workspace).err(),
+        assert_eq!(flatten_stroke_path(&path, Affine::identity(),
+            FlattenOptions::default(), &mut workspace).err(),
             Some(FlattenError::Sink(StrokeWorkspaceError::PointCapacity {
                 needed_at_least: 2,
             })));
 
-        let mut points = [Point::default(); 2];
-        let mut contours = [];
+        let (mut points, mut contours) = ([Point::default(); 2], []);
         let mut workspace = StrokePathWorkspace {
-            points: &mut points,
-            contours: &mut contours,
+            points: &mut points, contours: &mut contours,
         };
-        assert_eq!(flatten_stroke_path(&path, Affine::identity(), FlattenOptions::default(),
-            &mut workspace).err(),
+        assert_eq!(flatten_stroke_path(&path, Affine::identity(),
+            FlattenOptions::default(), &mut workspace).err(),
             Some(FlattenError::Sink(StrokeWorkspaceError::ContourCapacity {
                 needed_at_least: 1,
             })));
@@ -494,8 +474,10 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
         let bounds = |edges: &[Edge]| edges.iter().flat_map(|edge|
             [edge.upper.x, edge.lower.x]).fold((f32::INFINITY, f32::NEG_INFINITY),
                 |(minimum, maximum), x| (minimum.min(x), maximum.max(x)));
-        assert_eq!(bounds(&collect_line((2.0, 3.0), (6.0, 3.0), LineCap::Butt)), (2.0, 6.0));
-        assert_eq!(bounds(&collect_line((2.0, 3.0), (6.0, 3.0), LineCap::Square)), (1.0, 7.0));
+        assert_eq!(bounds(&collect_line((2.0, 3.0),
+            (6.0, 3.0), LineCap::Butt)),   (2.0, 6.0));
+        assert_eq!(bounds(&collect_line((2.0, 3.0),
+            (6.0, 3.0), LineCap::Square)), (1.0, 7.0));
         let (minimum, maximum) =
             bounds(&collect_line((2.0, 3.0), (6.0, 3.0), LineCap::Round));
         assert!(minimum > 1.0 && minimum - 1.0 <= StrokeOptions::default().tolerance());
@@ -558,18 +540,16 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
                 &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
             edges
         };
-        let plain = collect(&[(2.0, 3.0).into(), (6.0, 3.0).into()], false);
-        let repeated = collect(&[
-            (2.0, 3.0).into(), (2.0, 3.0).into(),
-            (6.0, 3.0).into(), (6.0, 3.0).into(),
-        ], false);
+        let plain    = collect(&[(2.0, 3.0).into(), (6.0, 3.0).into()], false);
+        let repeated = collect(&[(2.0, 3.0).into(), (2.0, 3.0).into(),
+                                 (6.0, 3.0).into(), (6.0, 3.0).into()], false);
         assert_eq!(plain, repeated);
 
         let closed = collect(&[(2.0, 3.0).into(), (6.0, 3.0).into()], true);
         let x_bounds = |edges: &[Edge]| edges.iter().flat_map(|edge|
             [edge.upper.x, edge.lower.x]).fold((f32::INFINITY, f32::NEG_INFINITY),
             |(minimum, maximum), x| (minimum.min(x), maximum.max(x)));
-        assert_eq!(x_bounds(&plain), (1.0, 7.0));
+        assert_eq!(x_bounds(&plain),  (1.0, 7.0));
         assert_eq!(x_bounds(&closed), (2.0, 6.0));
     }
 
@@ -577,19 +557,17 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
         let mut edges = Vec::new();
         let options = StrokeOptions::new(100.0).unwrap().with_join(LineJoin::Round)
             .with_tolerance(1e-4).unwrap().with_max_arc_segments(2).unwrap();
-        assert!(matches!(stroke_polyline(&[
-            (0.0, 0.0).into(), (1.0, 0.0).into(), (1.0, 1.0).into(),
-        ], false, options, &mut |edge| {
-            edges.push(edge); Ok::<_, Infallible>(())
-        }), Err(StrokeExpandError::ArcSegmentLimit { .. })));
+        assert!(matches!(stroke_polyline(&[(0.0, 0.0).into(),
+                        (1.0, 0.0).into(), (1.0, 1.0).into()], false, options,
+                &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }),
+            Err(StrokeExpandError::ArcSegmentLimit { .. })));
         assert!(edges.is_empty());
 
-        assert_eq!(stroke_polyline(&[
-            (0.0, 0.0).into(), (1.0, 0.0).into(),
-            (f32::MAX, f32::MAX).into(), (-f32::MAX, -f32::MAX).into(),
-        ], false, StrokeOptions::default(), &mut |edge| {
-            edges.push(edge); Ok::<_, Infallible>(())
-        }), Err(StrokeExpandError::NonFinitePoint));
+        assert_eq!(stroke_polyline(&[(0.0, 0.0).into(), (1.0, 0.0).into(),
+                (f32::MAX, f32::MAX).into(), (-f32::MAX, -f32::MAX).into()],
+                false, StrokeOptions::default(),
+                &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }),
+        Err(StrokeExpandError::NonFinitePoint));
         assert!(edges.is_empty());
     }
 }
