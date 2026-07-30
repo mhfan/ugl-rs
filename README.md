@@ -136,7 +136,7 @@ The initial caller-owned scratch budgets are:
 | Backend | Edge/segment storage | Strip/crossing storage | Row storage |
 | --- | ---: | ---: | ---: |
 | sampled `f32` | 128 `Edge` | 128 `Intersection` | 256 `f32` |
-| analytic `f32` | 128 `Edge` | 128 `AnalyticIntersection` | 256 `f32` |
+| analytic `f32` | 128 `Edge` | 257 `u32` row offsets + 128 `u32` edge indices + 128 `AnalyticIntersection` | 256 `f32` |
 | Q24.8 fixed | 128 `FixedSegment` + 64 `FixedTrapezoid` | one `u32` offset per strip plus one `u32` per line/strip overlap | 256 `u64` |
 
 Renderer allocation count inside the measured path is zero by API
@@ -158,20 +158,24 @@ destination writes. Path construction and all scratch allocation remain
 outside the measured loop. A short initial run on the same Darwin arm64
 machine used a 1-second warm-up, 1-second measurement, and 10 samples:
 
-| Scene | Points | Contours | Edges/intersections | End-to-end | Expansion only |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 32-segment Butt/Miter polyline | 33 | 1 | 191 | 557.59 µs | 1.0988 µs |
-| 32-segment Round cap/join polyline | 33 | 1 | 326 | 722.35 µs | 3.8742 µs |
-| 8-cubic Butt/Miter path | 145 | 1 | 1102 | 4.3974 ms | 8.0294 µs |
+| Scene | Points | Contours | Edges/intersections | Before bins | Binned end-to-end | Expansion only |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 32-segment Butt/Miter polyline | 33 | 1 | 191 | 557.59 µs | 430.67 µs | 972.14 ns |
+| 32-segment Round cap/join polyline | 33 | 1 | 326 | 722.35 µs | 494.36 µs | 3.7321 µs |
+| 8-cubic Butt/Miter path | 145 | 1 | 1102 | 4.3974 ms | 1.6534 ms | 7.9931 µs |
 
-Every scene also borrows one 256-element `f32` row-coverage buffer. The table
-reports exact minimum capacities for these inputs at the default flattening
+Every scene also borrows one 256-element `f32` row-coverage buffer, 257 `u32`
+row offsets, and one `u32` edge index per visible edge. The table reports exact
+minimum geometry capacities for these inputs at the default flattening
 tolerance, and benchmark identifiers encode the same
 `points/contours/edges` counts. Round joins increase emitted edges by 70.7%
 for the polyline, while curve flattening expands eight cubics into 145 points
-and 1102 fill edges. The expansion-only cost is small relative to the current
-analytic scan conversion, especially for the dense curve scene; this identifies
-edge distribution and coverage integration as the first optimization target.
+and 1102 fill edges. Commit `5543d2b` switches canvas analytic rendering to
+caller-owned sparse row bins, eliminating repeated all-edge scans at every
+vertical slab. Relative to the pre-binning values, end-to-end time
+improved by 22.7% for Butt/Miter, 32.0% for Round, and 62.3% for the dense
+curve scene; expansion-only time remained effectively unchanged. Coverage
+integration and active-edge ordering now dominate the remaining curve cost.
 These short measurements are an initial regression baseline, not a
 cross-renderer performance comparison.
 
