@@ -1,0 +1,22 @@
+[package]
+name = "ugl-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ugl-rs = { path = "..", features = ["fixed"] }
+
+[[bin]]
+name = "fixed_tiles"
+path = "fuzz_targets/fixed_tiles.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
