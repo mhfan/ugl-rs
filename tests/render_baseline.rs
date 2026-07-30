@@ -17,11 +17,13 @@ fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PRGB32<u8>; 16
     let (mut edges, mut intersections, mut row_coverage) = (
         [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
     );
+    let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
     render_solid_analytic(&builder.build(), Affine::identity(), RGBA::new(20, 200, 40, 160),
         AnalyticRenderOptions { fill_rule, ..Default::default() }, &mut target,
         &mut AnalyticRenderWorkspace {
             edges: &mut edges, intersections: &mut intersections,
             row_coverage: &mut row_coverage,
+            row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
         },
     ).unwrap();
     core::array::from_fn(|index| target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
@@ -34,10 +36,12 @@ fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
     let (mut edges, mut intersections, mut row_coverage) = (
         [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
     );
+    let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
     render_paint_analytic(&builder.build(), Affine::identity(), sampler,
         AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
             edges: &mut edges, intersections: &mut intersections,
             row_coverage: &mut row_coverage,
+            row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
         },
     ).unwrap();
     core::array::from_fn(|index|
@@ -51,12 +55,14 @@ fn render_analytic_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
     let (mut contours, mut edges) = ([StrokeContour::default(); 2], [Edge::default(); 64]);
     let (mut points, mut row_coverage) = ([Default::default(); 8], [0.0; WIDTH as usize]);
     let mut intersections = [AnalyticIntersection::default(); 64];
+    let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 64]);
     render_stroke_solid_analytic(&builder.build(), Affine::identity(),
         RGBA::new(20, 200, 40, 160),
         AnalyticStrokeOptions { stroke, ..Default::default() }, &mut target,
         &mut AnalyticStrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut edges,
             intersections: &mut intersections, row_coverage: &mut row_coverage,
+            row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
         }).unwrap();
     core::array::from_fn(|index|
         target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())

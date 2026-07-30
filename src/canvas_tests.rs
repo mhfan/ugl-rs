@@ -21,18 +21,21 @@ fn red_blue_stops() -> [GradientStop; 2] {
 struct AnalyticBuffers<const EDGES: usize, const WIDTH: usize> {
     intersections: [AnalyticIntersection; EDGES],
     edges: [Edge; EDGES], row_coverage: [f32; WIDTH],
+    row_offsets: [u32; 9], edge_indices: [u32; EDGES],
 }
 
 impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     fn new() -> Self { Self {
             intersections: [AnalyticIntersection::default(); EDGES],
             edges: [Edge::default(); EDGES], row_coverage: [0.0; WIDTH],
+            row_offsets: [0; 9], edge_indices: [0; EDGES],
     } }
 
     fn workspace(&mut self) -> AnalyticRenderWorkspace<'_> {
         AnalyticRenderWorkspace { edges: &mut self.edges,
             intersections: &mut self.intersections,
              row_coverage: &mut self.row_coverage,
+            row_offsets: &mut self.row_offsets, edge_indices: &mut self.edge_indices,
         }
     }
 }
@@ -131,6 +134,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         &mut AnalyticStrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut edges,
             intersections: &mut intersections, row_coverage: &mut row_coverage,
+            row_offsets: &mut [0; 2], edge_indices: &mut [0; 4],
         }).unwrap();
     assert_eq!(pixels, [128, 128, 128, 128, 255, 255, 255, 255, 128, 128, 128, 128]);
 }
@@ -148,6 +152,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         &mut AnalyticStrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut [],
             intersections: &mut intersections, row_coverage: &mut row_coverage,
+            row_offsets: &mut [0; 2], edge_indices: &mut [],
         },
     );
     assert_eq!(error, Err(RenderError::StrokePointCapacity { needed_at_least: 2 }));
@@ -167,6 +172,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         &mut AnalyticStrokeWorkspace {
             points: &mut points, contours: &mut [], edges: &mut [],
             intersections: &mut intersections, row_coverage: &mut row_coverage,
+            row_offsets: &mut [0; 2], edge_indices: &mut [],
         });
     assert_eq!(error, Err(RenderError::StrokeContourCapacity { needed_at_least: 1 }));
     assert_eq!(pixels, [17; 12]);
@@ -178,6 +184,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         &mut AnalyticStrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut edges,
             intersections: &mut intersections, row_coverage: &mut row_coverage,
+            row_offsets: &mut [0; 2], edge_indices: &mut [0; 1],
         });
     assert_eq!(error, Err(RenderError::EdgeCapacity { needed_at_least: 2 }));
     assert_eq!(pixels, [17; 12]);
@@ -220,6 +227,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             &mut AnalyticStrokeWorkspace {
                 points: &mut points, contours: &mut contours, edges: &mut edges,
                 intersections: &mut intersections, row_coverage: &mut row_coverage,
+                row_offsets: &mut [0; 9], edge_indices: &mut [0; 512],
             }).unwrap();
         for y in 0..8 {
             for x in 0..8 {
@@ -240,9 +248,11 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let (mut points, mut edges) = ([Point::default(); 2], [Edge::default(); 4]);
     let (mut row_coverage, mut contours) = ([0.0; 2], [StrokeContour::default(); 1]);
     let mut intersections = [AnalyticIntersection::default(); 4];
+    let (mut row_offsets, mut edge_indices) = ([0; 2], [0; 4]);
     let mut workspace = AnalyticStrokeWorkspace {
         points: &mut points, contours: &mut contours, edges: &mut edges,
         intersections: &mut intersections, row_coverage: &mut row_coverage,
+        row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
     };
 
     let (mask_data, mut masked, mut clipped) = ([128, 255], [0; 8], [0; 8]);

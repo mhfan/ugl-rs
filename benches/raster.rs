@@ -61,6 +61,8 @@ fn benchmark_f32(c: &mut Criterion) {
     }));
 
     let mut analytic_intersections = vec![AnalyticIntersection::default(); EDGE_CAPACITY];
+    let (mut analytic_offsets, mut analytic_indices) =
+        (vec![0; HEIGHT as usize + 1], vec![0; EDGE_CAPACITY]);
     group.bench_function(BenchmarkId::new("analytic", "64_rectangles"), |b| b.iter(|| {
         pixels.fill(0);
         let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
@@ -68,6 +70,7 @@ fn benchmark_f32(c: &mut Criterion) {
             AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
                 edges: &mut edges, intersections: &mut analytic_intersections,
                 row_coverage: &mut row_coverage,
+                row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
             },
         ).unwrap();
         black_box(&pixels);
@@ -142,6 +145,8 @@ fn benchmark_stroke(c: &mut Criterion) {
             vec![0.0; WIDTH as usize],
             vec![0; WIDTH as usize * HEIGHT as usize * 4],
         );
+        let (mut row_offsets, mut edge_indices) =
+            (vec![0; HEIGHT as usize + 1], vec![0; edge_count]);
         render_group.bench_function(BenchmarkId::new(name, scratch), |b| b.iter(|| {
             pixels.fill(0);
             render_stroke_solid_analytic(&path, Affine::identity(),
@@ -150,6 +155,7 @@ fn benchmark_stroke(c: &mut Criterion) {
                 &mut AnalyticStrokeWorkspace {
                     points: &mut points, contours: &mut contours, edges: &mut edges,
                     intersections: &mut intersections, row_coverage: &mut row_coverage,
+                    row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
                 }).unwrap();
             black_box(&pixels);
         }));
