@@ -1,6 +1,6 @@
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ugl_rs::{analytic::AnalyticIntersection, color::RGBA, edge::Edge, raster::Intersection,
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut, RenderOptions,
         RenderWorkspace, render_solid, render_solid_analytic,
@@ -72,11 +72,10 @@ fn benchmark_f32(c: &mut Criterion) {
 
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {
     use ugl_rs::{canvas::{render_solid_fixed, render_solid_fixed_tiled},
-        geometry::FixedScalar,
         raster_fixed::{FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace,
             FIXED_STRIP_HEIGHT, FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
             prepare_lines, rasterize_lines, rasterize_lines_to_strips,
-        },
+        }, geometry::FixedScalar,
         tile_fixed::{FIXED_TILE_HEIGHT, FIXED_TILE_WIDTH, FixedCoverageTile,
             FixedCoverageTilePiece, FixedCoverageTileRun, FixedCoverageTileWorkspace,
             FixedDirectTilePiece, FixedDirectTileWorkspace, encode_fixed_coverage_tiles,

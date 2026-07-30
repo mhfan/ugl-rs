@@ -343,17 +343,16 @@ pub struct FixedCoverageWorkspace<'a> {
 /// Borrowed sparse coverage produced by [`rasterize_lines_to_strips`].
 #[derive(Clone, Copy, Debug)]
 pub struct FixedCoverageStrips<'a> {
-    width: u32,
-    height: u32,
+    width: u32, height: u32,
     strips: &'a [FixedCoverageStrip],
-    runs: &'a [FixedCoverageRun],
+      runs: &'a [FixedCoverageRun],
 }
 
 impl<'a> FixedCoverageStrips<'a> {
-    pub fn width(&self) -> u32 { self.width }
+    pub fn  width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
     pub fn strips(&self) -> &'a [FixedCoverageStrip] { self.strips }
-    pub fn runs(&self) -> &'a [FixedCoverageRun] { self.runs }
+    pub fn   runs(&self) -> &'a [FixedCoverageRun] { self.runs }
 
     /// Replays retained coverage through the ordinary streaming sink contract.
     pub fn replay<S: CoverageSink>(&self, sink: &mut S) -> Result<(), S::Error> {
@@ -503,8 +502,7 @@ pub fn rasterize_lines_to_strips<'a>(lines: &[FixedLine], width: u32, height: u3
 struct FixedCoverageEncoder<'a> {
     strips: &'a mut [FixedCoverageStrip],
       runs: &'a mut [FixedCoverageRun],
-    width: u32,
-    height: u32,
+    width: u32, height: u32,
     strip_count: usize,
       run_count: usize,
 }

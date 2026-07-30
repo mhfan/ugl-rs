@@ -48,8 +48,7 @@ impl<'a> PixmapMut<'a> {
         };
         if data.len() < minimum {
             return Err(PixmapError::BufferTooSmall { minimum, actual: data.len() });
-        }
-        Ok(Self { data, width, height, stride })
+        }   Ok(Self { data, width, height, stride })
     }
 
     pub fn  width(&self) -> u32 { self.width }
@@ -73,9 +72,8 @@ impl<'a> PixmapMut<'a> {
         blend_solid_bytes(&mut self.data[start..end], terms);
     }
 
-    #[cfg(feature = "fixed")]
-    fn blend_solid_tile(&mut self, x: u32, y: u32, width: u32, height: u32,
-        color: PremulRGBA<u8>) {
+    #[cfg(feature = "fixed")] fn blend_solid_tile(&mut self, x: u32, y: u32,
+        width: u32, height: u32, color: PremulRGBA<u8>) {
         let terms = solid_blend_terms(color, u8::MAX);
         for row in y..y + height {
             let start = row as usize * self.stride as usize
@@ -187,8 +185,8 @@ pub fn render_solid_fixed(lines: &[FixedLine], color: RGBA<u8>, fill_rule: FillR
         fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
 }
 
-/// Renders prepared Q24.8 lines through direct sparse tiles.
 #[cfg(feature = "fixed")]
+/// Renders prepared Q24.8 lines through direct sparse tiles.
 pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule: FillRule,
     target: &mut PixmapMut<'_>, raster_workspace: &mut FixedRasterWorkspace<'_>,
     tile_workspace: FixedDirectTileWorkspace<'_>) -> Result<(), RenderError> {
@@ -211,8 +209,7 @@ pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule:
                 }
             }
         }
-    }
-    Ok(())
+    }   Ok(())
 }
 
 fn build_edges(path: &Path, transform: Affine, options: FlattenOptions, edges: &mut [Edge]) ->
@@ -352,8 +349,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
     #[test] fn fixed_solid_rendering_uses_the_shared_compositor() {
         use crate::{geometry::FixedScalar, raster_fixed::{
             FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines,
-        }, tile_fixed::{
-            FixedCoverageTile, FixedCoverageTileRun, FixedDirectTilePiece,
+        }, tile_fixed::{ FixedCoverageTile, FixedCoverageTileRun, FixedDirectTilePiece,
             FixedDirectTileWorkspace,
         }};
 
@@ -398,8 +394,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
         assert_eq!(tiled_pixels, pixels);
     }
 
-    #[cfg(feature = "fixed")]
-    #[test] fn full_tile_blending_matches_row_spans() {
+    #[cfg(feature = "fixed")] #[test] fn full_tile_blending_matches_row_spans() {
         let (mut tiled, mut spanned) = ([17; 16 * 16 * 4], [17; 16 * 16 * 4]);
         let color = RGBA::<u8>::new(40, 120, 220, 192).premul();
         PixmapMut::new(&mut tiled, 16, 16, 64).unwrap()
