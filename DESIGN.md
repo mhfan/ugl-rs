@@ -313,5 +313,8 @@ only after this path is complete.
   caller-owned sparse strip bins, persistent active edges, optional retained
   sparse coverage strips, direct empty/full/boundary tile-major emission, and
   differential/error-path tests.
-- Coverage reuse/batching policy, broader golden scenes and benchmarks,
-  fuzzing, gradients, clipping, and stroking remain future work.
+- Retained fixed tiles now have a separate composite entry point for coverage
+  reuse. Randomized differential tests compare streaming, retained strips,
+  and direct tiles under both fill rules, including identical propagation of
+  fixed-raster rejection cases. Broader golden scenes, external fuzzing,
+  gradients, clipping, and stroking remain future work.

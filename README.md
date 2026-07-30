@@ -30,7 +30,8 @@ binning and persistent active edges now operate on caller-owned sparse strip
 storage. The fixed backend can optionally retain compact sparse coverage
 strips for batching or caching while keeping the lower-memory streaming sink
 as its default. An optional 16 × 16 tile prototype now classifies empty, full,
-and boundary regions. Direct tile-major raster output, fuzzing, and broader
+and boundary regions, supports direct tile-major output, and can composite a
+retained tile mask without rasterizing it again. External fuzzing and broader
 golden/benchmark scenes are still under development, so it is not yet suitable
 as a production renderer.
 

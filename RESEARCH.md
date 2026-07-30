@@ -484,6 +484,15 @@ rectangles, 48 to 43 µs for the sparse scene, and 244 to 188 µs for 256 short
 edges. Streaming remains cheaper, but direct tile output is now close enough
 to evaluate with a tile-aware compositor and repeated/batched use.
 
+A conservative requirements API now bounds tile descriptors, fine runs,
+one-strip pieces, and all three column arrays from target dimensions. It
+rejects dimensions outside the fixed backend's documented coordinate range
+and allows fixed-memory callers to avoid retry-based capacity discovery.
+Because direct emission releases each strip as it advances, an error may leave
+earlier formal output records overwritten; callers discard outputs on error.
+Guaranteeing rollback would require an additional retained buffer or a second
+raster pass and is not part of the low-memory contract.
+
 ### Rejected and deferred alternatives
 
 - A full-frame tile table is rejected because memory scales with target area
@@ -491,16 +500,18 @@ to evaluate with a tile-aware compositor and repeated/batched use.
 - Making retained tiles the MCU default is rejected because it adds scratch,
   latency, and a second representation.
 - Expanding full tiles back into sixteen row spans is retained only for
-  `CoverageSink` compatibility. A tile-aware solid compositor was implemented,
-  but immediate rendering remained slower even in a full-tile-heavy aligned
-  scene; it stays available only for future reuse/batching evaluation.
+  `CoverageSink` compatibility. Immediate tile-aware rendering remains slower,
+  but retained coverage reuse is 8.3–14.9× faster than rasterizing again in
+  the current four benchmark scenes.
 - SIMD and tile-parallel scheduling remain deferred until scalar direct
   emission has equivalent-output tests and favorable end-to-end measurements.
 
 ### Falsification
 
 Tests verify empty omission, full/boundary classification, clipped edge tiles,
-compact layouts, exact replay against streaming raster output, and
-transactional formal outputs for every caller-owned capacity. Benchmarks
-separate streaming, strip encoding/replay, and tile encoding/replay across
-dense, sparse, and short-edge scenes.
+compact layouts, capacity errors, and exact replay against streaming raster
+output. Deterministic randomized cases compare streaming, retained strips,
+and direct tiles for both fill rules and require identical raster errors.
+Benchmarks separate streaming, strip encoding/replay, tile encoding/replay,
+immediate composition, and retained composition across dense, sparse,
+short-edge, and full-tile scenes.

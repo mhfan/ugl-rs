@@ -77,10 +77,9 @@ fn benchmark_f32(c: &mut Criterion) {
             FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
             FIXED_STRIP_HEIGHT, prepare_lines, rasterize_lines, rasterize_lines_to_strips,
         },
-        tile_fixed::{FIXED_TILE_HEIGHT, FIXED_TILE_WIDTH,
-            FixedCoverageTile, FixedCoverageTilePiece, FixedCoverageTileRun,
+        tile_fixed::{FixedCoverageTile, FixedCoverageTilePiece, FixedCoverageTileRun,
             FixedCoverageTileWorkspace, FixedDirectTilePiece, FixedDirectTileWorkspace,
-            encode_fixed_coverage_tiles, rasterize_lines_to_tiles,
+            encode_fixed_coverage_tiles, fixed_tile_requirements, rasterize_lines_to_tiles,
         },
     };
 
@@ -120,6 +119,7 @@ fn benchmark_f32(c: &mut Criterion) {
         let line_count = prepare_lines(&source_edges, &mut lines).unwrap();
         let requirements =
             ugl_rs::raster_fixed::fixed_strip_requirements(&lines[..line_count], HEIGHT).unwrap();
+        let tile_requirements = fixed_tile_requirements(WIDTH, HEIGHT).unwrap();
         let (mut segments, mut trapezoids, mut row_area, mut pixels,
             mut strip_offsets, mut strip_indices, mut coverage_strips, mut coverage_runs,
             mut coverage_tiles, mut coverage_tile_runs, mut coverage_tile_pieces,
@@ -131,16 +131,13 @@ fn benchmark_f32(c: &mut Criterion) {
             vec![FixedCoverageStrip::default();
                 HEIGHT.div_ceil(FIXED_STRIP_HEIGHT) as usize],
             vec![FixedCoverageRun::default(); WIDTH as usize * HEIGHT as usize],
-            vec![FixedCoverageTile::default();
-                WIDTH.div_ceil(FIXED_TILE_WIDTH) as usize *
-                HEIGHT.div_ceil(FIXED_TILE_HEIGHT) as usize],
-            vec![FixedCoverageTileRun::default(); WIDTH as usize * HEIGHT as usize],
+            vec![FixedCoverageTile::default(); tile_requirements.tiles],
+            vec![FixedCoverageTileRun::default(); tile_requirements.runs],
             vec![FixedCoverageTilePiece::default(); WIDTH as usize * HEIGHT as usize],
-            vec![FixedDirectTilePiece::default();
-                WIDTH as usize * FIXED_TILE_HEIGHT as usize],
-            vec![0; WIDTH.div_ceil(FIXED_TILE_WIDTH) as usize],
-            vec![0; WIDTH.div_ceil(FIXED_TILE_WIDTH) as usize],
-            vec![0; WIDTH.div_ceil(FIXED_TILE_WIDTH) as usize],
+            vec![FixedDirectTilePiece::default(); tile_requirements.pieces],
+            vec![0; tile_requirements.columns],
+            vec![0; tile_requirements.columns],
+            vec![0; tile_requirements.columns],
         );
         let (mut cached_tiles, mut cached_runs) = (
             vec![FixedCoverageTile::default(); coverage_tiles.len()],
