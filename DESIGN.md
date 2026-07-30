@@ -173,6 +173,10 @@ and SIMD layouts do not enter the common `Edge` representation.
   a descriptor and no fine runs, and store boundary coverage as 4-byte
   tile-local runs. The current strip-to-tile converter uses caller-owned
   8-byte sortable pieces and leaves formal tile outputs untouched on failure.
+- The optimized direct tile path instead keeps 8-byte linked pieces for one
+  active 16-row strip and three caller-owned `u32` arrays per tile column. It
+  sorts only touched columns, emits tile-major output at strip boundaries, and
+  never retains or reorders whole-frame fine coverage.
 
 ## Determinism and quality
 
@@ -303,7 +307,7 @@ only after this path is complete.
 - M4/M5 prototypes include generic fixed-point geometry, widened Q24.8
   arithmetic, rational crossing events, span/trapezoid area evaluation,
   caller-owned sparse strip bins, persistent active edges, optional retained
-  sparse coverage strips, empty/full/boundary tile encoding, and
+  sparse coverage strips, direct empty/full/boundary tile-major emission, and
   differential/error-path tests.
-- Direct tile-major raster emission, broader golden scenes and benchmarks,
-  fuzzing, gradients, clipping, and stroking remain future work.
+- A tile-aware compositor, broader golden scenes and benchmarks, fuzzing,
+  gradients, clipping, and stroking remain future work.

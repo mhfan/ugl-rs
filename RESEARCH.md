@@ -476,14 +476,22 @@ row-major-strip to tile-major converter adds roughly 14% for a sparse scene
 and 41–61% for denser scenes, primarily due to piece sorting. It is therefore
 an optional batching/cache prototype, not the immediate renderer default.
 
+The direct successor links pieces by tile column during each active raster
+strip and compacts only touched columns. Scratch becomes one strip of 8-byte
+linked pieces plus three `u32` arrays per tile column. Against the earlier
+converter it reduced measured encode time from about 317 to 241 µs for 64
+rectangles, 48 to 43 µs for the sparse scene, and 244 to 188 µs for 256 short
+edges. Streaming remains cheaper, but direct tile output is now close enough
+to evaluate with a tile-aware compositor and repeated/batched use.
+
 ### Rejected and deferred alternatives
 
 - A full-frame tile table is rejected because memory scales with target area
   even when coverage is sparse.
 - Making retained tiles the MCU default is rejected because it adds scratch,
   latency, and a second representation.
-- Direct tile-major production within each active raster strip is the next
-  performance candidate; it should remove post-raster reordering.
+- Expanding full tiles back into sixteen row spans is retained only for
+  `CoverageSink` compatibility; a tile-aware compositor is the next candidate.
 - SIMD and tile-parallel scheduling remain deferred until scalar direct
   emission has equivalent-output tests and favorable end-to-end measurements.
 

@@ -145,9 +145,24 @@ rasterization, strip retention, and tile conversion:
 | 256 short-edge rectangles | 172.48 µs | 243.54 µs | 241.66 µs |
 
 The conversion prototype is therefore not a default immediate-mode path:
-row-major-to-tile-major sorting is too expensive in dense scenes. Its next
-optimization is direct tile-major emission inside each raster strip, which
-should retain empty/full classification without paying a separate reorder.
+row-major-to-tile-major sorting is too expensive in dense scenes.
+
+The follow-up direct path now links fine runs by active tile column while each
+16-row raster strip is produced, then compacts only the touched columns. It
+uses one 8-byte linked piece per run/tile overlap in the current strip plus
+three `u32` arrays per tile column; no whole-frame strip buffer or fine-piece
+sort is required. A 1-second/10-sample follow-up measured:
+
+| Scene | stream baseline | direct tile encode | old strip→tile encode |
+| --- | ---: | ---: | ---: |
+| 64 fractional rectangles | 196.98 µs | 240.73 µs | 316.85 µs |
+| 16 sparse rectangles | 42.18 µs | 43.12 µs | 48.25 µs |
+| 256 short-edge rectangles | 172.48 µs | 187.73 µs | 243.54 µs |
+
+Direct emission removes most conversion overhead and sharply reduces peak
+scratch, while streaming remains the MCU/minimum-latency default. The next
+desktop optimization is a tile-aware compositor that consumes full tiles
+without expanding them back into per-row `CoverageSink` spans.
 
 ## Non-goals for the core
 
