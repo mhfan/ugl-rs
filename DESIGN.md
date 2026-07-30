@@ -169,6 +169,10 @@ and SIMD layouts do not enter the common `Edge` representation.
 - Retained coverage capacity failure returns the first unavailable descriptor
   or run count. Partial storage is not exposed as a successful result; callers
   may grow or replace that bounded buffer and retry.
+- Optional 16 × 16 fixed tiles omit empty regions, represent full regions with
+  a descriptor and no fine runs, and store boundary coverage as 4-byte
+  tile-local runs. The current strip-to-tile converter uses caller-owned
+  8-byte sortable pieces and leaves formal tile outputs untouched on failure.
 
 ## Determinism and quality
 
@@ -299,6 +303,7 @@ only after this path is complete.
 - M4/M5 prototypes include generic fixed-point geometry, widened Q24.8
   arithmetic, rational crossing events, span/trapezoid area evaluation,
   caller-owned sparse strip bins, persistent active edges, optional retained
-  sparse coverage strips, and differential/error-path tests.
-- Tile encoding, broader golden scenes and benchmarks, fuzzing, gradients,
-  clipping, and stroking remain future work.
+  sparse coverage strips, empty/full/boundary tile encoding, and
+  differential/error-path tests.
+- Direct tile-major raster emission, broader golden scenes and benchmarks,
+  fuzzing, gradients, clipping, and stroking remain future work.

@@ -89,6 +89,7 @@ pub fn encode_fixed_coverage_tiles<'a>(coverage: FixedCoverageStrips<'_>,
 
     let mut piece_count = 0;
     for strip in coverage.strips() {
+        let strip_piece_start = piece_count;
         let start = strip.run_start as usize;
         for run in &coverage.runs()[start..start + strip.run_count as usize] {
             let mut x = run.x;
@@ -111,9 +112,10 @@ pub fn encode_fixed_coverage_tiles<'a>(coverage: FixedCoverageStrips<'_>,
                 x += len;
             }
         }
+        workspace.pieces[strip_piece_start..piece_count]
+            .sort_unstable_by_key(|piece| (piece.tile, piece.run.row, piece.run.x));
     }
     let pieces = &mut workspace.pieces[..piece_count];
-    pieces.sort_unstable_by_key(|piece| (piece.tile, piece.run.row, piece.run.x));
 
     let mut tile_count = 0;
     let mut boundary_runs = 0;

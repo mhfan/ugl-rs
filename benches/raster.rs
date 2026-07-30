@@ -76,6 +76,10 @@ fn benchmark_f32(c: &mut Criterion) {
             FIXED_STRIP_HEIGHT, FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
             prepare_lines, rasterize_lines, rasterize_lines_to_strips,
         },
+        tile_fixed::{FIXED_TILE_HEIGHT, FIXED_TILE_WIDTH, FixedCoverageTile,
+            FixedCoverageTilePiece, FixedCoverageTileRun, FixedCoverageTileWorkspace,
+            encode_fixed_coverage_tiles,
+        },
     };
 
     let mut group = c.benchmark_group("raster_rgba8888");
@@ -111,7 +115,8 @@ fn benchmark_f32(c: &mut Criterion) {
         let requirements =
             ugl_rs::raster_fixed::fixed_strip_requirements(&lines[..line_count], HEIGHT).unwrap();
         let (mut segments, mut trapezoids, mut row_area, mut pixels,
-            mut strip_offsets, mut strip_indices, mut coverage_strips, mut coverage_runs) = (
+            mut strip_offsets, mut strip_indices, mut coverage_strips, mut coverage_runs,
+            mut coverage_tiles, mut coverage_tile_runs, mut coverage_tile_pieces) = (
             vec![FixedSegment::default(); line_count],
             vec![FixedTrapezoid::default(); line_count.div_ceil(2)],
             vec![0; WIDTH as usize], vec![0; WIDTH as usize * HEIGHT as usize * 4],
@@ -119,6 +124,11 @@ fn benchmark_f32(c: &mut Criterion) {
             vec![FixedCoverageStrip::default();
                 HEIGHT.div_ceil(FIXED_STRIP_HEIGHT) as usize],
             vec![FixedCoverageRun::default(); WIDTH as usize * HEIGHT as usize],
+            vec![FixedCoverageTile::default();
+                WIDTH.div_ceil(FIXED_TILE_WIDTH) as usize *
+                HEIGHT.div_ceil(FIXED_TILE_HEIGHT) as usize],
+            vec![FixedCoverageTileRun::default(); WIDTH as usize * HEIGHT as usize],
+            vec![FixedCoverageTilePiece::default(); WIDTH as usize * HEIGHT as usize],
         );
         group.bench_function(BenchmarkId::new("fixed", name), |b| b.iter(|| {
             pixels.fill(0);
@@ -166,6 +176,39 @@ fn benchmark_f32(c: &mut Criterion) {
                 },
             ).unwrap();
             let mut sink = RunCounter::default();  retained.replay(&mut sink).unwrap();
+            black_box((sink.runs, sink.pixels));
+        }));
+        group.bench_function(BenchmarkId::new("fixed_tile_encode", name), |b| b.iter(|| {
+            let retained = rasterize_lines_to_strips(&lines[..line_count], WIDTH, HEIGHT,
+                FillRule::NonZero, &mut FixedRasterWorkspace {
+                    segments: &mut segments, trapezoids: &mut trapezoids,
+                    row_area: &mut row_area,
+                    strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+                }, FixedCoverageWorkspace {
+                    strips: &mut coverage_strips, runs: &mut coverage_runs,
+                },
+            ).unwrap();
+            let tiled = encode_fixed_coverage_tiles(retained, FixedCoverageTileWorkspace {
+                tiles: &mut coverage_tiles, runs: &mut coverage_tile_runs,
+                pieces: &mut coverage_tile_pieces,
+            }).unwrap();
+            black_box((tiled.tiles().len(), tiled.runs().len()));
+        }));
+        group.bench_function(BenchmarkId::new("fixed_tile_replay", name), |b| b.iter(|| {
+            let retained = rasterize_lines_to_strips(&lines[..line_count], WIDTH, HEIGHT,
+                FillRule::NonZero, &mut FixedRasterWorkspace {
+                    segments: &mut segments, trapezoids: &mut trapezoids,
+                    row_area: &mut row_area,
+                    strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+                }, FixedCoverageWorkspace {
+                    strips: &mut coverage_strips, runs: &mut coverage_runs,
+                },
+            ).unwrap();
+            let tiled = encode_fixed_coverage_tiles(retained, FixedCoverageTileWorkspace {
+                tiles: &mut coverage_tiles, runs: &mut coverage_tile_runs,
+                pieces: &mut coverage_tile_pieces,
+            }).unwrap();
+            let mut sink = RunCounter::default();  tiled.replay(&mut sink).unwrap();
             black_box((sink.runs, sink.pixels));
         }));
     }

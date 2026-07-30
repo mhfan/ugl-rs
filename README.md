@@ -29,8 +29,10 @@ scratch storage, and an early Q24.8 fixed-point backend. Production fixed edge
 binning and persistent active edges now operate on caller-owned sparse strip
 storage. The fixed backend can optionally retain compact sparse coverage
 strips for batching or caching while keeping the lower-memory streaming sink
-as its default. Tile encoding, fuzzing, and broader golden/benchmark scenes are
-still under development, so it is not yet suitable as a production renderer.
+as its default. An optional 16 × 16 tile prototype now classifies empty, full,
+and boundary regions. Direct tile-major raster output, fuzzing, and broader
+golden/benchmark scenes are still under development, so it is not yet suitable
+as a production renderer.
 
 The current MSRV is Rust 1.93. CI checks MSRV and stable builds, independent
 feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
@@ -126,6 +128,26 @@ sink. These measurements exclude color compositing:
 The retained form currently costs roughly 1–3% to produce in these scenes.
 It stays optional: MCU callers can stream directly, while desktop/batched
 callers can spend bounded memory to decouple rasterization from compositing.
+
+The tile prototype converts retained strips into tile-major data. Empty tiles
+are omitted, full tiles store no fine runs, and boundary tiles use 4-byte
+tile-local runs behind 16-byte descriptors. Conversion uses one caller-owned
+8-byte scratch piece per run/tile overlap and sorts independently inside each
+16-row strip.
+
+Focused 20-sample/2-second measurements after `27477ca` include fixed
+rasterization, strip retention, and tile conversion:
+
+| Scene | stream baseline | tile encode | tile encode + replay |
+| --- | ---: | ---: | ---: |
+| 64 fractional rectangles | 196.98 µs | 316.85 µs | 309.55 µs |
+| 16 sparse rectangles | 42.18 µs | 48.25 µs | 47.04 µs |
+| 256 short-edge rectangles | 172.48 µs | 243.54 µs | 241.66 µs |
+
+The conversion prototype is therefore not a default immediate-mode path:
+row-major-to-tile-major sorting is too expensive in dense scenes. Its next
+optimization is direct tile-major emission inside each raster strip, which
+should retain empty/full classification without paying a separate reorder.
 
 ## Non-goals for the core
 

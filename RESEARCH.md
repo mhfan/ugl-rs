@@ -439,3 +439,58 @@ Shared contracts end at directed edges on input and coverage runs/pixels on
 output. Paint sampling and compositing do not depend on how coverage was
 generated. This permits differential testing across all backends and prevents
 desktop scheduling/layout decisions from increasing MCU memory requirements.
+
+## Decision record 4: retained coverage strips and tiles
+
+### Problem and studied designs
+
+Desktop batching needs a compact intermediate that skips inactive regions,
+but MCU rendering must retain bounded streaming operation. The design follows
+micro{gl}'s explicit-memory constraint, Vello CPU's sparse strip/tile and
+coarse/fine separation, and Blend2D's requirement to measure the complete
+pipeline rather than assuming tiling is automatically faster.
+
+### Decision
+
+The fixed rasterizer keeps three optional output levels:
+
+1. direct `CoverageSink` streaming for minimum memory and latency;
+2. retained 16-row sparse strips containing uniform non-zero coverage runs;
+3. 16 × 16 sparse tiles derived from retained strips.
+
+Empty tiles have no record. Full tiles have one descriptor and no fine runs.
+Boundary tiles store four-byte tile-local runs. Conversion uses caller-owned
+eight-byte sortable pieces, and output capacity failure does not expose a
+partially successful tile stream. The fixed tile grid is an internal backend
+contract and does not enter `Path`, `Edge`, paint, or target APIs.
+
+### Fixed-point, memory, and performance implications
+
+Tiling changes no Q24.8 arithmetic or 8-bit coverage values. A tile descriptor
+is 16 bytes, a retained boundary run is 4 bytes, and conversion scratch is
+8 bytes per run/tile overlap. All capacities are explicit and allocation-free
+inside the stage.
+
+Measured strip retention adds roughly 1–3% in the current scenes. The first
+row-major-strip to tile-major converter adds roughly 14% for a sparse scene
+and 41–61% for denser scenes, primarily due to piece sorting. It is therefore
+an optional batching/cache prototype, not the immediate renderer default.
+
+### Rejected and deferred alternatives
+
+- A full-frame tile table is rejected because memory scales with target area
+  even when coverage is sparse.
+- Making retained tiles the MCU default is rejected because it adds scratch,
+  latency, and a second representation.
+- Direct tile-major production within each active raster strip is the next
+  performance candidate; it should remove post-raster reordering.
+- SIMD and tile-parallel scheduling remain deferred until scalar direct
+  emission has equivalent-output tests and favorable end-to-end measurements.
+
+### Falsification
+
+Tests verify empty omission, full/boundary classification, clipped edge tiles,
+compact layouts, exact replay against streaming raster output, and
+transactional formal outputs for every caller-owned capacity. Benchmarks
+separate streaming, strip encoding/replay, and tile encoding/replay across
+dense, sparse, and short-edge scenes.
