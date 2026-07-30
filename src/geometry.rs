@@ -96,6 +96,24 @@ impl<T> Affine<T> where T: Copy + ScalarConstants {
     }
 }
 
+impl Affine<f32> {
+    /// Returns the inverse transform, or `None` for non-finite or singular matrices.
+    pub fn inverse(self) -> Option<Self> {
+        if ![self.a, self.b, self.c, self.d, self.e, self.f]
+            .into_iter().all(f32::is_finite) { return None; }
+        let determinant = self.a * self.d - self.b * self.c;
+        if determinant == 0.0 || !determinant.is_finite() { return None; }
+        let inverse = Self {
+            a:  self.d / determinant, b: -self.b / determinant,
+            c: -self.c / determinant, d:  self.a / determinant,
+            e: (self.c * self.f - self.d * self.e) / determinant,
+            f: (self.b * self.e - self.a * self.f) / determinant,
+        };
+        [inverse.a, inverse.b, inverse.c, inverse.d, inverse.e, inverse.f]
+            .into_iter().all(f32::is_finite).then_some(inverse)
+    }
+}
+
 impl<T> Default for Affine<T> where T: Copy + ScalarConstants {
     fn default() -> Self { Self::identity() }
 }
@@ -228,6 +246,10 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
     #[test] fn affine_uses_documented_column_vector_convention() {
         let transform = Affine::new(2.0, 0.5, -1.0, 3.0, 4.0, -2.0);
         assert_eq!(transform.transform_point((3.0, 2.0).into()), (8.0, 5.5).into());
+        let restored = transform.inverse().unwrap()
+            .transform_point(transform.transform_point((3.0, 2.0).into()));
+        assert!((restored.x - 3.0).abs() < 1e-6 && (restored.y - 2.0).abs() < 1e-6);
+        assert!(Affine::new(1.0, 2.0, 2.0, 4.0, 0.0, 0.0).inverse().is_none());
     }
 
     #[test] fn rectangles_reject_unordered_and_non_finite_boundaries() {

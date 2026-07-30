@@ -15,7 +15,7 @@
       a texture (image)
  */
 
-use crate::{color::{PRGB32, RGBA}, geometry::Point};
+use crate::{color::{PRGB32, RGBA}, geometry::{Affine, Point}};
 
 /// Produces premultiplied source colors at device-space positions.
 ///
@@ -26,6 +26,40 @@ pub trait PaintSampler {
 
     /// Reports a position-independent color to enable span and tile fast paths.
     fn solid_color(&self) -> Option<PRGB32<u8>> { None }
+}
+
+impl<S: PaintSampler + ?Sized> PaintSampler for &S {
+    fn sample(&self, x: f32, y: f32) -> PRGB32<u8> { (**self).sample(x, y) }
+    fn solid_color(&self) -> Option<PRGB32<u8>> { (**self).solid_color() }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum PaintTransformError {
+    NonInvertibleTransform,
+}
+
+/// Maps device-space samples through a precomputed inverse paint transform.
+#[derive(Clone, Copy, Debug)] pub struct TransformedPaint<S> {
+    sampler: S, device_to_paint: Affine,
+}
+
+impl<S> TransformedPaint<S> {
+    pub fn new(sampler: S, paint_to_device: Affine) -> Result<Self, PaintTransformError> {
+        let device_to_paint = paint_to_device.inverse()
+            .ok_or(PaintTransformError::NonInvertibleTransform)?;
+        Ok(Self { sampler, device_to_paint })
+    }
+
+    pub fn sampler(&self) -> &S { &self.sampler }
+    pub fn device_to_paint(&self) -> Affine { self.device_to_paint }
+}
+
+impl<S: PaintSampler> PaintSampler for TransformedPaint<S> {
+    fn sample(&self, x: f32, y: f32) -> PRGB32<u8> {
+        let point = self.device_to_paint.transform_point((x, y).into());
+        self.sampler.sample(point.x, point.y)
+    }
+
+    fn solid_color(&self) -> Option<PRGB32<u8>> { self.sampler.solid_color() }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct SolidPaint { color: PRGB32<u8> }
@@ -319,5 +353,23 @@ impl PaintSampler for ConicGradient<'_> {
 
         let rotated = ConicGradient::new((2.0, 3.0), TAU / 4.0, stops).unwrap();
         assert_eq!(rotated.sample(2.0, 4.0), RGBA::<u8>::red().premul());
+    }
+
+    #[test] fn transformed_paint_maps_device_coordinates_and_preserves_solid_fast_path() {
+        let stops = red_blue_stops();
+        let gradient = LinearGradient::new((0.0, 0.0), (2.0, 0.0),
+            GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
+        let transformed = TransformedPaint::new(&gradient,
+            Affine::new(2.0, 0.0, 0.0, 1.0, 10.0, 0.0)).unwrap();
+        assert_eq!(transformed.sample(10.0, 0.0), RGBA::<u8>::red().premul());
+        assert_eq!(transformed.sample(12.0, 0.0), (128, 0, 128, 255).into());
+        assert_eq!(transformed.sample(14.0, 0.0), RGBA::<u8>::blue().premul());
+
+        let solid = TransformedPaint::new(SolidPaint::new(RGBA::green()),
+            Affine::translate(5.0, 7.0)).unwrap();
+        assert_eq!(solid.solid_color(), Some(RGBA::<u8>::green().premul()));
+        assert_eq!(TransformedPaint::new(solid,
+            Affine::new(1.0, 2.0, 2.0, 4.0, 0.0, 0.0)).unwrap_err(),
+            PaintTransformError::NonInvertibleTransform);
     }
 }
