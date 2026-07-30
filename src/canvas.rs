@@ -4,6 +4,7 @@ use core::convert::Infallible;
 use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticIntersection, AnalyticWorkspace, rasterize_edges_analytic},
     flatten::{FlattenError, FlattenOptions}, geometry::{Affine, Path, PathError, Rect},
+    sampler::{PaintSampler, SolidPaint},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, Intersection,
         MaskClipSink, RasterError, RasterOptions, RasterWorkspace, RectClipSink,
         rasterize_edges,
@@ -71,6 +72,18 @@ impl<'a> PixmapMut<'a> {
             + x as usize * BYTES_PER_PIXEL as usize;
         let end = start + len as usize * BYTES_PER_PIXEL as usize;
         blend_solid_bytes(&mut self.data[start..end], terms);
+    }
+
+    fn blend_sampled_span<S: PaintSampler>(&mut self, x: u32, y: u32, len: u32,
+        sampler: &S, coverage: u8) {
+        if let Some(color) = sampler.solid_color() {
+            self.blend_solid_span(x, y, len, color, coverage);
+            return;
+        }
+        for pixel_x in x..x + len {
+            let color = sampler.sample(pixel_x as f32 + 0.5, y as f32 + 0.5);
+            self.blend_solid_span(pixel_x, y, 1, color, coverage);
+        }
     }
 
     #[cfg(feature = "fixed")] fn blend_solid_tile(&mut self, x: u32, y: u32,
@@ -154,7 +167,8 @@ pub fn render_solid(path: &Path, transform: Affine, color: RGBA<u8>, options: Re
     target: &mut PixmapMut<'_>, workspace: &mut RenderWorkspace<'_>) ->
     Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    let mut compositor = SolidCompositor { target, color: color.premul() };
+    let paint = SolidPaint::new(color);
+    let mut compositor = PaintCompositor { target, sampler: &paint };
     rasterize_edges(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, options.raster, &mut RasterWorkspace {
             intersections: workspace.intersections,
@@ -168,7 +182,8 @@ pub fn render_solid_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
     clip: Rect, options: RenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    let mut compositor = SolidCompositor { target, color: color.premul() };
+    let paint = SolidPaint::new(color);
+    let mut compositor = PaintCompositor { target, sampler: &paint };
     rasterize_edges(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, options.raster, &mut RasterWorkspace {
             intersections: workspace.intersections,
@@ -181,8 +196,18 @@ pub fn render_solid_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
 pub fn render_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
     options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
+    render_paint_analytic(path, transform, &SolidPaint::new(color), options, target, workspace)
+}
+
+/// Renders a statically dispatched paint sampler through the exact-area `f32` rasterizer.
+///
+/// Samples are evaluated at device-space pixel centers. Coverage and sampled
+/// premultiplied colors are then composed source-over the target.
+pub fn render_paint_analytic<S: PaintSampler>(path: &Path, transform: Affine, sampler: &S,
+    options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    let mut compositor = SolidCompositor { target, color: color.premul() };
+    let mut compositor = PaintCompositor { target, sampler };
     rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
             intersections: workspace.intersections,
@@ -196,7 +221,8 @@ pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: RGBA
     clip: Rect, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    let mut compositor = SolidCompositor { target, color: color.premul() };
+    let paint = SolidPaint::new(color);
+    let mut compositor = PaintCompositor { target, sampler: &paint };
     rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
             intersections: workspace.intersections,
@@ -232,7 +258,8 @@ pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: RGBA<
         });
     }
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    let mut compositor = SolidCompositor { target, color: color.premul() };
+    let paint = SolidPaint::new(color);
+    let mut compositor = PaintCompositor { target, sampler: &paint };
     rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
             intersections: workspace.intersections,
@@ -245,7 +272,8 @@ pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: RGBA<
 #[cfg(feature = "fixed")] pub fn render_solid_fixed(lines: &[FixedLine],
     color: RGBA<u8>, fill_rule: FillRule, target: &mut PixmapMut<'_>,
     workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let mut compositor = SolidCompositor { target, color: color.premul() };
+    let paint = SolidPaint::new(color);
+    let mut compositor = PaintCompositor { target, sampler: &paint };
     rasterize_lines(lines, compositor.target.width, compositor.target.height,
         fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
 }
@@ -269,19 +297,20 @@ pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule:
             target: (target.width, target.height),
         });
     }
-    let compositor = SolidCompositor { target, color: color.premul() };
+    let paint = SolidPaint::new(color);
+    let compositor = PaintCompositor { target, sampler: &paint };
     for tile in tiled.tiles() {
         match tile.kind {
             FixedTileKind::Full => {
                 let (width, height) = tiled.tile_extent(*tile);
                 compositor.target.blend_solid_tile(
-                    tile.x, tile.y, width, height, compositor.color);
+                    tile.x, tile.y, width, height, paint.color());
             }
             FixedTileKind::Boundary => {
                 let start = tile.run_start as usize;
                 for run in &tiled.runs()[start..start + tile.run_count as usize] {
                     compositor.target.blend_solid_span(tile.x + run.x as u32,
-                        tile.y + run.row as u32, run.len as _, compositor.color, run.coverage);
+                        tile.y + run.row as u32, run.len as _, paint.color(), run.coverage);
                 }
             }
         }
@@ -307,12 +336,14 @@ impl EdgeSink for EdgeSliceSink<'_> {
     }   type Error = EdgeCapacity;
 }
 
-struct SolidCompositor<'a, 'b> { target: &'a mut PixmapMut<'b>, color: PremulRGBA<u8> }
+struct PaintCompositor<'a, 'b, S> {
+    target: &'a mut PixmapMut<'b>, sampler: &'a S,
+}
 
-impl CoverageSink for SolidCompositor<'_, '_> {
+impl<S: PaintSampler> CoverageSink for PaintCompositor<'_, '_, S> {
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
         Result<(), Self::Error> {
-        self.target.blend_solid_span(x, y, len, self.color, coverage);  Ok(())
+        self.target.blend_sampled_span(x, y, len, self.sampler, coverage);  Ok(())
     }   type Error = Infallible;
 }
 
@@ -419,6 +450,31 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
             },
         ).unwrap();
         assert_eq!(target.pixel(0, 0), Some((128, 128, 128, 128).into()));
+    }
+
+    #[test] fn analytic_sampled_paint_uses_device_pixel_centers_and_coverage() {
+        struct CoordinatePaint;
+        impl PaintSampler for CoordinatePaint {
+            fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
+                ((x * 40.0) as u8, (y * 40.0) as u8, 0, u8::MAX).into()
+            }
+        }
+
+        let mut builder = PathBuilder::new();
+        builder.move_to((0.5, 0.0)).line_to((2.0, 0.0))
+               .line_to((2.0, 1.0)).line_to((0.5, 1.0));
+        let mut pixels = [0; 8];
+        let mut target = PixmapMut::new(&mut pixels, 2, 1, 8).unwrap();
+        let (mut edges, mut intersections, mut row_coverage) = (
+            [Edge::default(); 4], [AnalyticIntersection::default(); 4], [0.0; 2]);
+        render_paint_analytic(&builder.build(), Affine::identity(), &CoordinatePaint,
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut intersections,
+                row_coverage: &mut row_coverage,
+            },
+        ).unwrap();
+        assert_eq!(target.pixel(0, 0), Some((10, 10, 0, 128).into()));
+        assert_eq!(target.pixel(1, 0), Some((60, 20, 0, 255).into()));
     }
 
     #[test] fn analytic_rectangle_clip_multiplies_coverage_end_to_end() {
