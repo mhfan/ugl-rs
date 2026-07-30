@@ -3,6 +3,7 @@ use super::*;
 use crate::{analytic::AnalyticIntersection, color::RGBA, edge::Edge,
     geometry::{Affine, PathBuilder}, raster::Intersection,
     sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient, SpreadMode},
+    stroke::{LineCap, LineJoin},
 };
 use alloc::vec;
 
@@ -180,6 +181,54 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         });
     assert_eq!(error, Err(RenderError::EdgeCapacity { needed_at_least: 2 }));
     assert_eq!(pixels, [17; 12]);
+}
+
+#[test] fn randomized_strokes_render_valid_premultiplied_pixels() {
+    let mut seed = 0xC0FF_EE11_u32;
+    let random = |seed: &mut u32| {
+        *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        ((*seed >> 8) as f32 / 0x00FF_FFFF as f32) * 12.0 - 2.0
+    };
+    for case in 0..128 {
+        let mut builder = PathBuilder::new();
+        let len = case % 8 + 1;
+        let mut previous = (random(&mut seed), random(&mut seed));
+        builder.move_to(previous);
+        for index in 1..len {
+            let point = if (case + index) % 5 == 0 {
+                previous
+            } else { (random(&mut seed), random(&mut seed)) };
+            builder.line_to(point);
+            previous = point;
+        }
+        if case & 1 != 0 { builder.close(); }
+
+        let cap = [LineCap::Butt, LineCap::Round, LineCap::Square][case % 3];
+        let join = [LineJoin::Miter, LineJoin::Round, LineJoin::Bevel][case / 3 % 3];
+        let stroke = StrokeOptions::new(0.25 + (case % 12) as f32 * 0.25).unwrap()
+            .with_cap(cap).with_join(join);
+        let mut pixels = [0; 8 * 8 * 4];
+        let mut points = [Point::default(); 9];
+        let mut contours = [StrokeContour::default(); 1];
+        let mut edges = [Edge::default(); 512];
+        let mut intersections = [AnalyticIntersection::default(); 512];
+        let mut row_coverage = [0.0; 8];
+        let mut target = PixmapMut::new(&mut pixels, 8, 8, 32).unwrap();
+        render_stroke_solid_analytic(&builder.build(), Affine::identity(),
+            RGBA::new(37, 149, 211, 173),
+            AnalyticStrokeOptions { stroke, ..Default::default() }, &mut target,
+            &mut AnalyticStrokeWorkspace {
+                points: &mut points, contours: &mut contours, edges: &mut edges,
+                intersections: &mut intersections, row_coverage: &mut row_coverage,
+            }).unwrap();
+        for y in 0..8 {
+            for x in 0..8 {
+                let [red, green, blue, alpha] = target.pixel(x, y).unwrap().to_array();
+                assert!(red <= alpha && green <= alpha && blue <= alpha,
+                    "case {case}, pixel ({x}, {y}) is not premultiplied");
+            }
+        }
+    }
 }
 
 #[test] fn analytic_gradient_stroke_composes_through_rectangle_and_path_clips() {
