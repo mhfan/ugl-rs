@@ -172,16 +172,16 @@ impl<'a> RadialGradient<'a> {
         end: impl Into<Point>, end_radius: f32, stops: GradientStops<'a>,
         spread: SpreadMode) -> Result<Self, GradientError> {
         let (start, end) = (start.into(), end.into());
-        if !start.x.is_finite() || !start.y.is_finite() ||
-             !end.x.is_finite() ||   !end.y.is_finite() ||
-             !start_radius.is_finite() || !end_radius.is_finite() {
+        if  !start.x.is_finite() || !start.y.is_finite() ||
+              !end.x.is_finite() ||   !end.y.is_finite() ||
+            !start_radius.is_finite() || !end_radius.is_finite() {
             return Err(GradientError::NonFiniteGeometry);
         }
         if start_radius < 0.0 || end_radius < 0.0 {
             return Err(GradientError::NegativeRadius);
         }
-        let center_delta: Point = (end.x - start.x, end.y - start.y).into();
         let radius_delta = end_radius - start_radius;
+        let center_delta: Point = (end.x - start.x, end.y - start.y).into();
         let quadratic = center_delta.x * center_delta.x +
                         center_delta.y * center_delta.y - radius_delta * radius_delta;
         if !center_delta.x.is_finite() || !center_delta.y.is_finite() ||
@@ -191,35 +191,32 @@ impl<'a> RadialGradient<'a> {
         if center_delta.x == 0.0 && center_delta.y == 0.0 && radius_delta == 0.0 {
             return Err(GradientError::DegenerateGeometry);
         }
-        Ok(Self { start, center_delta, start_radius, radius_delta, quadratic,
-                  stops, spread })
+        Ok(Self { start, center_delta, start_radius, radius_delta, quadratic, stops, spread })
     }
 
     fn parameter(&self, x: f32, y: f32) -> Option<f32> {
         let point: Point = (x - self.start.x, y - self.start.y).into();
         let linear = -2.0 * (point.x * self.center_delta.x +
-                            point.y * self.center_delta.y +
+                             point.y * self.center_delta.y +
                             self.start_radius * self.radius_delta);
         let constant = point.x * point.x + point.y * point.y -
                        self.start_radius * self.start_radius;
         if self.quadratic == 0.0 {
-            if linear == 0.0 {
-                return if constant == 0.0 { Some(0.0) } else { None };
-            }
+            if linear == 0.0 { return if constant == 0.0 { Some(0.0) } else { None } }
             let t = -constant / linear;
             return (self.start_radius + t * self.radius_delta >= 0.0).then_some(t);
         }
         let discriminant = linear * linear - 4.0 * self.quadratic * constant;
-        if discriminant < 0.0 || !discriminant.is_finite() { return None; }
+        if  discriminant < 0.0 || !discriminant.is_finite() { return None; }
         let root = libm::sqrtf(discriminant);
         let q = -0.5 * (linear + root.copysign(linear));
         let (first, second) = if q == 0.0 {
             let root = -linear / (2.0 * self.quadratic);
             (root, root)
         } else { (q / self.quadratic, constant / q) };
-        [first, second].into_iter().filter(|t|
-            t.is_finite() && self.start_radius + *t * self.radius_delta >= 0.0
-        ).max_by(|a, b| a.total_cmp(b))
+
+        [first, second].into_iter().filter(|t| t.is_finite() &&
+            self.start_radius + *t * self.radius_delta >= 0.0).max_by(|a, b| a.total_cmp(b))
     }
 }
 
@@ -235,6 +232,7 @@ impl PaintSampler for RadialGradient<'_> {
     center: Point, start_turn: f32, stops: GradientStops<'a>,
 }
 
+const TAU: f32 = core::f32::consts::PI * 2.0;
 impl<'a> ConicGradient<'a> {
     /// Creates a conic gradient whose zero stop lies at `start_angle` radians.
     pub fn new(center: impl Into<Point>, start_angle: f32, stops: GradientStops<'a>) ->
@@ -242,16 +240,13 @@ impl<'a> ConicGradient<'a> {
         let center = center.into();
         if !center.x.is_finite() || !center.y.is_finite() || !start_angle.is_finite() {
             return Err(GradientError::NonFiniteGeometry);
-        }
-        const TAU: f32 = core::f32::consts::PI * 2.0;
-        Ok(Self { center, start_turn: start_angle / TAU, stops })
+        }   Ok(Self { center, start_turn: start_angle / TAU, stops })
     }
 }
 
 impl PaintSampler for ConicGradient<'_> {
     fn sample(&self, x: f32, y: f32) -> PRGB32<u8> {
-        const TAU: f32 = core::f32::consts::PI * 2.0;
-        let turn = libm::atan2f(y - self.center.y, x - self.center.x) / TAU;
+        let turn =  libm::atan2f(y - self.center.y, x - self.center.x) / TAU;
         self.stops.sample(SpreadMode::Repeat.map(turn - self.start_turn))
     }
 }
@@ -307,7 +302,7 @@ impl PaintSampler for ConicGradient<'_> {
 
         let focal = RadialGradient::two_circle((1.0, 0.0), 0.0, (0.0, 0.0), 4.0,
             stops, SpreadMode::Pad).unwrap();
-        assert_eq!(focal.sample(1.0, 0.0), RGBA::<u8>::red().premul());
+        assert_eq!(focal.sample( 1.0, 0.0), RGBA::<u8>:: red().premul());
         assert_eq!(focal.sample(-4.0, 0.0), RGBA::<u8>::blue().premul());
         assert_eq!(RadialGradient::new((0.0, 0.0), -1.0, stops, SpreadMode::Pad)
             .unwrap_err(), GradientError::NegativeRadius);
@@ -322,8 +317,7 @@ impl PaintSampler for ConicGradient<'_> {
         assert_eq!(conic.sample(1.0, 3.0), (128, 0, 128, 255).into());
         assert_eq!(conic.sample(2.0, 2.0), (64, 0, 191, 255).into());
 
-        let rotated =
-            ConicGradient::new((2.0, 3.0), core::f32::consts::FRAC_PI_2, stops).unwrap();
+        let rotated = ConicGradient::new((2.0, 3.0), TAU / 4.0, stops).unwrap();
         assert_eq!(rotated.sample(2.0, 4.0), RGBA::<u8>::red().premul());
     }
 }

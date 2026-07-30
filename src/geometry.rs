@@ -33,10 +33,7 @@ impl ScalarConstants for f32 { const ZERO: Self = 0.0; const ONE: Self = 1.0; }
 pub struct Point<T = Scalar> { pub x: T, pub y: T, }
 
 impl<T> Point<T> { pub const fn new(x: T, y: T) -> Self { Self { x, y } } }
-
-impl<T> From<(T, T)> for Point<T> {
-    fn from((x, y): (T, T)) -> Self { Self::new(x, y) }
-}
+impl<T> From<(T, T)> for Point<T> { fn from((x, y): (T, T)) -> Self { Self::new(x, y) } }
 
 /// Axis-aligned rectangle with ordered, finite-or-orderable boundaries.
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -84,10 +81,8 @@ impl<T> Affine<T> {
 
     pub fn transform_point(&self, point: Point<T>) -> Point<T>
         where T: Copy + Add<Output = T> + Mul<Output = T> {
-        (
-            self.a * point.x + self.c * point.y + self.e,
-            self.b * point.x + self.d * point.y + self.f,
-        ).into()
+        (self.a * point.x + self.c * point.y + self.e,
+         self.b * point.x + self.d * point.y + self.f).into()
     }
 }
 
@@ -122,12 +117,11 @@ impl<T> Path<T> {
         Ok(Self { segments })
     }
 
+    //pub fn transformed(&self, transform: Affine<T>) -> Self
+
     pub fn segments(&self) -> &[PathSegment<T>] { &self.segments }
-
     pub fn into_segments(self) -> Vec<PathSegment<T>> { self.segments }
-
     pub fn is_empty(&self) -> bool { self.segments.is_empty() }
-
     pub fn len(&self) -> usize { self.segments.len() }
 }
 
@@ -146,8 +140,7 @@ impl core::fmt::Display for PathError {
 }
 
 #[derive(Clone, Debug, Default)] pub struct PathBuilder<T = Scalar> {
-    segments: Vec<PathSegment<T>>,
-    has_current_subpath: bool,
+    segments: Vec<PathSegment<T>>, has_current_subpath: bool,
 }
 
 impl<T> PathBuilder<T> {
@@ -159,8 +152,7 @@ impl<T> PathBuilder<T> {
 
     pub fn move_to(&mut self, point: impl Into<Point<T>>) -> &mut Self {
         self.segments.push(PathSegment::MoveTo(point.into()));
-        self.has_current_subpath = true;
-        self
+        self.has_current_subpath = true;    self
     }
 
     /// Adds a line, or starts a subpath at `point` when the path is empty.
@@ -170,8 +162,8 @@ impl<T> PathBuilder<T> {
         self.segments.push(PathSegment::LineTo(point));     self
     }
 
-    pub fn quad_to(&mut self, ctrl: impl Into<Point<T>>, to: impl Into<Point<T>>) ->
-        &mut Self {
+    pub fn quad_to(&mut self, ctrl: impl Into<Point<T>>,
+                                to: impl Into<Point<T>>) -> &mut Self {
         let (ctrl, to) = (ctrl.into(), to.into());
         if !self.has_current_subpath { return self.move_to(to); }
         self.segments.push(PathSegment::QuadTo { ctrl, to });   self
@@ -215,9 +207,7 @@ impl Path<f32> {
 
 impl PathBuilder<f32> {
     pub fn build_checked(self) -> Result<Path<f32>, PathError> {
-        let path = self.build();
-        path.validate_finite()?;
-        Ok(path)
+        let path = self.build(); path.validate_finite()?; Ok(path)
     }
 }
 

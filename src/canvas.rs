@@ -508,9 +508,8 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0)).line_to((3.0, 0.0))
                .line_to((3.0, 1.0)).line_to((0.0, 1.0));
-        let stops = [
-            GradientStop::new(0.0, RGBA::red()), GradientStop::new(1.0, RGBA::blue()),
-        ];
+        let stops = [GradientStop::new(0.0, RGBA::red()),
+                     GradientStop::new(1.0, RGBA::blue())];
         let gradient = RadialGradient::new((1.5, 0.5), 1.5,
             GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
         let mut pixels = [0; 12];
@@ -534,8 +533,8 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
                .line_to((3.0, 2.0)).line_to((0.0, 2.0));
         let mut pixels = [0; 3 * 2 * 4];
         let mut target = PixmapMut::new(&mut pixels, 3, 2, 12).unwrap();
-        let (mut edges, mut intersections, mut row_coverage) = (
-            [Edge::default(); 4], [AnalyticIntersection::default(); 4], [0.0; 3]);
+        let mut intersections = [AnalyticIntersection::default(); 4];
+        let (mut edges, mut row_coverage) = ([Edge::default(); 4], [0.0; 3]);
         render_solid_analytic_clipped(&builder.build(), Affine::identity(), RGBA::white(),
             Rect::from_ltrb(0.5, 0.25, 2.5, 1.0).unwrap(),
             AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
@@ -564,11 +563,9 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
             edges: &mut edges, intersections: &mut intersections,
             row_coverage: &mut row_coverage,
         };
-        {
-            let mut mask = CoverageMaskMut::new(&mut mask_data, 2, 1, 4).unwrap();
-            rasterize_path_clip_analytic(&clip, Affine::identity(),
-                AnalyticRenderOptions::default(), &mut mask, &mut workspace).unwrap();
-        }
+        let mut mask = CoverageMaskMut::new(&mut mask_data, 2, 1, 4).unwrap();
+        rasterize_path_clip_analytic(&clip, Affine::identity(),
+            AnalyticRenderOptions::default(), &mut mask, &mut workspace).unwrap();
         assert_eq!(mask_data, [128, 128, 17, 17]);
 
         let mask = CoverageMask::new(&mask_data, 2, 1, 4).unwrap();
