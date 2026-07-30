@@ -67,7 +67,7 @@ impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
             (to.min(pixel as f32 + 1.0) - from.max(pixel as f32)).clamp(0.0, 1.0)
         };
         let vertical = overlap(self.rect.top(), self.rect.bottom(), y);
-        if vertical == 0.0 { return Ok(()); }
+        if  vertical == 0.0 { return Ok(()); }
         let (start, end) = (
             x.max(libm::floorf(self.rect.left()).max(0.0) as _),
             (x + len).min(libm::ceilf(self.rect.right()).max(0.0) as _),
@@ -78,10 +78,9 @@ impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
             ((coverage as f32 * clip) + 0.5).clamp(0.0, 255.0) as u8
         };
         let mut cursor = start;
-        while cursor < end {
-            let clipped = combined(cursor);
-            let run_start = cursor;
-            cursor += 1;
+        while   cursor < end {
+            let (clipped, run_start) = (combined(cursor), cursor);
+                cursor += 1;
             while cursor < end && combined(cursor) == clipped { cursor += 1; }
             if clipped != 0 {
                 self.sink.span(run_start, y, cursor - run_start, clipped)?;
@@ -90,22 +89,19 @@ impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CoverageMaskError {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum CoverageMaskError {
     StrideTooSmall { minimum: u32, actual: u32 },
     BufferTooSmall { minimum: usize, actual: usize },
     DimensionsOverflow,
 }
 
 /// Borrowed 8-bit coverage mask with explicit row stride.
-#[derive(Clone, Copy, Debug)]
-pub struct CoverageMask<'a> {
+#[derive(Clone, Copy, Debug)] pub struct CoverageMask<'a> {
     data: &'a [u8], width: u32, height: u32, stride: u32,
 }
 
 /// Mutable storage used to rasterize a coverage mask without allocation.
-#[derive(Debug)]
-pub struct CoverageMaskMut<'a> {
+#[derive(Debug)] pub struct CoverageMaskMut<'a> {
     data: &'a mut [u8], width: u32, height: u32, stride: u32,
 }
 
@@ -135,7 +131,7 @@ impl<'a> CoverageMask<'a> {
         Ok(Self { data, width, height, stride })
     }
 
-    pub fn width(&self) -> u32 { self.width }
+    pub fn  width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
 
@@ -151,13 +147,12 @@ impl<'a> CoverageMaskMut<'a> {
         Ok(Self { data, width, height, stride })
     }
 
-    pub fn width(&self) -> u32 { self.width }
+    pub fn  width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
-    pub fn as_mask(&self) -> CoverageMask<'_> {
-        CoverageMask { data: self.data, width: self.width, height: self.height,
-            stride: self.stride }
-    }
+    pub fn as_mask(&self) -> CoverageMask<'_> { CoverageMask {
+        data: self.data, width: self.width, height: self.height, stride: self.stride
+    } }
 
     pub fn clear(&mut self) {
         for y in 0..self.height as usize {
@@ -181,7 +176,7 @@ impl CoverageSink for CoverageMaskMut<'_> {
 }
 
 /// Coverage adapter that multiplies incoming spans by a borrowed mask.
-pub struct MaskClipSink<'a, S> { mask: CoverageMask<'a>, sink: &'a mut S }
+pub struct  MaskClipSink<'a, S> { mask: CoverageMask<'a>, sink: &'a mut S }
 
 impl<'a, S> MaskClipSink<'a, S> {
     pub fn new(mask: CoverageMask<'a>, sink: &'a mut S) -> Self { Self { mask, sink } }
@@ -193,16 +188,16 @@ impl<S> CoverageSink for MaskClipSink<'_, S> where S: CoverageSink {
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
         Result<(), Self::Error> {
         if y >= self.mask.height { return Ok(()); }
-        let (mut cursor, end) = (x, (x + len).min(self.mask.width));
+        let (mut cursor, end, mask) = (x, (x + len).min(self.mask.width), self.mask);
+        let clipped_coverage = |x|
+            (coverage as u16 * mask.coverage(x, y) as u16 + 127).div_euclid(255) as u8;
         while cursor < end {
-            let clipped = (coverage as u16 * self.mask.coverage(cursor, y) as u16 + 127)
-                .div_euclid(255) as u8;
+            let clipped   = clipped_coverage(cursor);
             let start = cursor;
             cursor += 1;
             while cursor < end {
-                let next = (coverage as u16 * self.mask.coverage(cursor, y) as u16 + 127)
-                    .div_euclid(255) as u8;
-                if next != clipped { break; }
+                let next  = clipped_coverage(cursor);
+                if  next != clipped { break; }
                 cursor += 1;
             }
             if clipped != 0 { self.sink.span(start, y, cursor - start, clipped)?; }
@@ -241,9 +236,7 @@ pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32, fill_rule: Fi
             let intersections = &mut workspace.intersections[..count];
             intersections.sort_unstable_by(|a, b| a.x.total_cmp(&b.x));
             accumulate_spans(intersections, width, fill_rule, sample_scale, row);
-        }
-
-        emit_coverage_runs(row, y, sink)?;
+        }   emit_coverage_runs(row, y, sink)?;
     }   Ok(())
 }
 
@@ -367,14 +360,11 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
         builder.move_to((1.0, 0.0)).line_to((4.0, 0.0))
                .line_to((4.0, 1.0)).line_to((1.0, 1.0));
         let edges = path_edges(builder);
-        let (mut intersections, mut row) = (
-            vec![Intersection::default(); edges.len()], [0.0; 5]);
-        let mut spans = SpanRecorder::default();
+        let mut intersections = vec![Intersection::default(); edges.len()];
+        let (mut spans, mut row) =  (SpanRecorder::default(), vec![0.0; 5]);
         rasterize_edges(&edges, 5, 1, FillRule::NonZero, RasterOptions::default(),
-            &mut RasterWorkspace {
-                intersections: &mut intersections,
-                row_coverage: &mut row,
-            }, &mut spans,
+            &mut RasterWorkspace { intersections: &mut intersections, row_coverage: &mut row },
+            &mut spans,
         ).unwrap();
         assert_eq!(spans.0, [(1, 0, 3, 255)]);
     }
@@ -383,9 +373,7 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
         let mut spans = SpanRecorder::default();
         let rect = Rect::from_ltrb(0.5, 0.25, 3.25, 1.0).unwrap();
         RectClipSink::new(rect, &mut spans).span(0, 0, 5, u8::MAX).unwrap();
-        assert_eq!(spans.0, [
-            (0, 0, 1, 96), (1, 0, 2, 191), (3, 0, 1, 48),
-        ]);
+        assert_eq!(spans.0, [(0, 0, 1, 96), (1, 0, 2, 191), (3, 0, 1, 48)]);
 
         spans.0.clear();
         let rect = Rect::from_ltrb(1.0, 0.0, 4.0, 1.0).unwrap();
@@ -399,15 +387,11 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
         assert_eq!(CoverageMask::new(&[0; 6], 3, 2, 4).unwrap_err(),
             CoverageMaskError::BufferTooSmall { minimum: 7, actual: 6 });
 
-        let mut data = [9; 8];
-        {
-            let mut mask = CoverageMaskMut::new(&mut data, 3, 2, 4).unwrap();
-            mask.clear();
-            mask.span(1, 0, 8, 128).unwrap();
-            let mut spans = SpanRecorder::default();
-            MaskClipSink::new(mask.as_mask(), &mut spans).span(0, 0, 3, 128).unwrap();
-            assert_eq!(spans.0, [(1, 0, 2, 64)]);
-        }
+        let (mut spans, mut data) = (SpanRecorder::default(), vec![9; 8]);
+        let mut mask = CoverageMaskMut::new(&mut data, 3, 2, 4).unwrap();
+        mask.clear();   mask.span(1, 0, 8, 128).unwrap();
+        MaskClipSink::new(mask.as_mask(), &mut spans).span(0, 0, 3, 128).unwrap();
+        assert_eq!(spans.0, [(1, 0, 2, 64)]);
         assert_eq!(data, [0, 128, 128, 9, 0, 0, 0, 9]);
     }
 

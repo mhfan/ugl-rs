@@ -47,27 +47,25 @@ impl<T> Rect<T> where T: Copy + PartialOrd {
     pub fn from_ltrb(left: T, top: T, right: T, bottom: T) -> Option<Self> {
         if left <= right && top <= bottom {
             Some(Self { min: (left, top).into(), max: (right, bottom).into() })
-        } else {
-            None
-        }
+        } else { None }
     }
 
     pub fn min(&self) -> Point<T> { self.min }
     pub fn max(&self) -> Point<T> { self.max }
     pub fn left(&self) -> T { self.min.x }
-    pub fn top(&self) -> T { self.min.y }
-    pub fn right(&self) -> T { self.max.x }
+    pub fn  top(&self) -> T { self.min.y }
+    pub fn  right(&self) -> T { self.max.x }
     pub fn bottom(&self) -> T { self.max.y }
 }
 
-#[cfg(feature = "serde")]
-impl<'de, T> serde::Deserialize<'de> for Rect<T> where
-    T: Copy + PartialOrd + serde::Deserialize<'de> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
+#[cfg(feature = "serde")] impl<'de, T> serde::Deserialize<'de> for Rect<T>
+    where T: Copy + PartialOrd + serde::Deserialize<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where D: serde::Deserializer<'de> {
         #[derive(serde::Deserialize)] struct Fields<T> { min: Point<T>, max: Point<T> }
         let Fields { min, max } = Fields::deserialize(deserializer)?;
-        Self::from_ltrb(min.x, min.y, max.x, max.y)
-            .ok_or_else(|| serde::de::Error::custom("rectangle boundaries must be ordered"))
+        Self::from_ltrb(min.x, min.y, max.x, max.y).ok_or_else(||
+            serde::de::Error::custom("rectangle boundaries must be ordered"))
     }
 }
 

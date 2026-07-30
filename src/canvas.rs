@@ -141,11 +141,9 @@ impl Default for AnalyticRenderOptions { fn default() -> Self {
     InvalidTolerance, InvalidDepth, NonFiniteCoordinate, FlattenDepthLimit,
     DimensionsOverflow, InvalidEdge, InvalidSampleCount, InvalidPath(PathError),
     EdgeCapacity { needed_at_least: usize },
-    RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
     #[cfg(feature = "fixed")] FixedRaster(FixedRasterError),
-    CoverageDimensionsMismatch {
-        coverage: (u32, u32), target: (u32, u32),
-    },
+    RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
+    CoverageDimensionsMismatch { coverage: (u32, u32), target: (u32, u32), },
 }
 
 /// Renders a solid straight-alpha color through the reference rasterizer.
@@ -174,7 +172,7 @@ pub fn render_solid_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
     rasterize_edges(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, options.raster, &mut RasterWorkspace {
             intersections: workspace.intersections,
-            row_coverage: workspace.row_coverage,
+             row_coverage: workspace.row_coverage,
         }, &mut RectClipSink::new(clip, &mut compositor),
     ).map_err(map_raster_error)
 }
@@ -202,7 +200,7 @@ pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: RGBA
     rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
             intersections: workspace.intersections,
-            row_coverage: workspace.row_coverage,
+             row_coverage: workspace.row_coverage,
         }, &mut RectClipSink::new(clip, &mut compositor),
     ).map_err(map_raster_error)
 }
@@ -219,7 +217,7 @@ pub fn rasterize_path_clip_analytic(path: &Path, transform: Affine,
     rasterize_edges_analytic(&workspace.edges[..edge_count], mask.width(), mask.height(),
         options.fill_rule, &mut AnalyticWorkspace {
             intersections: workspace.intersections,
-            row_coverage: workspace.row_coverage,
+             row_coverage: workspace.row_coverage,
         }, mask,
     ).map_err(map_raster_error)
 }
@@ -238,7 +236,7 @@ pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: RGBA<
     rasterize_edges_analytic(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, &mut AnalyticWorkspace {
             intersections: workspace.intersections,
-            row_coverage: workspace.row_coverage,
+             row_coverage: workspace.row_coverage,
         }, &mut MaskClipSink::new(mask, &mut compositor),
     ).map_err(map_raster_error)
 }
@@ -426,7 +424,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
     #[test] fn analytic_rectangle_clip_multiplies_coverage_end_to_end() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 0.0)).line_to((3.0, 0.0))
-            .line_to((3.0, 2.0)).line_to((0.0, 2.0));
+               .line_to((3.0, 2.0)).line_to((0.0, 2.0));
         let mut pixels = [0; 3 * 2 * 4];
         let mut target = PixmapMut::new(&mut pixels, 3, 2, 12).unwrap();
         let (mut edges, mut intersections, mut row_coverage) = (
@@ -447,10 +445,10 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
     #[test] fn analytic_path_clip_uses_reusable_caller_owned_coverage() {
         let mut clip_builder = PathBuilder::new();
         clip_builder.move_to((0.5, 0.0)).line_to((1.5, 0.0))
-            .line_to((1.5, 1.0)).line_to((0.5, 1.0));
+                    .line_to((1.5, 1.0)).line_to((0.5, 1.0));
         let mut shape_builder = PathBuilder::new();
         shape_builder.move_to((0.0, 0.0)).line_to((2.0, 0.0))
-            .line_to((2.0, 1.0)).line_to((0.0, 1.0));
+                     .line_to((2.0, 1.0)).line_to((0.0, 1.0));
         let (clip, shape) = (clip_builder.build(), shape_builder.build());
         let (mut mask_data, mut pixels) = ([17; 4], [0; 8]);
         let (mut edges, mut intersections, mut row_coverage) = (
