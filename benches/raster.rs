@@ -7,6 +7,17 @@ use ugl_rs::{analytic::AnalyticIntersection, color::RGBA, edge::Edge, raster::In
     }, geometry::{Affine, Path, PathBuilder},
 };
 #[cfg(feature = "fixed")] use ugl_rs::raster::FillRule;
+#[cfg(feature = "fixed")]
+#[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
+
+#[cfg(feature = "fixed")]
+impl ugl_rs::raster::CoverageSink for RunCounter {
+    type Error = core::convert::Infallible;
+    fn span(&mut self, _x: u32, _y: u32, len: u32, _coverage: u8) ->
+        Result<(), Self::Error> {
+        self.runs += 1;  self.pixels += len;  Ok(())
+    }
+}
 
 const  WIDTH: u32 = 256;
 const HEIGHT: u32 = 256;
@@ -63,7 +74,10 @@ fn benchmark_f32(c: &mut Criterion) {
 
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {
     use ugl_rs::{canvas::render_solid_fixed, geometry::FixedScalar,
-        raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines},
+        raster_fixed::{FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace,
+            FIXED_STRIP_HEIGHT, FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
+            prepare_lines, rasterize_lines, rasterize_lines_to_strips,
+        },
     };
 
     let mut group = c.benchmark_group("raster_rgba8888");
@@ -99,11 +113,14 @@ fn benchmark_f32(c: &mut Criterion) {
         let requirements =
             ugl_rs::raster_fixed::fixed_strip_requirements(&lines[..line_count], HEIGHT).unwrap();
         let (mut segments, mut trapezoids, mut row_area, mut pixels,
-            mut strip_offsets, mut strip_indices) = (
+            mut strip_offsets, mut strip_indices, mut coverage_strips, mut coverage_runs) = (
             vec![FixedSegment::default(); line_count],
             vec![FixedTrapezoid::default(); line_count.div_ceil(2)],
             vec![0; WIDTH as usize], vec![0; WIDTH as usize * HEIGHT as usize * 4],
             vec![0; requirements.offsets], vec![0; requirements.indices],
+            vec![FixedCoverageStrip::default();
+                HEIGHT.div_ceil(FIXED_STRIP_HEIGHT) as usize],
+            vec![FixedCoverageRun::default(); WIDTH as usize * HEIGHT as usize],
         );
         group.bench_function(BenchmarkId::new("fixed", name), |b| b.iter(|| {
             pixels.fill(0);
@@ -116,6 +133,42 @@ fn benchmark_f32(c: &mut Criterion) {
                 },
             ).unwrap();
             black_box(&pixels);
+        }));
+        group.bench_function(BenchmarkId::new("fixed_stream", name), |b| b.iter(|| {
+            let mut sink = RunCounter::default();
+            rasterize_lines(&lines[..line_count], WIDTH, HEIGHT, FillRule::NonZero,
+                &mut FixedRasterWorkspace {
+                    segments: &mut segments, trapezoids: &mut trapezoids,
+                    row_area: &mut row_area,
+                    strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+                }, &mut sink,
+            ).unwrap();
+            black_box((sink.runs, sink.pixels));
+        }));
+        group.bench_function(BenchmarkId::new("fixed_strip_encode", name), |b| b.iter(|| {
+            let retained = rasterize_lines_to_strips(&lines[..line_count], WIDTH, HEIGHT,
+                FillRule::NonZero, &mut FixedRasterWorkspace {
+                    segments: &mut segments, trapezoids: &mut trapezoids,
+                    row_area: &mut row_area,
+                    strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+                }, FixedCoverageWorkspace {
+                    strips: &mut coverage_strips, runs: &mut coverage_runs,
+                },
+            ).unwrap();
+            black_box((retained.strips().len(), retained.runs().len()));
+        }));
+        group.bench_function(BenchmarkId::new("fixed_strip_replay", name), |b| b.iter(|| {
+            let retained = rasterize_lines_to_strips(&lines[..line_count], WIDTH, HEIGHT,
+                FillRule::NonZero, &mut FixedRasterWorkspace {
+                    segments: &mut segments, trapezoids: &mut trapezoids,
+                    row_area: &mut row_area,
+                    strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+                }, FixedCoverageWorkspace {
+                    strips: &mut coverage_strips, runs: &mut coverage_runs,
+                },
+            ).unwrap();
+            let mut sink = RunCounter::default();  retained.replay(&mut sink).unwrap();
+            black_box((sink.runs, sink.pixels));
         }));
     }
     group.finish();

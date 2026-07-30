@@ -9,7 +9,7 @@ use crate::{edge::Edge, geometry::{FixedScalar, Point}, raster::{CoverageSink, F
 /// every line-intersection multiply-add to remain in `i64`.
 pub const   SUBPIXEL_SCALE: u32 = 1 << 8;
 pub const DEVICE_RAW_LIMIT: i32 = 1 << 29;
-const FIXED_STRIP_HEIGHT: u32 = 16;
+pub const FIXED_STRIP_HEIGHT: u32 = 16;
 const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FixedRasterError {
@@ -331,6 +331,7 @@ pub struct FixedRasterWorkspace<'a> {
 pub struct FixedCoverageRun { pub x: u32, pub len: u32, pub row: u8, pub coverage: u8 }
 
 /// Range of coverage runs belonging to one non-empty 16-row strip.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct FixedCoverageStrip { pub y: u32, pub run_start: u32, pub run_count: u32 }
 

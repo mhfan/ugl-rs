@@ -27,8 +27,10 @@ The project now has an allocation-free path-to-pixel vertical slice with
 sampled and analytic `f32` rasterizers, premultiplied source-over, caller-owned
 scratch storage, and an early Q24.8 fixed-point backend. Production fixed edge
 binning and persistent active edges now operate on caller-owned sparse strip
-storage. Coverage-strip encoding, fuzzing, and broader golden/benchmark scenes
-are still under development, so it is not yet suitable as a production renderer.
+storage. The fixed backend can optionally retain compact sparse coverage
+strips for batching or caching while keeping the lower-memory streaming sink
+as its default. Tile encoding, fuzzing, and broader golden/benchmark scenes are
+still under development, so it is not yet suitable as a production renderer.
 
 The current MSRV is Rust 1.93. CI checks MSRV and stable builds, independent
 feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
@@ -104,6 +106,26 @@ Renderer allocation count inside the measured path is zero by API
 construction: every mutable geometry, crossing, area, and destination buffer
 is borrowed from the benchmark. Criterion's own allocations are outside that
 contract.
+
+The optional retained fixed output groups only non-empty 16-row strips. Each
+strip descriptor is 12 bytes and each uniform non-zero coverage run is 12
+bytes (`u32` x/length plus `u8` row/coverage). It therefore does not impose a
+full-frame mask, and callers choose an explicit bounded run capacity.
+
+A focused raster-only comparison after `0c625fc` used the same machine and
+20-sample/2-second Criterion settings. `stream` sends runs to a counting sink;
+`encode` writes retained strips; `encode + replay` also walks them through that
+sink. These measurements exclude color compositing:
+
+| Scene | stream | encode | encode + replay |
+| --- | ---: | ---: | ---: |
+| 64 fractional rectangles | 196.98 µs | 201.46 µs | 203.13 µs |
+| 16 sparse rectangles | 42.18 µs | 42.69 µs | 42.63 µs |
+| 256 short-edge rectangles | 172.48 µs | 176.26 µs | 173.92 µs |
+
+The retained form currently costs roughly 1–3% to produce in these scenes.
+It stays optional: MCU callers can stream directly, while desktop/batched
+callers can spend bounded memory to decouple rasterization from compositing.
 
 ## Non-goals for the core
 

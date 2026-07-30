@@ -163,6 +163,12 @@ and SIMD layouts do not enter the common `Edge` representation.
   segment slice so fixed-capacity and static paths require no owned `Path`.
 - Allocation-free rasterizers accept caller-provided edge and coverage
   workspaces and report the required capacity when they are too small.
+- Optional fixed retained coverage stores only non-empty 16-row strips. A
+  12-byte strip descriptor indexes 12-byte uniform non-zero run records; the
+  run's `u8` row is relative to its strip while x and length remain `u32`.
+- Retained coverage capacity failure returns the first unavailable descriptor
+  or run count. Partial storage is not exposed as a successful result; callers
+  may grow or replace that bounded buffer and retry.
 
 ## Determinism and quality
 
@@ -292,7 +298,7 @@ only after this path is complete.
   backend persists active edges and skips empty vertical ranges.
 - M4/M5 prototypes include generic fixed-point geometry, widened Q24.8
   arithmetic, rational crossing events, span/trapezoid area evaluation,
-  caller-owned sparse strip bins, persistent active edges, and
-  differential/error-path tests.
-- Coverage-strip/tile encoding, broader golden scenes and benchmarks, fuzzing,
-  gradients, clipping, and stroking remain future work.
+  caller-owned sparse strip bins, persistent active edges, optional retained
+  sparse coverage strips, and differential/error-path tests.
+- Tile encoding, broader golden scenes and benchmarks, fuzzing, gradients,
+  clipping, and stroking remain future work.
