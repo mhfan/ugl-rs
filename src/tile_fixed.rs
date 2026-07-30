@@ -28,10 +28,10 @@ pub struct FixedCoverageTileRun { pub x: u8, pub len: u8, pub row: u8, pub cover
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] #[repr(C)]
 pub struct FixedCoverageTilePiece { tile: u32, run: FixedCoverageTileRun }
 
-pub struct FixedCoverageTileWorkspace<'a> {
-    pub tiles: &'a mut [FixedCoverageTile],
-    pub runs: &'a mut [FixedCoverageTileRun],
-    pub pieces: &'a mut [FixedCoverageTilePiece],
+pub struct FixedCoverageTileWorkspace<'output, 'scratch> {
+    pub tiles: &'output mut [FixedCoverageTile],
+    pub runs: &'output mut [FixedCoverageTileRun],
+    pub pieces: &'scratch mut [FixedCoverageTilePiece],
 }
 
 /// Eight-byte linked scratch record used by direct tile-major rasterization.
@@ -39,13 +39,13 @@ pub struct FixedCoverageTileWorkspace<'a> {
 pub struct FixedDirectTilePiece { run: FixedCoverageTileRun, next: u32 }
 
 /// Caller-owned output and one-strip scratch for direct tile-major rasterization.
-pub struct FixedDirectTileWorkspace<'a> {
-    pub  tiles: &'a mut [FixedCoverageTile],
-    pub   runs: &'a mut [FixedCoverageTileRun],
-    pub pieces: &'a mut [FixedDirectTilePiece],
-    pub column_heads: &'a mut [u32],
-    pub column_tails: &'a mut [u32],
-    pub touched_columns: &'a mut [u32],
+pub struct FixedDirectTileWorkspace<'output, 'scratch> {
+    pub  tiles: &'output mut [FixedCoverageTile],
+    pub   runs: &'output mut [FixedCoverageTileRun],
+    pub pieces: &'scratch mut [FixedDirectTilePiece],
+    pub column_heads: &'scratch mut [u32],
+    pub column_tails: &'scratch mut [u32],
+    pub touched_columns: &'scratch mut [u32],
 }
 
 #[derive(Clone, Copy, Debug)] pub struct FixedCoverageTiles<'a> {
@@ -87,7 +87,7 @@ impl<'a> FixedCoverageTiles<'a> {
 /// active strip rather than the retained coverage of the whole frame.
 pub fn rasterize_lines_to_tiles<'a>(lines: &[FixedLine], width: u32, height: u32,
     fill_rule: FillRule, raster_workspace: &mut FixedRasterWorkspace<'_>,
-    workspace: FixedDirectTileWorkspace<'a>) ->
+    workspace: FixedDirectTileWorkspace<'a, '_>) ->
     Result<FixedCoverageTiles<'a>, FixedRasterError> {
     let columns = width.div_ceil(FIXED_TILE_WIDTH) as usize;
     if (columns as u64) * height.div_ceil(FIXED_TILE_HEIGHT) as u64 > u32::MAX as u64 {
@@ -118,15 +118,15 @@ pub fn rasterize_lines_to_tiles<'a>(lines: &[FixedLine], width: u32, height: u32
     }
 }
 
-struct FixedDirectTileEncoder<'a> {
+struct FixedDirectTileEncoder<'output, 'scratch> {
     width: u32, height: u32,
     columns: usize,
-     tiles: &'a mut [FixedCoverageTile],
-      runs: &'a mut [FixedCoverageTileRun],
-    pieces: &'a mut [FixedDirectTilePiece],
-    heads: &'a mut [u32],
-    tails: &'a mut [u32],
-    touched: &'a mut [u32],
+     tiles: &'output mut [FixedCoverageTile],
+      runs: &'output mut [FixedCoverageTileRun],
+    pieces: &'scratch mut [FixedDirectTilePiece],
+    heads: &'scratch mut [u32],
+    tails: &'scratch mut [u32],
+    touched: &'scratch mut [u32],
     current_strip: Option<u32>,
     tile_count: usize,
      run_count: usize,
@@ -134,8 +134,8 @@ struct FixedDirectTileEncoder<'a> {
     touched_count: usize,
 }
 
-impl<'a> FixedDirectTileEncoder<'a> {
-    fn finish(mut self) -> Result<FixedCoverageTiles<'a>, FixedRasterError> {
+impl<'output> FixedDirectTileEncoder<'output, '_> {
+    fn finish(mut self) -> Result<FixedCoverageTiles<'output>, FixedRasterError> {
         self.flush_strip()?;
         Ok(FixedCoverageTiles {
             width: self.width, height: self.height,
@@ -196,7 +196,7 @@ impl<'a> FixedDirectTileEncoder<'a> {
     }
 }
 
-impl CoverageSink for FixedDirectTileEncoder<'_> {
+impl CoverageSink for FixedDirectTileEncoder<'_, '_> {
     type Error = FixedRasterError;
 
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
@@ -263,7 +263,7 @@ fn linked_tile_stats(pieces: &[FixedDirectTilePiece], mut piece: u32,
 /// Empty tiles are omitted and full tiles carry no fine runs. Output buffers
 /// remain untouched if capacity validation fails.
 pub fn encode_fixed_coverage_tiles<'a>(coverage: FixedCoverageStrips<'_>,
-    workspace: FixedCoverageTileWorkspace<'a>) ->
+    workspace: FixedCoverageTileWorkspace<'a, '_>) ->
     Result<FixedCoverageTiles<'a>, FixedRasterError> {
     let columns = coverage. width().div_ceil(FIXED_TILE_WIDTH);
     let    rows = coverage.height().div_ceil(FIXED_TILE_HEIGHT);

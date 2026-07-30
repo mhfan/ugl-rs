@@ -12,7 +12,7 @@ use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
     FixedLine, FixedRasterError, FixedRasterWorkspace, FixedRenderError, rasterize_lines,
 };
 #[cfg(feature = "fixed")] use crate::tile_fixed::{
-    FixedDirectTileWorkspace, FixedTileKind, rasterize_lines_to_tiles,
+    FixedCoverageTiles, FixedDirectTileWorkspace, FixedTileKind, rasterize_lines_to_tiles,
 };
 
 const BYTES_PER_PIXEL: u32 = 4;
@@ -142,6 +142,9 @@ impl Default for AnalyticRenderOptions { fn default() -> Self {
     EdgeCapacity { needed_at_least: usize },
     RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
     #[cfg(feature = "fixed")] FixedRaster(FixedRasterError),
+    #[cfg(feature = "fixed")] CoverageDimensionsMismatch {
+        coverage: (u32, u32), target: (u32, u32),
+    },
 }
 
 /// Renders a solid straight-alpha color through the reference rasterizer.
@@ -189,9 +192,22 @@ pub fn render_solid_fixed(lines: &[FixedLine], color: RGBA<u8>, fill_rule: FillR
 /// Renders prepared Q24.8 lines through direct sparse tiles.
 pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule: FillRule,
     target: &mut PixmapMut<'_>, raster_workspace: &mut FixedRasterWorkspace<'_>,
-    tile_workspace: FixedDirectTileWorkspace<'_>) -> Result<(), RenderError> {
+    tile_workspace: FixedDirectTileWorkspace<'_, '_>) -> Result<(), RenderError> {
     let tiled = rasterize_lines_to_tiles(lines, target.width, target.height, fill_rule,
         raster_workspace, tile_workspace).map_err(RenderError::FixedRaster)?;
+    composite_solid_fixed_tiles(tiled, color, target)
+}
+
+/// Composites retained fixed coverage without rasterizing its geometry again.
+#[cfg(feature = "fixed")]
+pub fn composite_solid_fixed_tiles(tiled: FixedCoverageTiles<'_>, color: RGBA<u8>,
+    target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
+    if (tiled.width(), tiled.height()) != (target.width, target.height) {
+        return Err(RenderError::CoverageDimensionsMismatch {
+            coverage: (tiled.width(), tiled.height()),
+            target: (target.width, target.height),
+        });
+    }
     let compositor = SolidCompositor { target, color: color.premul() };
     for tile in tiled.tiles() {
         match tile.kind {
@@ -350,7 +366,7 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
         use crate::{geometry::FixedScalar, raster_fixed::{
             FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines,
         }, tile_fixed::{ FixedCoverageTile, FixedCoverageTileRun, FixedDirectTilePiece,
-            FixedDirectTileWorkspace,
+            FixedDirectTileWorkspace, rasterize_lines_to_tiles,
         }};
 
         let fixed = FixedScalar::from_num;
@@ -392,6 +408,27 @@ fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
             },
         ).unwrap();
         assert_eq!(tiled_pixels, pixels);
+
+        let tiled = rasterize_lines_to_tiles(&lines, 2, 1, FillRule::NonZero,
+            &mut FixedRasterWorkspace {
+                segments: &mut segments, trapezoids: &mut trapezoids, row_area: &mut row_area,
+                strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+            }, FixedDirectTileWorkspace {
+                tiles: &mut tiles, runs: &mut runs, pieces: &mut pieces,
+                column_heads: &mut [0], column_tails: &mut [0], touched_columns: &mut [0],
+            }).unwrap();
+        let mut cached_pixels = [0; 8];
+        composite_solid_fixed_tiles(tiled, RGBA::white(),
+            &mut PixmapMut::new(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
+        assert_eq!(cached_pixels, pixels);
+
+        let mut mismatched_pixels = [17; 4];
+        let error = composite_solid_fixed_tiles(tiled, RGBA::white(),
+            &mut PixmapMut::new(&mut mismatched_pixels, 1, 1, 4).unwrap());
+        assert_eq!(error, Err(RenderError::CoverageDimensionsMismatch {
+            coverage: (2, 1), target: (1, 1),
+        }));
+        assert_eq!(mismatched_pixels, [17; 4]);
     }
 
     #[cfg(feature = "fixed")] #[test] fn full_tile_blending_matches_row_spans() {

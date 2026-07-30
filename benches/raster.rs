@@ -71,7 +71,8 @@ fn benchmark_f32(c: &mut Criterion) {
 }
 
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {
-    use ugl_rs::{canvas::{render_solid_fixed, render_solid_fixed_tiled},
+    use ugl_rs::{canvas::{composite_solid_fixed_tiles, render_solid_fixed,
+            render_solid_fixed_tiled},
         raster_fixed::{FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace,
             FIXED_STRIP_HEIGHT, FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
             prepare_lines, rasterize_lines, rasterize_lines_to_strips,
@@ -141,6 +142,21 @@ fn benchmark_f32(c: &mut Criterion) {
             vec![0; WIDTH.div_ceil(FIXED_TILE_WIDTH) as usize],
             vec![0; WIDTH.div_ceil(FIXED_TILE_WIDTH) as usize],
         );
+        let (mut cached_tiles, mut cached_runs) = (
+            vec![FixedCoverageTile::default(); coverage_tiles.len()],
+            vec![FixedCoverageTileRun::default(); coverage_tile_runs.len()],
+        );
+        let cached = rasterize_lines_to_tiles(&lines[..line_count], WIDTH, HEIGHT,
+            FillRule::NonZero, &mut FixedRasterWorkspace {
+                segments: &mut segments, trapezoids: &mut trapezoids,
+                row_area: &mut row_area,
+                strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+            }, FixedDirectTileWorkspace {
+                tiles: &mut cached_tiles, runs: &mut cached_runs,
+                pieces: &mut direct_tile_pieces,
+                column_heads: &mut tile_heads, column_tails: &mut tile_tails,
+                touched_columns: &mut touched_tiles,
+            }).unwrap();
         group.bench_function(BenchmarkId::new("fixed", name), |b| b.iter(|| {
             pixels.fill(0);
             let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
@@ -168,6 +184,12 @@ fn benchmark_f32(c: &mut Criterion) {
                     touched_columns: &mut touched_tiles,
                 },
             ).unwrap();
+            black_box(&pixels);
+        }));
+        group.bench_function(BenchmarkId::new("fixed_tiled_cached", name), |b| b.iter(|| {
+            pixels.fill(0);
+            composite_solid_fixed_tiles(cached, RGBA::new(40, 120, 220, 192),
+                &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap()).unwrap();
             black_box(&pixels);
         }));
         group.bench_function(BenchmarkId::new("fixed_stream", name), |b| b.iter(|| {
