@@ -22,7 +22,7 @@ const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 pub enum FixedWorkspace {
     Lines, Segments, Trapezoids, RowArea, Intersections, Spans,
     StripOffsets, StripIndices, CoverageStrips, CoverageRuns,
-    CoverageTiles, CoverageTileRuns, CoverageTilePieces,
+    CoverageTiles, CoverageTileRuns, CoverageTilePieces, CoverageTileColumns,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

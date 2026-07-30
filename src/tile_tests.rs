@@ -44,6 +44,7 @@ fn raster_workspaces(lines: &[FixedLine], width: u32, height: u32) ->
     assert_eq!(core::mem::size_of::<FixedCoverageTile>(), 16);
     assert_eq!(core::mem::size_of::<FixedCoverageTileRun>(), 4);
     assert_eq!(core::mem::size_of::<FixedCoverageTilePiece>(), 8);
+    assert_eq!(core::mem::size_of::<FixedDirectTilePiece>(), 8);
 
     let edges = scene();
     let mut lines = vec![FixedLine::default(); edges.len()];
@@ -78,18 +79,33 @@ fn raster_workspaces(lines: &[FixedLine], width: u32, height: u32) ->
     assert_eq!(tiled.tiles()[0].run_count, 0);
     assert!(!tiled.runs().is_empty());
 
-    let mut direct = vec![0; width as usize * height as usize];
+    let (mut direct_tiles, mut direct_runs, mut direct_pieces) = (
+        vec![FixedCoverageTile::default(); 8],
+        vec![FixedCoverageTileRun::default(); 128],
+        vec![FixedDirectTilePiece::default(); 128],
+    );
+    let (mut heads, mut tails, mut touched) = ([0; 3], [0; 3], [0; 3]);
+    let direct_tiled = rasterize_lines_to_tiles(&lines, width, height, FillRule::NonZero,
+        &mut raster_workspace, FixedDirectTileWorkspace {
+            tiles: &mut direct_tiles, runs: &mut direct_runs, pieces: &mut direct_pieces,
+            column_heads: &mut heads, column_tails: &mut tails,
+            touched_columns: &mut touched,
+        }).unwrap();
+    assert_eq!(direct_tiled.tiles(), tiled.tiles());
+    assert_eq!(direct_tiled.runs(), tiled.runs());
+
+    let mut streamed = vec![0; width as usize * height as usize];
     rasterize_lines(&lines, width, height, FillRule::NonZero, &mut raster_workspace,
         &mut |x, y, coverage| {
-            direct[y as usize * width as usize + x as usize] = coverage;
+            streamed[y as usize * width as usize + x as usize] = coverage;
             Ok::<_, Infallible>(())
         }).unwrap();
-    let mut replayed = vec![0; direct.len()];
-    tiled.replay(&mut |x, y, coverage| {
+    let mut replayed = vec![0; streamed.len()];
+    direct_tiled.replay(&mut |x, y, coverage| {
         replayed[y as usize * width as usize + x as usize] = coverage;
         Ok::<_, Infallible>(())
     }).unwrap();
-    assert_eq!(replayed, direct);
+    assert_eq!(replayed, streamed);
 }
 
 #[test] fn tile_encoding_reports_each_capacity_without_touching_output() {
@@ -136,4 +152,56 @@ fn raster_workspaces(lines: &[FixedLine], width: u32, height: u32) ->
         kind: FixedWorkspace::CoverageTileRuns, required: 1..,
     })));
     assert_eq!(tiles, [sentinel_tile; 8]);
+}
+
+#[test] fn direct_tile_raster_reports_column_piece_and_output_capacity() {
+    let edges = scene();
+    let mut lines = vec![FixedLine::default(); edges.len()];
+    prepare_lines(&edges, &mut lines).unwrap();
+    let (width, height) = (48, 18);
+    let (mut segments, mut trapezoids, mut row_area, mut offsets, mut indices) =
+        raster_workspaces(&lines, width, height);
+    let mut raster_workspace = FixedRasterWorkspace {
+        segments: &mut segments, trapezoids: &mut trapezoids, row_area: &mut row_area,
+        strip_offsets: &mut offsets, strip_indices: &mut indices,
+    };
+    let (mut tiles, mut runs, mut pieces) = (
+        [FixedCoverageTile::default(); 8],
+        [FixedCoverageTileRun::default(); 128],
+        [FixedDirectTilePiece::default(); 128],
+    );
+    let (mut heads, mut tails, mut touched) = ([0; 3], [0; 3], [0; 3]);
+
+    assert_eq!(rasterize_lines_to_tiles(&lines, width, height, FillRule::NonZero,
+        &mut raster_workspace, FixedDirectTileWorkspace {
+            tiles: &mut tiles, runs: &mut runs, pieces: &mut pieces,
+            column_heads: &mut heads[..2], column_tails: &mut tails,
+            touched_columns: &mut touched,
+        }).unwrap_err(), FixedRasterError::WorkspaceTooSmall {
+        kind: FixedWorkspace::CoverageTileColumns, required: 3,
+    });
+    assert_eq!(rasterize_lines_to_tiles(&lines, width, height, FillRule::NonZero,
+        &mut raster_workspace, FixedDirectTileWorkspace {
+            tiles: &mut tiles, runs: &mut runs, pieces: &mut [],
+            column_heads: &mut heads, column_tails: &mut tails,
+            touched_columns: &mut touched,
+        }).unwrap_err(), FixedRasterError::WorkspaceTooSmall {
+        kind: FixedWorkspace::CoverageTilePieces, required: 1,
+    });
+    assert_eq!(rasterize_lines_to_tiles(&lines, width, height, FillRule::NonZero,
+        &mut raster_workspace, FixedDirectTileWorkspace {
+            tiles: &mut [], runs: &mut runs, pieces: &mut pieces,
+            column_heads: &mut heads, column_tails: &mut tails,
+            touched_columns: &mut touched,
+        }).unwrap_err(), FixedRasterError::WorkspaceTooSmall {
+        kind: FixedWorkspace::CoverageTiles, required: 2,
+    });
+    assert!(matches!(rasterize_lines_to_tiles(&lines, width, height, FillRule::NonZero,
+        &mut raster_workspace, FixedDirectTileWorkspace {
+            tiles: &mut tiles, runs: &mut [], pieces: &mut pieces,
+            column_heads: &mut heads, column_tails: &mut tails,
+            touched_columns: &mut touched,
+        }), Err(FixedRasterError::WorkspaceTooSmall {
+            kind: FixedWorkspace::CoverageTileRuns, required: 1..,
+        })));
 }
