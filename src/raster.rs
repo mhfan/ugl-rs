@@ -205,7 +205,7 @@ impl<S> CoverageSink for MaskClipSink<'_, S> where S: CoverageSink {
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RasterError<E> {
     WorkspaceTooSmall { intersections: usize, row_coverage: usize },
-    DimensionsOverflow, InvalidEdge, InvalidSampleCount, Sink(E),
+    DimensionsOverflow, InvalidEdge, InvalidEdgeBins, InvalidSampleCount, Sink(E),
 }
 
 pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32, fill_rule: FillRule,

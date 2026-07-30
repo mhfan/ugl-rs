@@ -167,7 +167,7 @@ pub struct AnalyticStrokeOptions {
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RenderError {
     InvalidTolerance, InvalidDepth, NonFiniteCoordinate, FlattenDepthLimit,
-    DimensionsOverflow, InvalidEdge, InvalidSampleCount, InvalidPath(PathError),
+    DimensionsOverflow, InvalidEdge, InvalidEdgeBins, InvalidSampleCount, InvalidPath(PathError),
     StrokeIndexOverflow, EdgeCapacity { needed_at_least: usize },
     StrokePointCapacity { needed_at_least: usize },
     StrokeContourCapacity { needed_at_least: usize },
@@ -510,6 +510,7 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
     match error {
         RasterError::DimensionsOverflow => RenderError::DimensionsOverflow,
         RasterError::InvalidEdge => RenderError::InvalidEdge,
+        RasterError::InvalidEdgeBins => RenderError::InvalidEdgeBins,
         RasterError::InvalidSampleCount => RenderError::InvalidSampleCount,
         RasterError::WorkspaceTooSmall { intersections, row_coverage } =>
             RenderError::RasterWorkspaceTooSmall { intersections, row_coverage },
