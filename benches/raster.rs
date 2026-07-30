@@ -71,16 +71,16 @@ fn benchmark_f32(c: &mut Criterion) {
 }
 
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {
-    use ugl_rs::{canvas::{composite_solid_fixed_tiles, render_solid_fixed,
-            render_solid_fixed_tiled},
+    use ugl_rs::{geometry::FixedScalar,
+        canvas::{composite_solid_fixed_tiles, render_solid_fixed, render_solid_fixed_tiled},
         raster_fixed::{FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace,
-            FIXED_STRIP_HEIGHT, FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
-            prepare_lines, rasterize_lines, rasterize_lines_to_strips,
-        }, geometry::FixedScalar,
-        tile_fixed::{FIXED_TILE_HEIGHT, FIXED_TILE_WIDTH, FixedCoverageTile,
-            FixedCoverageTilePiece, FixedCoverageTileRun, FixedCoverageTileWorkspace,
-            FixedDirectTilePiece, FixedDirectTileWorkspace, encode_fixed_coverage_tiles,
-            rasterize_lines_to_tiles,
+            FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
+            FIXED_STRIP_HEIGHT, prepare_lines, rasterize_lines, rasterize_lines_to_strips,
+        },
+        tile_fixed::{FIXED_TILE_HEIGHT, FIXED_TILE_WIDTH,
+            FixedCoverageTile, FixedCoverageTilePiece, FixedCoverageTileRun,
+            FixedCoverageTileWorkspace, FixedDirectTilePiece, FixedDirectTileWorkspace,
+            encode_fixed_coverage_tiles, rasterize_lines_to_tiles,
         },
     };
 

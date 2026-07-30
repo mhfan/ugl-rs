@@ -30,7 +30,7 @@ pub struct FixedCoverageTilePiece { tile: u32, run: FixedCoverageTileRun }
 
 pub struct FixedCoverageTileWorkspace<'output, 'scratch> {
     pub tiles: &'output mut [FixedCoverageTile],
-    pub runs: &'output mut [FixedCoverageTileRun],
+     pub runs: &'output mut [FixedCoverageTileRun],
     pub pieces: &'scratch mut [FixedCoverageTilePiece],
 }
 
@@ -40,8 +40,8 @@ pub struct FixedDirectTilePiece { run: FixedCoverageTileRun, next: u32 }
 
 /// Caller-owned output and one-strip scratch for direct tile-major rasterization.
 pub struct FixedDirectTileWorkspace<'output, 'scratch> {
-    pub  tiles: &'output mut [FixedCoverageTile],
-    pub   runs: &'output mut [FixedCoverageTileRun],
+    pub tiles: &'output mut [FixedCoverageTile],
+    pub  runs: &'output mut [FixedCoverageTileRun],
     pub pieces: &'scratch mut [FixedDirectTilePiece],
     pub column_heads: &'scratch mut [u32],
     pub column_tails: &'scratch mut [u32],
@@ -121,11 +121,11 @@ pub fn rasterize_lines_to_tiles<'a>(lines: &[FixedLine], width: u32, height: u32
 struct FixedDirectTileEncoder<'output, 'scratch> {
     width: u32, height: u32,
     columns: usize,
-     tiles: &'output mut [FixedCoverageTile],
-      runs: &'output mut [FixedCoverageTileRun],
+    tiles: &'output mut [FixedCoverageTile],
+     runs: &'output mut [FixedCoverageTileRun],
     pieces: &'scratch mut [FixedDirectTilePiece],
-    heads: &'scratch mut [u32],
-    tails: &'scratch mut [u32],
+     heads: &'scratch mut [u32],
+     tails: &'scratch mut [u32],
     touched: &'scratch mut [u32],
     current_strip: Option<u32>,
     tile_count: usize,

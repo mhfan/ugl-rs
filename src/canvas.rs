@@ -199,9 +199,8 @@ pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule:
 }
 
 /// Composites retained fixed coverage without rasterizing its geometry again.
-#[cfg(feature = "fixed")]
-pub fn composite_solid_fixed_tiles(tiled: FixedCoverageTiles<'_>, color: RGBA<u8>,
-    target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
+#[cfg(feature = "fixed")] pub fn composite_solid_fixed_tiles(tiled: FixedCoverageTiles<'_>,
+    color: RGBA<u8>, target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
     if (tiled.width(), tiled.height()) != (target.width, target.height) {
         return Err(RenderError::CoverageDimensionsMismatch {
             coverage: (tiled.width(), tiled.height()),
