@@ -19,6 +19,7 @@ use crate::{color::{PremulRGBA, RGBA},
     FixedRenderError, prepare_lines, rasterize_lines,
 };
 #[cfg(feature = "fixed")] use crate::{
+    dash::{FixedDashPattern, dash_polyline_fixed},
     edge::build_fill_edges_fixed,
     flatten_fixed::{FixedFlattenError, FixedFlattenOptions},
     geometry::FixedScalar,
@@ -187,6 +188,14 @@ pub struct FixedGeometryWorkspace<'a> {
     pub lines: &'a mut [FixedLine],
 }
 
+#[cfg(feature = "fixed")]
+pub struct FixedDashedStrokeWorkspace<'a> {
+    pub path: StrokePathWorkspace<'a, FixedScalar>,
+    pub dash_points: &'a mut [Point<FixedScalar>],
+    pub dash_contours: &'a mut [DashContour],
+    pub geometry: FixedGeometryWorkspace<'a>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct RenderOptions {
     pub fill_rule: FillRule,
     pub flatten: FlattenOptions,
@@ -217,6 +226,12 @@ impl Default for RenderOptions { fn default() -> Self {
     pub transform: Affine<FixedScalar>,
     pub flatten: FixedFlattenOptions,
     pub stroke: FixedStrokeOptions,
+}
+
+#[cfg(feature = "fixed")]
+#[derive(Clone, Copy, Debug)] pub struct FixedDashedStrokePathOptions<'a> {
+    pub path: FixedStrokePathOptions,
+    pub dash: FixedDashPattern<'a>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct AnalyticRenderOptions {
@@ -576,6 +591,33 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
     let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
         .map_err(RenderError::FixedRaster)?;
     render_native_paint_fixed(&geometry.lines[..line_count], sampler,
+        FillRule::NonZero, target, raster_workspace)
+}
+
+/// Renders a transformed, dashed Q24.8 path without floating-point operations.
+#[cfg(feature = "fixed")] pub fn render_native_stroke_path_dashed_fixed<
+    S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>, sampler: &S,
+    options: FixedDashedStrokePathOptions<'_>, target: &mut PixmapMut<'_>,
+    workspace: &mut FixedDashedStrokeWorkspace<'_>,
+    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
+    let flattened = flatten_stroke_path_fixed(path, options.path.transform,
+        options.path.flatten, &mut workspace.path)
+        .map_err(map_fixed_stroke_flatten_error)?;
+    let mut sink = EdgeSliceSink { edges: workspace.geometry.edges, len: 0 };
+    for (points, closed) in flattened.contours() {
+        let mut dash_workspace = DashWorkspace {
+            points: workspace.dash_points, contours: workspace.dash_contours,
+        };
+        let dashed = dash_polyline_fixed(points, closed, options.dash, &mut dash_workspace)
+            .map_err(map_dash_error)?;
+        for (points, closed) in dashed.contours() {
+            stroke_polyline_fixed(points, closed, options.path.stroke, &mut sink)
+                .map_err(map_fixed_stroke_expand_error)?;
+        }
+    }
+    let line_count = prepare_lines(&sink.edges[..sink.len], workspace.geometry.lines)
+        .map_err(RenderError::FixedRaster)?;
+    render_native_paint_fixed(&workspace.geometry.lines[..line_count], sampler,
         FillRule::NonZero, target, raster_workspace)
 }
 
@@ -1042,6 +1084,9 @@ fn map_stroke_expand_error(error: StrokeExpandError<EdgeCapacity>) -> RenderErro
 fn map_dash_error(error: DashError) -> RenderError {
     match error {
         DashError::NonFinitePoint => RenderError::NonFiniteCoordinate,
+        #[cfg(feature = "fixed")]
+        DashError::CoordinateOutOfRange =>
+            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
         DashError::PointCapacity { needed_at_least } =>
             RenderError::DashPointCapacity { needed_at_least },
         DashError::ContourCapacity { needed_at_least } =>

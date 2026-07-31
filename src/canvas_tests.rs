@@ -704,6 +704,48 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 #[cfg(feature = "fixed")]
+#[test] fn native_fixed_dashed_path_matches_f32_reference_coverage() {
+    use crate::{dash::{DashContour, FixedDashPattern},
+        geometry::{FixedScalar, PathBuilder},
+        raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid},
+        stroke::{StrokeContour, StrokePathWorkspace},
+    };
+
+    let fixed = FixedScalar::from_num;
+    let mut builder = PathBuilder::new();
+    builder.move_to((fixed(0.5), fixed(0.5))).line_to((fixed(4.5), fixed(0.5)));
+    let pattern_lengths = [fixed(1.0), fixed(1.0)];
+    let mut path_points = [(FixedScalar::ZERO, FixedScalar::ZERO).into(); 2];
+    let mut path_contours = [StrokeContour::default(); 1];
+    let mut dash_points = [(FixedScalar::ZERO, FixedScalar::ZERO).into(); 8];
+    let mut dash_contours = [DashContour::default(); 4];
+    let (mut edges, mut lines) = ([Edge::default(); 8], [FixedLine::default(); 8]);
+    let (mut segments, mut trapezoids, mut row_area) =
+        ([FixedSegment::default(); 8], [FixedTrapezoid::default(); 4], [0; 6]);
+    let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 8]);
+    let mut pixels = [0; 20];
+    render_native_stroke_path_dashed_fixed(&builder.build(),
+        &SolidPaint::new(RGBA::white()), FixedDashedStrokePathOptions {
+            path: FixedStrokePathOptions::default(),
+            dash: FixedDashPattern::new(&pattern_lengths, FixedScalar::ZERO).unwrap(),
+        }, &mut PixmapMut::new(&mut pixels, 5, 1, 20).unwrap(),
+        &mut FixedDashedStrokeWorkspace {
+            path: StrokePathWorkspace {
+                points: &mut path_points, contours: &mut path_contours,
+            },
+            dash_points: &mut dash_points, dash_contours: &mut dash_contours,
+            geometry: FixedGeometryWorkspace { edges: &mut edges, lines: &mut lines },
+        },
+        &mut FixedRasterWorkspace {
+            segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+            strip_indices: &mut strip_indices,
+        }).unwrap();
+    let alpha: alloc::vec::Vec<_> = pixels.chunks_exact(4).map(|pixel| pixel[3]).collect();
+    assert_eq!(alpha, [128, 128, 128, 128, 0]);
+}
+
+#[cfg(feature = "fixed")]
 #[test] fn native_fixed_curved_path_renders_end_to_end() {
     use crate::{geometry::{FixedScalar, PathBuilder},
         raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid},

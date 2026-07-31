@@ -702,6 +702,7 @@ fn benchmark_paint(c: &mut Criterion) {
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {
     use ugl_rs::{geometry::FixedScalar,
         canvas::{composite_solid_fixed_tiles, render_solid_fixed, render_solid_fixed_tiled},
+        dash::{FixedDashPattern, dash_polyline_fixed},
         flatten_fixed::{FixedFlattenOptions, flatten_path_fixed},
         raster_fixed::{FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace,
             FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
@@ -741,6 +742,32 @@ fn benchmark_paint(c: &mut Criterion) {
         black_box(&stroke_edges);
     }));
     stroke_group.finish();
+
+    let fixed_dash_lengths = [FixedScalar::from_num(6), FixedScalar::from_num(3),
+        FixedScalar::from_num(1.5), FixedScalar::from_num(3)];
+    let fixed_dash = FixedDashPattern::new(
+        &fixed_dash_lengths, FixedScalar::from_num(2)).unwrap();
+    let (mut fixed_dash_points, mut fixed_dash_contours) = (
+        vec![(FixedScalar::ZERO, FixedScalar::ZERO).into(); 512],
+        vec![DashContour::default(); 256],
+    );
+    let mut dash_group = c.benchmark_group("stroke_dash_fixed");
+    dash_group.throughput(Throughput::Elements(stroke_points.len() as _));
+    dash_group.bench_function("polyline_64", |b| b.iter(|| {
+        stroke_edges.clear();
+        let mut workspace = DashWorkspace {
+            points: &mut fixed_dash_points, contours: &mut fixed_dash_contours,
+        };
+        let dashed = dash_polyline_fixed(&stroke_points, false, fixed_dash,
+            &mut workspace).unwrap();
+        for (points, closed) in dashed.contours() {
+            stroke_polyline_fixed(points, closed, stroke_options, &mut |edge| {
+                stroke_edges.push(edge); Ok::<_, core::convert::Infallible>(())
+            }).unwrap();
+        }
+        black_box(&stroke_edges);
+    }));
+    dash_group.finish();
 
     let mut curve_builder = PathBuilder::new();
     curve_builder.move_to((FixedScalar::from_num(8), FixedScalar::from_num(128)));

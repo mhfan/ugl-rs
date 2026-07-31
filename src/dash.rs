@@ -1,6 +1,8 @@
 //! Allocation-free dash decomposition for flattened `f32` contours.
 
-use crate::geometry::Point;
+use crate::geometry::{Point, Scalar};
+#[cfg(feature = "fixed")]
+use crate::{geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar}, math::integer_sqrt_u64};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum DashPatternError {
     Empty, NonFiniteLength, NonPositiveLength, NonFinitePhase,
@@ -61,24 +63,25 @@ impl DashContour {
     pub fn is_closed(self) -> bool { self.closed }
 }
 
-pub struct DashWorkspace<'a> {
-    pub points: &'a mut [Point],
+pub struct DashWorkspace<'a, T = Scalar> {
+    pub points: &'a mut [Point<T>],
     pub contours: &'a mut [DashContour],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum DashError {
     NonFinitePoint,
+    #[cfg(feature = "fixed")] CoordinateOutOfRange,
     PointCapacity { needed_at_least: usize },
     ContourCapacity { needed_at_least: usize },
     IndexOverflow,
 }
 
-#[derive(Debug)] pub struct DashedPath<'a> {
-    points: &'a [Point], contours: &'a [DashContour],
+#[derive(Debug)] pub struct DashedPath<'a, T = Scalar> {
+    points: &'a [Point<T>], contours: &'a [DashContour],
 }
 
-impl<'a> DashedPath<'a> {
-    pub fn contours(&self) -> impl ExactSizeIterator<Item = (&'a [Point], bool)> + 'a {
+impl<'a, T> DashedPath<'a, T> {
+    pub fn contours(&self) -> impl ExactSizeIterator<Item = (&'a [Point<T>], bool)> + 'a {
         self.contours.iter().map(|contour| {
             let start = contour.start as usize;
             (&self.points[start..start + contour.len()], contour.is_closed())
@@ -157,18 +160,151 @@ fn dash_segment(from: Point, to: Point, pattern: DashPattern<'_>,
     Ok(())
 }
 
-struct DashWriter<'a> {
-    points: &'a mut [Point], contours: &'a mut [DashContour],
+#[cfg(feature = "fixed")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FixedDashPatternError {
+    Empty, NonPositiveLength, CycleOverflow, SlotCountOverflow,
+}
+
+#[cfg(feature = "fixed")]
+#[derive(Clone, Copy, Debug)] pub struct FixedDashPattern<'a> {
+    lengths: &'a [FixedScalar], phase: i32, cycle: i32, slots: usize,
+}
+
+#[cfg(feature = "fixed")] impl<'a> FixedDashPattern<'a> {
+    pub fn new(lengths: &'a [FixedScalar], phase: FixedScalar) ->
+        Result<Self, FixedDashPatternError> {
+        if lengths.is_empty() { return Err(FixedDashPatternError::Empty); }
+        let mut cycle = 0_i64;
+        for length in lengths {
+            if *length <= FixedScalar::ZERO {
+                return Err(FixedDashPatternError::NonPositiveLength);
+            }
+            cycle = cycle.checked_add(length.to_bits() as _)
+                .ok_or(FixedDashPatternError::CycleOverflow)?;
+        }
+        let slots = if lengths.len() & 1 == 0 { lengths.len() } else {
+            lengths.len().checked_mul(2)
+                .ok_or(FixedDashPatternError::SlotCountOverflow)?
+        };
+        if slots != lengths.len() {
+            cycle = cycle.checked_mul(2).ok_or(FixedDashPatternError::CycleOverflow)?;
+        }
+        let cycle = i32::try_from(cycle).map_err(|_| FixedDashPatternError::CycleOverflow)?;
+        Ok(Self { lengths, phase: phase.to_bits().rem_euclid(cycle), cycle, slots })
+    }
+
+    pub fn lengths(&self) -> &'a [FixedScalar] { self.lengths }
+    pub fn phase(&self) -> FixedScalar { FixedScalar::from_bits(self.phase) }
+    pub fn cycle(&self) -> FixedScalar { FixedScalar::from_bits(self.cycle) }
+
+    fn initial_state(self) -> FixedDashState {
+        let (mut index, mut phase) = (0, self.phase);
+        while phase >= self.length(index) {
+            phase -= self.length(index);
+            index = self.next(index);
+        }
+        FixedDashState { index, remaining: self.length(index) - phase }
+    }
+
+    fn length(self, index: usize) -> i32 {
+        self.lengths[index % self.lengths.len()].to_bits()
+    }
+    fn next(self, index: usize) -> usize {
+        if index + 1 == self.slots { 0 } else { index + 1 }
+    }
+}
+
+#[cfg(feature = "fixed")]
+#[derive(Clone, Copy)] struct FixedDashState { index: usize, remaining: i32 }
+
+/// Fixed-point counterpart of [`dash_polyline`] with integer distance state.
+#[cfg(feature = "fixed")]
+pub fn dash_polyline_fixed<'a>(points: &[Point<FixedScalar>], closed: bool,
+    pattern: FixedDashPattern<'_>, workspace: &'a mut DashWorkspace<'_, FixedScalar>) ->
+    Result<DashedPath<'a, FixedScalar>, DashError> {
+    if points.iter().any(|point| [point.x.to_bits(), point.y.to_bits()].iter()
+        .any(|value| value.unsigned_abs() > FIXED_DEVICE_RAW_LIMIT as u32)) {
+        return Err(DashError::CoordinateOutOfRange);
+    }
+    let mut writer = DashWriter {
+        points: workspace.points, contours: workspace.contours,
+        point_len: 0, contour_len: 0, current_start: None,
+    };
+    let Some(&first) = points.first() else { return Ok(writer.finish()); };
+    let mut state = pattern.initial_state();
+    if points.len() == 1 {
+        if state.index & 1 == 0 {
+            writer.begin(first)?;
+            writer.end()?;
+        }
+        return Ok(writer.finish());
+    }
+
+    let (point_start, contour_start) = (writer.point_len, writer.contour_len);
+    let starts_on = state.index & 1 == 0;
+    let segment_count = points.len() - 1 + usize::from(closed);
+    for index in 0..segment_count {
+        fixed_dash_segment(points[index % points.len()],
+            points[(index + 1) % points.len()], pattern, &mut state, &mut writer)?;
+    }
+    if writer.current_start.is_some() { writer.end()?; }
+    if closed && starts_on { writer.merge_closure(point_start, contour_start)?; }
+    Ok(writer.finish())
+}
+
+#[cfg(feature = "fixed")]
+fn fixed_dash_segment(from: Point<FixedScalar>, to: Point<FixedScalar>,
+    pattern: FixedDashPattern<'_>, state: &mut FixedDashState,
+    writer: &mut DashWriter<'_, FixedScalar>) -> Result<(), DashError> {
+    let (dx, dy) = (to.x.to_bits() as i64 - from.x.to_bits() as i64,
+                    to.y.to_bits() as i64 - from.y.to_bits() as i64);
+    let length = integer_sqrt_u64((dx * dx + dy * dy) as _);
+    if length == 0 { return Ok(()); }
+    let (mut current, mut consumed) = (from, 0_u64);
+    while consumed < length {
+        let left = length - consumed;
+        let remaining = state.remaining as u64;
+        let ends_dash = remaining <= left;
+        let step = remaining.min(left);
+        consumed += step;
+        let endpoint = if consumed == length { to } else {
+            let interpolate = |start: FixedScalar, delta: i64| {
+                let numerator = delta as i128 * consumed as i128;
+                let denominator = length as i128;
+                let offset = if numerator < 0 {
+                    (numerator - denominator / 2) / denominator
+                } else { (numerator + denominator / 2) / denominator };
+                FixedScalar::from_bits((start.to_bits() as i128 + offset) as _)
+            };
+            (interpolate(from.x, dx), interpolate(from.y, dy)).into()
+        };
+        if state.index & 1 == 0 {
+            if writer.current_start.is_none() { writer.begin(current)?; }
+            writer.point(endpoint)?;
+        }
+        current = endpoint;
+        state.remaining = if ends_dash { 0 } else { (remaining - step) as _ };
+        if ends_dash {
+            if state.index & 1 == 0 { writer.end()?; }
+            state.index = pattern.next(state.index);
+            state.remaining = pattern.length(state.index);
+        }
+    }
+    Ok(())
+}
+
+struct DashWriter<'a, T = Scalar> {
+    points: &'a mut [Point<T>], contours: &'a mut [DashContour],
     point_len: usize, contour_len: usize, current_start: Option<usize>,
 }
 
-impl<'a> DashWriter<'a> {
-    fn begin(&mut self, point: Point) -> Result<(), DashError> {
+impl<'a, T: Copy + PartialEq> DashWriter<'a, T> {
+    fn begin(&mut self, point: Point<T>) -> Result<(), DashError> {
         self.current_start = Some(self.point_len);
         self.point(point)
     }
 
-    fn point(&mut self, point: Point) -> Result<(), DashError> {
+    fn point(&mut self, point: Point<T>) -> Result<(), DashError> {
         if self.current_start.is_some_and(|start| self.point_len > start) &&
            self.points[self.point_len - 1] == point { return Ok(()); }
         let needed = self.point_len.checked_add(1).ok_or(DashError::IndexOverflow)?;
@@ -225,7 +361,7 @@ impl<'a> DashWriter<'a> {
         Ok(())
     }
 
-    fn finish(self) -> DashedPath<'a> {
+    fn finish(self) -> DashedPath<'a, T> {
         DashedPath {
             points: &self.points[..self.point_len],
             contours: &self.contours[..self.contour_len],
@@ -297,5 +433,58 @@ impl<'a> DashWriter<'a> {
         let dashed = dash_polyline(&square, true, pattern, &mut workspace).unwrap();
         let (_, closed) = dashed.contours().next().unwrap();
         assert!(closed);
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_dash_matches_f32_on_exact_metric_segments() {
+        let fixed = FixedScalar::from_num;
+        let fixed_points = [(fixed(0), fixed(0)).into(), (fixed(6), fixed(8)).into()];
+        let fixed_lengths = [fixed(3), fixed(2)];
+        let fixed_pattern = FixedDashPattern::new(&fixed_lengths, fixed(1)).unwrap();
+        let (mut fixed_output, mut fixed_contours) = (
+            [(FixedScalar::ZERO, FixedScalar::ZERO).into(); 16],
+            [DashContour::default(); 8],
+        );
+        let mut fixed_workspace = DashWorkspace {
+            points: &mut fixed_output, contours: &mut fixed_contours,
+        };
+        let fixed_dashed = dash_polyline_fixed(
+            &fixed_points, false, fixed_pattern, &mut fixed_workspace).unwrap();
+        let fixed_result: Vec<Vec<_>> = fixed_dashed.contours()
+            .map(|(points, _)| points.to_vec()).collect();
+
+        let float_points = [(0.0, 0.0).into(), (6.0, 8.0).into()];
+        let float_result = collect(&float_points, false, &[3.0, 2.0], 1.0).unwrap();
+        assert_eq!(fixed_result.len(), float_result.len());
+        for (fixed_contour, float_contour) in fixed_result.iter().zip(&float_result) {
+            assert_eq!(fixed_contour.len(), float_contour.len());
+            for (fixed, float) in fixed_contour.iter().zip(float_contour) {
+                assert!((fixed.x.to_num::<f32>() - float.x).abs() <= 1.0 / 256.0);
+                assert!((fixed.y.to_num::<f32>() - float.y).abs() <= 1.0 / 256.0);
+            }
+        }
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_pattern_and_closed_seam_follow_reference_contract() {
+        let fixed = FixedScalar::from_num;
+        assert_eq!(FixedDashPattern::new(&[], fixed(0)).unwrap_err(),
+            FixedDashPatternError::Empty);
+        assert_eq!(FixedDashPattern::new(&[fixed(1), fixed(0)], fixed(0)).unwrap_err(),
+            FixedDashPatternError::NonPositiveLength);
+        let lengths = [fixed(6), fixed(4)];
+        let pattern = FixedDashPattern::new(&lengths, fixed(0)).unwrap();
+        let square = [(fixed(0), fixed(0)).into(), (fixed(4), fixed(0)).into(),
+            (fixed(4), fixed(4)).into(), (fixed(0), fixed(4)).into()];
+        let (mut output, mut contours) = (
+            [(FixedScalar::ZERO, FixedScalar::ZERO).into(); 32],
+            [DashContour::default(); 8],
+        );
+        let mut workspace = DashWorkspace { points: &mut output, contours: &mut contours };
+        let dashed = dash_polyline_fixed(&square, true, pattern, &mut workspace).unwrap();
+        assert_eq!(dashed.contours().len(), 1);
+        let (points, closed) = dashed.contours().next().unwrap();
+        assert!(!closed);
+        assert!(points.contains(&(fixed(0), fixed(0)).into()));
     }
 }
