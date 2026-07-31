@@ -153,9 +153,10 @@ both concentric and general two-circle/focal geometry with integer root solving
 and exact integer spread/ramp mapping. `FixedConicGradient` uses a compact
 binary-turn angle and a fixed 16-step integer CORDIC.
 
-Fixed-only flattening, rasterization, stroking, tiling, and their focused tests
-live under `src/fixed/`. The coherent `fixed::*` paths are available directly;
-thin re-export modules preserve the existing `flatten_fixed`,
+Fixed-only context, flattening, rasterization, stroking, tiling, and their
+focused tests live under `src/fixed/`. The coherent `fixed::*` paths are
+available directly; thin re-export modules preserve the existing `context`,
+`flatten_fixed`,
 `raster_fixed`, `stroke_fixed`, and `tile_fixed` public paths during the
 pre-1.0 API transition.
 

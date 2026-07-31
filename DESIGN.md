@@ -563,6 +563,7 @@ Backend-specific implementation lives under `src/fixed/`:
 
 ```text
 src/fixed/
+    context.rs
     flatten.rs
     raster.rs
     stroke.rs
