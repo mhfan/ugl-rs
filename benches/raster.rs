@@ -80,12 +80,15 @@ fn benchmark_f32(c: &mut Criterion) {
 }
 
 fn benchmark_analytic_active(c: &mut Criterion) {
-    let stable = (0..64).flat_map(|index| {
-        let x = index as f32 * 3.75 + 4.0;
+    let stable_edges = |count: usize| (0..count / 2).flat_map(|index| {
+        let step = 248.0 / (count / 2) as f32;
+        let x = index as f32 * step + 4.0;
         [Edge { upper: (x, 0.25).into(), lower: (x, 255.75).into(), winding: -1 },
-         Edge { upper: (x + 2.0, 0.25).into(),
-                lower: (x + 2.0, 255.75).into(), winding: 1 }]
+         Edge { upper: (x + step * 0.5, 0.25).into(),
+                lower: (x + step * 0.5, 255.75).into(), winding: 1 }]
     }).collect::<Vec<_>>();
+    let mut scrambled = stable_edges(256);
+    scrambled.reverse();
     let churn = (0..256).flat_map(|index| {
         let (column, row) = (index % 16, index / 16);
         let (x, y) = (column as f32 * 16.0 + 2.25, row as f32 * 16.0 + 2.5);
@@ -93,16 +96,24 @@ fn benchmark_analytic_active(c: &mut Criterion) {
          Edge { upper: (x + 8.5, y).into(),
                 lower: (x + 8.5, y + 3.25).into(), winding: 1 }]
     }).collect::<Vec<_>>();
+    let mut scrambled_churn = churn.clone();
+    for row in scrambled_churn.chunks_mut(32) { row.reverse(); }
     let crossing = (0..32).map(|index| {
         let top = index as f32 * 7.5 + 8.0;
         let bottom = (31 - index) as f32 * 7.5 + 8.0;
         Edge { upper: (top, 0.25).into(), lower: (bottom, 255.75).into(),
                winding: if index & 1 == 0 { -1 } else { 1 } }
     }).collect::<Vec<_>>();
+    let mut scenes = [16, 32, 64, 128, 256].into_iter()
+        .map(|count| (format!("stable_{count}"), stable_edges(count)))
+        .collect::<Vec<_>>();
+    scenes.extend([
+        ("scrambled_256".into(), scrambled), ("churn_512".into(), churn),
+        ("scrambled_churn_512".into(), scrambled_churn), ("crossing_32".into(), crossing),
+    ]);
     let mut group = c.benchmark_group("analytic_active");
     group.throughput(Throughput::Elements(WIDTH as u64 * HEIGHT as u64));
-    for (name, edges) in [("stable_128", stable), ("churn_512", churn),
-                          ("crossing_32", crossing)] {
+    for (name, edges) in scenes {
         let requirements = analytic_bin_requirements(&edges, HEIGHT).unwrap();
         let (mut offsets, mut indices) =
             (vec![0; requirements.offsets], vec![0; requirements.indices]);

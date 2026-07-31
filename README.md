@@ -189,6 +189,17 @@ many negligible slabs and took 3.721 s. Coalescing events within four ulps of
 the current y reduced that case to 2.407 ms while retaining sampled-reference
 coverage tests for both fill rules.
 
+The same group now tracks stable active sets of 16, 32, 64, 128, and 256
+edges. A focused scaling run measured approximately 116, 170, 290, 534, and
+896 µs respectively. Reversing all 256 initial edges cost only another 3.7%
+because later rows remain ordered; reversing every 32-edge activation batch
+raised the short-edge scene from 44.50 to 51.22 µs. A hybrid insertion/introsort
+experiment did not improve the repeated-disorder case and regressed stable,
+ordinary-churn, and crossing scenes by roughly 3.6–4.0%, so the hot path keeps
+the specialized adaptive insertion sort. Future unordered-activation work
+should sort row bins by x or merge each ordered activation batch instead of
+adding a comparator and movement budget to every slab.
+
 The optional retained fixed output groups only non-empty 16-row strips. Each
 strip descriptor is 12 bytes and each uniform non-zero coverage run is 12
 bytes (`u32` x/length plus `u8` row/coverage). It therefore does not impose a
