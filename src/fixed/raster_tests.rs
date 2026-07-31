@@ -2,7 +2,8 @@
 use super::*;
 use alloc::{vec, vec::Vec};
 use core::convert::Infallible;
-use crate::analytic::{AnalyticIntersection, AnalyticWorkspace, rasterize_edges_analytic};
+use crate::analytic::{Intersection as AnalyticIntersection,
+    Workspace as AnalyticWorkspace, rasterize_edges as rasterize_edges_analytic};
 use crate::test_support::{assert_coverage_near, polygon_edges};
 
 fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }

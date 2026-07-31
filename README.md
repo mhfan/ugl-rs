@@ -109,7 +109,7 @@ The rendering APIs borrow both destination and scratch storage. Capacities are
 chosen by the caller and insufficient workspace is returned as an error:
 
 ```rust
-use ugl_rs::{analytic::AnalyticIntersection,
+use ugl_rs::{analytic::Intersection,
     color::RGBA, edge::Edge, geometry::{Affine, PathBuilder},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut,
         render_solid_analytic},
@@ -123,7 +123,7 @@ builder.move_to((0.5, 0.5)).line_to((3.5, 0.5))
        .line_to((3.5, 3.5)).line_to((0.5, 3.5));
 let path = builder.build();
 let mut pixels = [0; WIDTH as usize * HEIGHT as usize * 4];
-let mut intersections = [AnalyticIntersection::default(); 8];
+let mut intersections = [Intersection::default(); 8];
 let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
 let (mut edges, mut coverage) = ([Edge::default(); 8], [0.0; WIDTH as usize]);
 let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
@@ -389,7 +389,7 @@ The initial caller-owned scratch budgets are:
 | Backend | Edge/segment storage | Strip/crossing storage | Row storage |
 | --- | ---: | ---: | ---: |
 | sampled `f32` | 128 `Edge` | 128 `Intersection` | 256 `f32` |
-| analytic `f32` | 128 `Edge` | 257 `u32` row offsets + 128 `u32` edge indices + 128 `AnalyticIntersection` | 256 `f32` |
+| analytic `f32` | 128 `Edge` | 257 `u32` row offsets + 128 `u32` edge indices + 128 `Intersection` | 256 `f32` |
 | Q24.8 fixed | 128 `fixed::raster::Segment` + 64 `fixed::raster::Trapezoid` | one `u32` offset per strip plus one `u32` per line/strip overlap | 256 `u64` |
 
 The compact target uses 4 bytes per pixel. `LinearPixmapMut` deliberately uses

@@ -14,33 +14,33 @@ use crate::{edge::Edge,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct AnalyticIntersection { x0: f32, x1: f32, slope: f32, y_end: f32, winding: i8 }
+pub struct Intersection { x0: f32, x1: f32, slope: f32, y_end: f32, winding: i8 }
 
-pub struct AnalyticWorkspace<'a> {
-    pub intersections: &'a mut [AnalyticIntersection],
+pub struct Workspace<'a> {
+    pub intersections: &'a mut [Intersection],
     pub  row_coverage: &'a mut [f32],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AnalyticBinRequirements { pub offsets: usize, pub indices: usize }
+pub struct BinRequirements { pub offsets: usize, pub indices: usize }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum AnalyticBinError {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum BinError {
     DimensionsOverflow,
     OffsetCapacity { required: usize },
     IndexCapacity { required: usize },
 }
 
-pub struct AnalyticBinWorkspace<'a> {
+pub struct BinWorkspace<'a> {
     pub row_offsets: &'a mut [u32],
     pub edge_indices: &'a mut [u32],
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct AnalyticRowBins<'a> {
+pub struct RowBins<'a> {
     offsets: &'a [u32], indices: &'a [u32], height: u32, edge_count: usize,
 }
 
-impl AnalyticRowBins<'_> {
+impl RowBins<'_> {
     fn indices(&self, row: u32) -> &[u32] {
         let (start, end) = (
             self.offsets[row as usize] as usize,
@@ -50,25 +50,25 @@ impl AnalyticRowBins<'_> {
     }
 }
 
-pub fn analytic_bin_requirements(edges: &[Edge], height: u32) ->
-    Result<AnalyticBinRequirements, AnalyticBinError> {
-    let offsets = usize::try_from(height).map_err(|_| AnalyticBinError::DimensionsOverflow)?
-        .checked_add(1).ok_or(AnalyticBinError::DimensionsOverflow)?;
-    if edges.len() > u32::MAX as usize { return Err(AnalyticBinError::DimensionsOverflow); }
+pub fn bin_requirements(edges: &[Edge], height: u32) ->
+    Result<BinRequirements, BinError> {
+    let offsets = usize::try_from(height).map_err(|_| BinError::DimensionsOverflow)?
+        .checked_add(1).ok_or(BinError::DimensionsOverflow)?;
+    if edges.len() > u32::MAX as usize { return Err(BinError::DimensionsOverflow); }
     let indices = edges.iter().filter(|edge| height != 0 &&
         edge.lower.y > 0.0 && edge.upper.y < height as f32).count();
-    Ok(AnalyticBinRequirements { offsets, indices })
+    Ok(BinRequirements { offsets, indices })
 }
 
-pub fn build_analytic_row_bins<'a>(edges: &[Edge], height: u32,
-    workspace: AnalyticBinWorkspace<'a>) ->
-    Result<AnalyticRowBins<'a>, AnalyticBinError> {
-    let required = analytic_bin_requirements(edges, height)?;
+pub fn build_row_bins<'a>(edges: &[Edge], height: u32,
+    workspace: BinWorkspace<'a>) ->
+    Result<RowBins<'a>, BinError> {
+    let required = bin_requirements(edges, height)?;
     if workspace.row_offsets.len() < required.offsets {
-        return Err(AnalyticBinError::OffsetCapacity { required: required.offsets });
+        return Err(BinError::OffsetCapacity { required: required.offsets });
     }
     if workspace.edge_indices.len() < required.indices {
-        return Err(AnalyticBinError::IndexCapacity { required: required.indices });
+        return Err(BinError::IndexCapacity { required: required.indices });
     }
     let offsets = &mut workspace.row_offsets[..required.offsets];
     let indices = &mut workspace.edge_indices[..required.indices];
@@ -99,11 +99,11 @@ pub fn build_analytic_row_bins<'a>(edges: &[Edge], height: u32,
                 .then_with(|| left.lower.y.total_cmp(&right.lower.y))
         });
     }
-    Ok(AnalyticRowBins { offsets, indices, height, edge_count: edges.len() })
+    Ok(RowBins { offsets, indices, height, edge_count: edges.len() })
 }
 
-pub fn rasterize_edges_analytic_binned<S>(edges: &[Edge], bins: AnalyticRowBins<'_>,
-    width: u32, height: u32, fill_rule: FillRule, workspace: &mut AnalyticWorkspace<'_>,
+pub fn rasterize_edges_binned<S>(edges: &[Edge], bins: RowBins<'_>,
+    width: u32, height: u32, fill_rule: FillRule, workspace: &mut Workspace<'_>,
     sink: &mut S) -> Result<(), RasterError<S::Error>> where S: CoverageSink {
     if bins.height != height || bins.edge_count != edges.len() {
         return Err(RasterError::InvalidEdgeBins);
@@ -127,8 +127,8 @@ pub fn rasterize_edges_analytic_binned<S>(edges: &[Edge], bins: AnalyticRowBins<
     }   Ok(())
 }
 
-pub fn rasterize_edges_analytic<S>(edges: &[Edge], width: u32, height: u32,
-    fill_rule: FillRule, workspace: &mut AnalyticWorkspace<'_>, sink: &mut S) ->
+pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32,
+    fill_rule: FillRule, workspace: &mut Workspace<'_>, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {
     if edges.iter().any(|edge| !edge.is_valid()) { return Err(RasterError::InvalidEdge); }
     let width = checked_width(width).ok_or(RasterError::DimensionsOverflow)?;
@@ -155,7 +155,7 @@ pub fn rasterize_edges_analytic<S>(edges: &[Edge], width: u32, height: u32,
 }
 
 fn integrate_row(edges: &[Edge], row_y: f32, fill_rule: FillRule,
-    active: &mut [AnalyticIntersection], mut active_count: usize, first_slab: bool,
+    active: &mut [Intersection], mut active_count: usize, first_slab: bool,
     row: &mut [f32]) -> usize {
     let (row_end, mut y0) = (row_y + 1.0, row_y);
     let mut include_spanning = first_slab;
@@ -178,7 +178,7 @@ fn integrate_row(edges: &[Edge], row_y: f32, fill_rule: FillRule,
 }
 
 fn integrate_binned_row(edges: &[Edge], row_edges: &[u32], row_y: f32,
-    fill_rule: FillRule, active: &mut [AnalyticIntersection], mut active_count: usize,
+    fill_rule: FillRule, active: &mut [Intersection], mut active_count: usize,
     row: &mut [f32]) -> usize {
     let (row_end, mut y0, mut pending) = (row_y + 1.0, row_y, 0);
     while y0 < row_end {
@@ -188,7 +188,7 @@ fn integrate_binned_row(edges: &[Edge], row_edges: &[u32], row_y: f32,
             if edge.upper.y > y0 { break; }
             if edge.lower.y > y0 {
                 let (slope, x0) = (edge.slope(), edge.x_at(y0));
-                active[active_count] = AnalyticIntersection {
+                active[active_count] = Intersection {
                     x0, x1: x0, slope, y_end: edge.lower.y, winding: edge.winding,
                 };
                 active_count += 1;
@@ -209,7 +209,7 @@ fn integrate_binned_row(edges: &[Edge], row_edges: &[u32], row_y: f32,
     }   active_count
 }
 
-fn prepare_binned_slab(y0: f32, limit: f32, active: &mut [AnalyticIntersection]) -> f32 {
+fn prepare_binned_slab(y0: f32, limit: f32, active: &mut [Intersection]) -> f32 {
     let mut next = active.iter().map(|edge| edge.y_end)
         .filter(|&end| end > y0).fold(limit, f32::min);
     // Vertical edges never cross x boundaries or each other. The initial x
@@ -262,7 +262,7 @@ fn next_occupied_row(edges: &[Edge], current: u32, limit: u32) -> Option<u32> {
         .filter(|&row| row < limit).min()
 }
 
-fn retain_active(active: &mut [AnalyticIntersection], count: usize, y: f32) -> usize {
+fn retain_active(active: &mut [Intersection], count: usize, y: f32) -> usize {
     let mut retained = 0;
     for index in 0..count {
         if active[index].y_end > y {
@@ -273,11 +273,11 @@ fn retain_active(active: &mut [AnalyticIntersection], count: usize, y: f32) -> u
 }
 
 fn activate_edges(edges: &[Edge], y: f32, include_spanning: bool,
-    active: &mut [AnalyticIntersection], mut count: usize) -> usize {
+    active: &mut [Intersection], mut count: usize) -> usize {
     for edge in edges {
         if edge.upper.y == y || include_spanning && edge.upper.y < y && edge.lower.y > y {
             let (slope, x0) = (edge.slope(), edge.x_at(y));
-            active[count] = AnalyticIntersection {
+            active[count] = Intersection {
                 x0, x1: x0, slope, y_end: edge.lower.y, winding: edge.winding,
             };
             count += 1;
@@ -286,7 +286,7 @@ fn activate_edges(edges: &[Edge], y: f32, include_spanning: bool,
 }
 
 fn prepare_active_slab(edges: &[Edge], y0: f32, limit: f32,
-    active: &mut [AnalyticIntersection]) -> f32 {
+    active: &mut [Intersection]) -> f32 {
     let mut next = active.iter().map(|edge| edge.y_end)
         .filter(|&end| end > y0).fold(limit, f32::min);
     for start in edges.iter().map(|edge| edge.upper.y) {
@@ -326,7 +326,7 @@ fn prepare_active_slab(edges: &[Edge], y0: f32, limit: f32,
     next
 }
 
-fn order_active_edges(active: &mut [AnalyticIntersection]) {
+fn order_active_edges(active: &mut [Intersection]) {
     insertion_sort_active_by(active, |previous, edge|
         previous.x0.total_cmp(&edge.x0)
             .then_with(|| previous.slope.total_cmp(&edge.slope)).is_gt());
@@ -336,13 +336,13 @@ fn is_distinct_event(y: f32, current: f32) -> bool {
     y - current > f32::EPSILON * current.abs().max(1.0) * 4.0
 }
 
-fn order_active_midpoints(active: &mut [AnalyticIntersection]) {
+fn order_active_midpoints(active: &mut [Intersection]) {
     insertion_sort_active_by(active, |previous, edge|
         (previous.x0 + previous.x1).total_cmp(&(edge.x0 + edge.x1)).is_gt());
 }
 
-fn insertion_sort_active_by(active: &mut [AnalyticIntersection],
-    is_after: impl Fn(AnalyticIntersection, AnalyticIntersection) -> bool) {
+fn insertion_sort_active_by(active: &mut [Intersection],
+    is_after: impl Fn(Intersection, Intersection) -> bool) {
     for index in 1..active.len() {
         let edge = active[index];
         let mut position = index;
@@ -356,7 +356,7 @@ fn insertion_sort_active_by(active: &mut [AnalyticIntersection],
     }
 }
 
-fn integrate_spans(intersections: &[AnalyticIntersection], height: f32,
+fn integrate_spans(intersections: &[Intersection], height: f32,
     fill_rule: FillRule, row: &mut [f32]) {
     let (mut winding, mut left) = (0_i32, None);
     for right in intersections {
@@ -368,8 +368,8 @@ fn integrate_spans(intersections: &[AnalyticIntersection], height: f32,
     }
 }
 
-fn integrate_span(left: &AnalyticIntersection,
-                 right: &AnalyticIntersection, height: f32, row: &mut [f32]) {
+fn integrate_span(left: &Intersection,
+                 right: &Intersection, height: f32, row: &mut [f32]) {
     let start = libm::floorf(left.x0.min( left.x1)).clamp(0.0, row.len() as _) as _;
     let end   = libm::ceilf(right.x0.max(right.x1)).clamp(0.0, row.len() as _) as _;
     let full_start =
@@ -385,7 +385,7 @@ fn integrate_span(left: &AnalyticIntersection,
     }
 }
 
-fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
+fn integrate_partial_span(left: &Intersection, right: &Intersection,
     height: f32, row: &mut [f32], start: usize, end: usize) {
     for (x, coverage) in row.iter_mut().enumerate().take(end).skip(start) {
         let x = x as _;
@@ -399,7 +399,8 @@ fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersect
     use alloc::{vec, vec::Vec};
     use core::convert::Infallible;
     use crate::{flatten::FlattenOptions, geometry::{Affine, PathBuilder},
-        raster::{rasterize_edges, FillRule, Intersection, RasterOptions, RasterWorkspace},
+        raster::{rasterize_edges as rasterize_edges_sampled, FillRule,
+            Intersection as SampledIntersection, RasterOptions, RasterWorkspace},
         edge::{build_fill_edges, Edge},
     };
 
@@ -413,9 +414,9 @@ fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersect
     fn render_analytic(edges: &[Edge], width: u32, height: u32,
         fill_rule: FillRule) -> Vec<u8> {
         let mut pixels = vec![0; width as usize * height as usize];
-        let mut intersections = vec![AnalyticIntersection::default(); edges.len()];
+        let mut intersections = vec![Intersection::default(); edges.len()];
         let mut row = vec![0.0; width as usize];
-        rasterize_edges_analytic(edges, width, height, fill_rule, &mut AnalyticWorkspace {
+        rasterize_edges(edges, width, height, fill_rule, &mut Workspace {
                 intersections: &mut intersections, row_coverage: &mut row,
             }, &mut |x, y, coverage| {
                 pixels[(y * width + x) as usize] = coverage;
@@ -426,18 +427,18 @@ fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersect
 
     fn render_binned(edges: &[Edge], width: u32, height: u32,
         fill_rule: FillRule) -> Vec<u8> {
-        let requirements = analytic_bin_requirements(edges, height).unwrap();
+        let requirements = bin_requirements(edges, height).unwrap();
         let (mut offsets, mut indices) = (
             vec![0; requirements.offsets], vec![0; requirements.indices],
         );
-        let bins = build_analytic_row_bins(edges, height, AnalyticBinWorkspace {
+        let bins = build_row_bins(edges, height, BinWorkspace {
             row_offsets: &mut offsets, edge_indices: &mut indices,
         }).unwrap();
         let mut pixels = vec![0; width as usize * height as usize];
-        let mut intersections = vec![AnalyticIntersection::default(); edges.len()];
+        let mut intersections = vec![Intersection::default(); edges.len()];
         let mut row = vec![0.0; width as usize];
-        rasterize_edges_analytic_binned(edges, bins, width, height, fill_rule,
-            &mut AnalyticWorkspace {
+        rasterize_edges_binned(edges, bins, width, height, fill_rule,
+            &mut Workspace {
                 intersections: &mut intersections, row_coverage: &mut row,
             }, &mut |x, y, coverage| {
                 pixels[(y * width + x) as usize] = coverage;
@@ -449,9 +450,9 @@ fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersect
     fn render_sampled(edges: &[Edge], width: u32, height: u32,
         fill_rule: FillRule) -> Vec<u8> {
         let mut pixels = vec![0; width as usize * height as usize];
-        let mut intersections = vec![Intersection::default(); edges.len()];
+        let mut intersections = vec![SampledIntersection::default(); edges.len()];
         let mut row  = vec![0.0; width as usize];
-        rasterize_edges(edges, width, height, fill_rule,
+        rasterize_edges_sampled(edges, width, height, fill_rule,
             RasterOptions { vertical_samples: 8192 }, &mut RasterWorkspace {
                 intersections: &mut intersections, row_coverage: &mut row,
             }, &mut |x, y, coverage| {
@@ -472,9 +473,9 @@ fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersect
     #[test] fn invalid_public_edges_are_rejected_before_rasterization() {
         let edges = [Edge { upper: (0.0, 1.0).into(), lower: (0.0, 0.0).into(), winding: 1 }];
         let (mut intersections, mut row) =
-            ([AnalyticIntersection::default(); 1], [0.0; 1]);
-        let result = rasterize_edges_analytic(&edges, 1, 1, FillRule::NonZero,
-            &mut AnalyticWorkspace {
+            ([Intersection::default(); 1], [0.0; 1]);
+        let result = rasterize_edges(&edges, 1, 1, FillRule::NonZero,
+            &mut Workspace {
                 intersections: &mut intersections, row_coverage: &mut row,
             }, &mut |_, _, _| Ok::<_, Infallible>(()));
         assert_eq!(result, Err(RasterError::InvalidEdge));
@@ -536,17 +537,17 @@ fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersect
             Edge { upper: (1.0, 0.0).into(), lower: (1.0, 1.0).into(), winding: 1 },
         ];
         let (mut intersections, mut row) = ([], [0.0]);
-        let result = rasterize_edges_analytic(&edges, 1, 1, FillRule::NonZero,
-            &mut AnalyticWorkspace {
+        let result = rasterize_edges(&edges, 1, 1, FillRule::NonZero,
+            &mut Workspace {
                 intersections: &mut intersections, row_coverage: &mut row,
             }, &mut |_, _, _| Ok::<_, Infallible>(()),
         );
         assert_eq!(result,
             Err(RasterError::WorkspaceTooSmall { intersections: 2, row_coverage: 1 }));
 
-        let mut intersections = [AnalyticIntersection::default(); 2];
-        let result = rasterize_edges_analytic(&edges, 1, 1, FillRule::NonZero,
-            &mut AnalyticWorkspace {
+        let mut intersections = [Intersection::default(); 2];
+        let result = rasterize_edges(&edges, 1, 1, FillRule::NonZero,
+            &mut Workspace {
                 intersections: &mut intersections, row_coverage: &mut row,
             }, &mut |_, _, _| Err("stop"),
         );
@@ -559,23 +560,23 @@ fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersect
             Edge { upper: (1.0,  0.5).into(), lower: (1.0, 2.0).into(), winding:  1 },
             Edge { upper: (2.0,  3.0).into(), lower: (2.0, 4.0).into(), winding:  1 },
         ];
-        assert_eq!(analytic_bin_requirements(&edges, 2).unwrap(),
-            AnalyticBinRequirements { offsets: 3, indices: 2 });
-        assert!(matches!(build_analytic_row_bins(&edges, 2, AnalyticBinWorkspace {
+        assert_eq!(bin_requirements(&edges, 2).unwrap(),
+            BinRequirements { offsets: 3, indices: 2 });
+        assert!(matches!(build_row_bins(&edges, 2, BinWorkspace {
                 row_offsets: &mut [0; 2], edge_indices: &mut [0; 2],
-            }), Err(AnalyticBinError::OffsetCapacity { required: 3 })));
-        assert!(matches!(build_analytic_row_bins(&edges, 2, AnalyticBinWorkspace {
+            }), Err(BinError::OffsetCapacity { required: 3 })));
+        assert!(matches!(build_row_bins(&edges, 2, BinWorkspace {
                 row_offsets: &mut [0; 3], edge_indices: &mut [0; 1],
-            }), Err(AnalyticBinError::IndexCapacity { required: 2 })));
+            }), Err(BinError::IndexCapacity { required: 2 })));
 
         let (mut offsets, mut indices) = ([0; 3], [0; 2]);
-        let bins = build_analytic_row_bins(&edges, 2, AnalyticBinWorkspace {
+        let bins = build_row_bins(&edges, 2, BinWorkspace {
             row_offsets: &mut offsets, edge_indices: &mut indices,
         }).unwrap();
         let (mut intersections, mut row) =
-            ([AnalyticIntersection::default(); 3], [0.0; 1]);
-        assert_eq!(rasterize_edges_analytic_binned(&edges, bins, 1, 1,
-            FillRule::NonZero, &mut AnalyticWorkspace {
+            ([Intersection::default(); 3], [0.0; 1]);
+        assert_eq!(rasterize_edges_binned(&edges, bins, 1, 1,
+            FillRule::NonZero, &mut Workspace {
                 intersections: &mut intersections, row_coverage: &mut row,
             }, &mut |_, _, _| Ok::<_, Infallible>(())),
             Err(RasterError::InvalidEdgeBins));
@@ -586,12 +587,12 @@ fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersect
             Edge { upper: (2.0, 0.0).into(), lower: (2.0, 1.0).into(), winding: -1 },
             Edge { upper: (3.0, 0.0).into(), lower: (3.0, 1.0).into(), winding: 1 },
         ];
-        let mut intersections = [AnalyticIntersection::default(); 2];
+        let mut intersections = [Intersection::default(); 2];
         let mut row = [0.0];
         let mut calls = 0;
         for (width, height) in [(0, 1), (1, 0), (1, 1)] {
-            rasterize_edges_analytic(&edges, width, height, FillRule::NonZero,
-                &mut AnalyticWorkspace {
+            rasterize_edges(&edges, width, height, FillRule::NonZero,
+                &mut Workspace {
                     intersections: &mut intersections, row_coverage: &mut row,
                 }, &mut |_, _, _| { calls += 1; Ok::<_, Infallible>(()) },
             ).unwrap();

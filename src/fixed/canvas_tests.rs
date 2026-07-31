@@ -1,5 +1,5 @@
 use super::*;
-use crate::{analytic::AnalyticIntersection, canvas::{
+use crate::{analytic::Intersection as AnalyticIntersection, canvas::{
         AnalyticRenderOptions, AnalyticRenderWorkspace, rasterize_path_clip_analytic,
         render_paint_analytic, render_paint_analytic_clipped,
         render_paint_analytic_masked},

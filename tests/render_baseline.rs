@@ -1,5 +1,5 @@
 
-use ugl_rs::{analytic::AnalyticIntersection,
+use ugl_rs::{analytic::Intersection as AnalyticIntersection,
     color::{PremulSRGBA8, LinearPremulRGBA, PremulRGBA, SRGBA, SRGBA as RGBA},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,

@@ -1,8 +1,9 @@
 
 use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWorkspace,
-        analytic_bin_requirements, build_analytic_row_bins, rasterize_edges_analytic_binned},
+use ugl_rs::{analytic::{BinWorkspace as AnalyticBinWorkspace,
+        Intersection as AnalyticIntersection, Workspace as AnalyticWorkspace,
+        bin_requirements, build_row_bins, rasterize_edges_binned},
     color::{PremulSRGBA8, LinearPremulRGBA, Srgb8Encoder,
         SRGB8_ENCODE_LUT_SIZE, SRGBA, SRGBA as RGBA},
     dash::{dash_polyline, DashContour, DashPattern, DashWorkspace},
@@ -93,17 +94,17 @@ fn report_span_statistics(path: &Path) {
             edges.push(edge);
             Ok::<_, core::convert::Infallible>(())
         }).unwrap();
-    let requirements = analytic_bin_requirements(&edges, HEIGHT).unwrap();
+    let requirements = bin_requirements(&edges, HEIGHT).unwrap();
     let (mut offsets, mut indices) =
         (vec![0; requirements.offsets], vec![0; requirements.indices]);
-    let bins = build_analytic_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
+    let bins = build_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
         row_offsets: &mut offsets, edge_indices: &mut indices,
     }).unwrap();
     let (mut active, mut row, mut stats) = (
         vec![AnalyticIntersection::default(); edges.len()],
         vec![0.0; WIDTH as usize], SpanStatistics::default(),
     );
-    rasterize_edges_analytic_binned(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+    rasterize_edges_binned(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
         &mut AnalyticWorkspace {
             intersections: &mut active, row_coverage: &mut row,
         }, &mut stats).unwrap();
@@ -434,17 +435,17 @@ fn benchmark_analytic_active(c: &mut Criterion) {
     let mut group = c.benchmark_group("analytic_active");
     group.throughput(Throughput::Elements(WIDTH as u64 * HEIGHT as u64));
     for (name, edges) in scenes {
-        let requirements = analytic_bin_requirements(&edges, HEIGHT).unwrap();
+        let requirements = bin_requirements(&edges, HEIGHT).unwrap();
         let (mut offsets, mut indices) =
             (vec![0; requirements.offsets], vec![0; requirements.indices]);
-        let bins = build_analytic_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
+        let bins = build_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
             row_offsets: &mut offsets, edge_indices: &mut indices,
         }).unwrap();
         let (mut active, mut row) =
             (vec![AnalyticIntersection::default(); edges.len()], vec![0.0; WIDTH as usize]);
         group.bench_function(name, |b| b.iter(|| {
             let mut sink = RunCounter::default();
-            rasterize_edges_analytic_binned(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+            rasterize_edges_binned(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
                 &mut AnalyticWorkspace {
                     intersections: &mut active, row_coverage: &mut row,
                 }, &mut sink,

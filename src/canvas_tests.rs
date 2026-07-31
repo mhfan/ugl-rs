@@ -1,6 +1,6 @@
 
 use super::*;
-use crate::{analytic::AnalyticIntersection,
+use crate::{analytic::Intersection as AnalyticIntersection,
     color::{PremulSRGBA8, RGBA as GenericRGBA, SRGBA as RGBA},
     edge::Edge,
     geometry::{Affine, PathBuilder}, raster::Intersection,

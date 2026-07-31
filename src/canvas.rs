@@ -4,8 +4,9 @@ use core::convert::Infallible;
 use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
     dash::{dash_polyline, DashContour, DashError, DashPattern, DashWorkspace},
     edge::{build_fill_edges, Edge, EdgeSink},
-    analytic::{AnalyticBinError, AnalyticBinWorkspace, AnalyticIntersection,
-        AnalyticWorkspace, build_analytic_row_bins, rasterize_edges_analytic_binned},
+    analytic::{BinError as AnalyticBinError, BinWorkspace as AnalyticBinWorkspace,
+        Intersection as AnalyticIntersection, Workspace as AnalyticWorkspace,
+        build_row_bins, rasterize_edges_binned},
     flatten::{FlattenError, FlattenOptions}, sampler::{PaintSampler, SolidPaint},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, Intersection,
         MaskClipSink, RasterError, RasterOptions, RasterWorkspace, RectClipSink,
@@ -479,9 +480,9 @@ pub(crate) fn rasterize_analytic<S>(edges: &[Edge], width: u32, height: u32,
     mut workspace: AnalyticWorkspace<'_>, bin_workspace: AnalyticBinWorkspace<'_>,
     sink: &mut S) ->
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
-    let bins = build_analytic_row_bins(edges, height, bin_workspace)
+    let bins = build_row_bins(edges, height, bin_workspace)
         .map_err(map_analytic_bin_error)?;
-    rasterize_edges_analytic_binned(edges, bins, width, height, fill_rule,
+    rasterize_edges_binned(edges, bins, width, height, fill_rule,
         &mut workspace, sink).map_err(map_raster_error)
 }
 

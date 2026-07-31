@@ -147,7 +147,8 @@ fn analytic_workspace<'a>(
 
 #[cfg(test)] mod tests {
     use super::*;
-    use crate::{analytic::AnalyticIntersection, edge::Edge, geometry::{PathBuilder, Point},
+    use crate::{analytic::Intersection as AnalyticIntersection,
+        edge::Edge, geometry::{PathBuilder, Point},
         raster::CoverageMask,
         sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode},
         stroke::StrokeContour,
