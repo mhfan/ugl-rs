@@ -67,6 +67,14 @@ impl<'a> PixmapMut<'a> {
               self.data[offset + 2], self.data[offset + 3]).into())
     }
 
+    pub(crate) fn write_encoded_pixel(&mut self, x: u32, y: u32,
+        color: crate::color::EncodedPremulSRGBA8) {
+        let offset = y as usize * self.stride as usize +
+                     x as usize * BYTES_PER_PIXEL as usize;
+        self.data[offset..offset + BYTES_PER_PIXEL as usize]
+            .copy_from_slice(&color.to_array());
+    }
+
     fn blend_solid_span(&mut self, x: u32, y: u32, len: u32,
         color: PremulRGBA<u8>, coverage: u8) {
         let terms = solid_blend_terms(color, coverage);
@@ -438,7 +446,8 @@ pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule:
     }   Ok(())
 }
 
-fn build_edges(path: &Path, transform: Affine, options: FlattenOptions, edges: &mut [Edge]) ->
+pub(crate) fn build_edges(path: &Path, transform: Affine, options: FlattenOptions,
+    edges: &mut [Edge]) ->
     Result<usize, RenderError> {
     let mut sink = EdgeSliceSink { edges, len: 0 };
     build_fill_edges(path, transform, options, &mut sink).map_err(map_flatten_error)?;
@@ -458,7 +467,8 @@ fn build_stroke_edges(path: &Path, transform: Affine, options: AnalyticStrokeOpt
     }   Ok(sink.len)
 }
 
-fn rasterize_analytic<S>(edges: &[Edge], width: u32, height: u32, fill_rule: FillRule,
+pub(crate) fn rasterize_analytic<S>(edges: &[Edge], width: u32, height: u32,
+    fill_rule: FillRule,
     mut workspace: AnalyticWorkspace<'_>, bin_workspace: AnalyticBinWorkspace<'_>,
     sink: &mut S) ->
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {

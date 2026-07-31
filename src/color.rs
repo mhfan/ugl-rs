@@ -91,6 +91,10 @@
 #[derive(Clone, Copy, Debug, PartialEq)] #[repr(transparent)]
 pub struct LinearPremulRGBA<T: ColorChannel = f32>(PremulRGBA<T>);
 
+impl<T: ColorChannel> Default for LinearPremulRGBA<T> {
+    fn default() -> Self { Self(PremulRGBA::default()) }
+}
+
 /// An RGBA color whose RGB channels have already been multiplied by alpha.
 ///
 /// This is a distinct type so straight-alpha [`RGBA`] values cannot accidentally
@@ -367,6 +371,10 @@ impl EncodedPremulSRGBA8 {
     }
     pub fn zeroed() -> Self { Self(PremulRGBA::zeroed()) }
     pub fn to_array(self) -> [u8; 4] { self.0.to_array() }
+    /// Decodes encoded premultiplied bytes into linear-light premultiplied color.
+    pub fn to_linear(self) -> LinearPremulRGBA<f32> {
+        SRGBA::from(self.0.unpremul()).to_linear().premul()
+    }
     pub(crate) fn into_legacy(self) -> PremulRGBA<u8> { self.0 }
 }
 
@@ -396,6 +404,20 @@ impl LinearPremulRGBA<f32> {
     pub fn unpremul(self) -> LinearRGBA<f32> { LinearRGBA(self.0.unpremul()) }
     pub fn to_encoded_srgba8(self) -> EncodedPremulSRGBA8 {
         self.unpremul().to_srgba8().premul_encoded()
+    }
+
+    pub(crate) fn scale(self, factor: f32) -> Self {
+        let [r, g, b, a] = self.to_array();
+        Self(PremulRGBA::new_clamped(
+            r * factor, g * factor, b * factor, a * factor))
+    }
+
+    pub(crate) fn src_over(self, dest: Self) -> Self {
+        let ([sr, sg, sb, sa], [dr, dg, db, da]) = (self.to_array(), dest.to_array());
+        let inverse = 1.0 - sa;
+        Self(PremulRGBA::new_clamped(
+            sr + dr * inverse, sg + dg * inverse, sb + db * inverse,
+            sa + da * inverse))
     }
 
     pub(crate) fn lerp(self, other: Self, t: f32) -> Self {

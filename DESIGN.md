@@ -150,14 +150,20 @@ and SIMD layouts do not enter the common `Edge` representation.
 - Compositing is source-over unless explicitly selected otherwise.
 - Coverage multiplies premultiplied source color and alpha.
 - `SRGBA`, `LinearRGBA`, and their premultiplied counterparts make transfer
-  state explicit. The current RGBA8888 compositor remains an encoded-domain
-  compatibility path; a fully linear working framebuffer is a later stage.
+  state explicit. `canvas_linear::LinearPixmapMut` retains premultiplied
+  linear-light `f32` through source-over and encodes only when presenting into
+  RGBA8888. `canvas::PixmapMut` remains the compact encoded-domain compatibility
+  and performance path.
 - Integer conversion maps channel extrema exactly and uses round-to-nearest.
 
 ## Paint and gradients
 
 - `PaintSampler` returns `EncodedPremulSRGBA8` at device-space pixel centers
   and is statically dispatched without allocation.
+- `LinearPaintSampler` is a separate explicit contract returning
+  `LinearPremulRGBA<f32>` without an encoded round trip. Built-in solid and
+  gradient paints implement both contracts; custom encoded samplers do not
+  silently opt into linear compositing.
 - Solid paint reports its constant color so span and tile compositors retain
   their bulk fast paths.
 - `TransformedPaint` maps device samples into paint-local coordinates through
@@ -183,6 +189,9 @@ and SIMD layouts do not enter the common `Edge` representation.
   reference: smooth-gradient error decreases with ramp size, while hard
   transitions are quantized to one ramp interval. A 1024-entry ramp is the
   current performance baseline.
+- The encoded ramp is intentionally bypassed by `LinearPaintSampler`: stops are
+  already stored in linear premultiplied form, so the linear framebuffer path
+  interpolates them directly without transfer-function calls or quantization.
 
 ## Strokes
 

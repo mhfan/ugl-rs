@@ -29,9 +29,27 @@ pub trait PaintSampler {
     fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { None }
 }
 
+/// Produces premultiplied linear-light colors without an encoded round trip.
+///
+/// This separate trait makes the working color space explicit. Implementing
+/// [`PaintSampler`] alone does not opt a sampler into linear compositing.
+pub trait LinearPaintSampler {
+    fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32>;
+    fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> { None }
+}
+
 impl<S: PaintSampler + ?Sized> PaintSampler for &S {
     fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 { (**self).sample(x, y) }
     fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { (**self).solid_color() }
+}
+
+impl<S: LinearPaintSampler + ?Sized> LinearPaintSampler for &S {
+    fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
+        (**self).sample_linear(x, y)
+    }
+    fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> {
+        (**self).solid_color_linear()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum PaintTransformError {
@@ -63,24 +81,45 @@ impl<S: PaintSampler> PaintSampler for TransformedPaint<S> {
     fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { self.sampler.solid_color() }
 }
 
+impl<S: LinearPaintSampler> LinearPaintSampler for TransformedPaint<S> {
+    fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
+        let point = self.device_to_paint.transform_point((x, y).into());
+        self.sampler.sample_linear(point.x, point.y)
+    }
+
+    fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> {
+        self.sampler.solid_color_linear()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SolidPaint { color: EncodedPremulSRGBA8 }
+pub struct SolidPaint {
+    encoded: EncodedPremulSRGBA8, linear: LinearPremulRGBA<f32>,
+}
 
 impl SolidPaint {
-    pub fn new(color: RGBA<u8>) -> Self {
-        Self { color: SRGBA::from(color).premul_encoded() }
+    pub fn new(color: RGBA<u8>) -> Self { Self::from_srgba(color.into()) }
+    pub fn from_srgba(color: SRGBA<u8>) -> Self {
+        Self { encoded: color.premul_encoded(), linear: color.to_linear().premul() }
     }
-    pub fn from_srgba(color: SRGBA<u8>) -> Self { Self { color: color.premul_encoded() } }
-    pub fn premultiplied(color: EncodedPremulSRGBA8) -> Self { Self { color } }
-    pub fn color(&self) -> EncodedPremulSRGBA8 { self.color }
+    pub fn premultiplied(color: EncodedPremulSRGBA8) -> Self {
+        Self { encoded: color, linear: color.to_linear() }
+    }
+    pub fn color(&self) -> EncodedPremulSRGBA8 { self.encoded }
+    pub fn linear_color(&self) -> LinearPremulRGBA<f32> { self.linear }
 }
 
 impl From<RGBA<u8>> for SolidPaint { fn from(color: RGBA<u8>) -> Self { Self::new(color) } }
 impl From<SRGBA<u8>> for SolidPaint { fn from(color: SRGBA<u8>) -> Self { Self::from_srgba(color) } }
 
 impl PaintSampler for SolidPaint {
-    fn sample(&self, _x: f32, _y: f32) -> EncodedPremulSRGBA8 { self.color }
-    fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { Some(self.color) }
+    fn sample(&self, _x: f32, _y: f32) -> EncodedPremulSRGBA8 { self.encoded }
+    fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { Some(self.encoded) }
+}
+
+impl LinearPaintSampler for SolidPaint {
+    fn sample_linear(&self, _x: f32, _y: f32) -> LinearPremulRGBA<f32> { self.linear }
+    fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> { Some(self.linear) }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -149,16 +188,22 @@ impl<'a> GradientStops<'a> {
     }
 
     fn sample_stops(stops: &[GradientStop], t: f32) -> EncodedPremulSRGBA8 {
+        Self::sample_linear_stops(stops, t).to_encoded_srgba8()
+    }
+
+    fn sample_linear(&self, t: f32) -> LinearPremulRGBA<f32> {
+        Self::sample_linear_stops(self.stops, t)
+    }
+
+    fn sample_linear_stops(stops: &[GradientStop], t: f32) -> LinearPremulRGBA<f32> {
         let upper = stops.partition_point(|stop| stop.offset <= t);
-        if  upper == 0 { return stops[0].color.to_encoded_srgba8(); }
-        if  upper == stops.len() {
-            return stops[upper - 1].color.to_encoded_srgba8();
-        }
+        if  upper == 0 { return stops[0].color; }
+        if  upper == stops.len() { return stops[upper - 1].color; }
         let (from, to) = (stops[upper - 1], stops[upper]);
         let extent = to.offset - from.offset;
-        if  extent == 0.0 { return to.color.to_encoded_srgba8(); }
+        if  extent == 0.0 { return to.color; }
         let position = (t - from.offset) / extent;
-        from.color.lerp(to.color, position).to_encoded_srgba8()
+        from.color.lerp(to.color, position)
     }
 }
 
@@ -206,6 +251,14 @@ impl PaintSampler for LinearGradient<'_> {
         let t = ((x - self.from.x) * self.delta.x  +
                  (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
         self.stops.sample(self.spread.map(t))
+    }
+}
+
+impl LinearPaintSampler for LinearGradient<'_> {
+    fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
+        let t = ((x - self.from.x) * self.delta.x +
+                 (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
+        self.stops.sample_linear(self.spread.map(t))
     }
 }
 
@@ -285,6 +338,13 @@ impl PaintSampler for RadialGradient<'_> {
     }
 }
 
+impl LinearPaintSampler for RadialGradient<'_> {
+    fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
+        self.parameter(x, y).map_or_else(LinearPremulRGBA::default,
+            |t| self.stops.sample_linear(self.spread.map(t)))
+    }
+}
+
 /// A full-turn conic gradient around `center`.
 #[derive(Clone, Copy, Debug)] pub struct ConicGradient<'a> {
     center: Point, start_turn: f32, stops: GradientStops<'a>,
@@ -306,6 +366,13 @@ impl PaintSampler for ConicGradient<'_> {
     fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
         let turn =  libm::atan2f(y - self.center.y, x - self.center.x) / TAU;
         self.stops.sample(SpreadMode::Repeat.map(turn - self.start_turn))
+    }
+}
+
+impl LinearPaintSampler for ConicGradient<'_> {
+    fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
+        let turn = libm::atan2f(y - self.center.y, x - self.center.x) / TAU;
+        self.stops.sample_linear(SpreadMode::Repeat.map(turn - self.start_turn))
     }
 }
 
@@ -373,6 +440,7 @@ impl PaintSampler for ConicGradient<'_> {
                     "t={t}, actual={actual:?}, expected={expected:?}");
             }
         }
+        assert_eq!(ramp.sample_linear(0.5).to_array(), [0.5, 0.0, 0.5, 1.0]);
     }
 
     #[test] fn linear_gradient_projects_device_coordinates_and_spreads() {
