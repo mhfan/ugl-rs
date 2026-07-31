@@ -3,7 +3,7 @@
 
 use std::{env, fs, hint::black_box, process::ExitCode, time::Instant};
 use ugl_rs::{
-    analytic::Intersection,
+    analytic::{Cell, Intersection},
     canvas::{Pixmap, RenderOptions, RenderWorkspace, StrokePathOptions, StrokeWorkspace,
         render_solid, render_stroke_solid},
     color::SRGBA,
@@ -107,7 +107,7 @@ fn run_f32() -> Result<(), String> {
     let mut pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
     let mut edges = vec![Edge::default(); EDGE_CAPACITY];
     let mut intersections = vec![Intersection::default(); EDGE_CAPACITY];
-    let mut row_coverage = vec![0.0; WIDTH as usize];
+    let mut cells = vec![Cell::default(); WIDTH as usize];
     let mut row_offsets = vec![0; HEIGHT as usize + 1];
     let mut edge_indices = vec![0; EDGE_CAPACITY];
     let mut stroke_points = vec![Default::default(); 2048];
@@ -123,7 +123,7 @@ fn run_f32() -> Result<(), String> {
                     SRGBA::new(40, 120, 220, 192), RenderOptions::default(), &mut target,
                     &mut RenderWorkspace {
                         edges: &mut edges, intersections: &mut intersections,
-                        row_coverage: &mut row_coverage, row_offsets: &mut row_offsets,
+                        cells: &mut cells, row_offsets: &mut row_offsets,
                         edge_indices: &mut edge_indices,
                     }),
                 Operation::Stroke => render_stroke_solid(&path, Affine::identity(),
@@ -133,7 +133,7 @@ fn run_f32() -> Result<(), String> {
                     }, &mut target, &mut StrokeWorkspace {
                         points: &mut stroke_points, contours: &mut stroke_contours,
                         edges: &mut edges, intersections: &mut intersections,
-                        row_coverage: &mut row_coverage, row_offsets: &mut row_offsets,
+                        cells: &mut cells, row_offsets: &mut row_offsets,
                         edge_indices: &mut edge_indices,
                     }),
             }.map_err(|error| format!("render: {error:?}"))

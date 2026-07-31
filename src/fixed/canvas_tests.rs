@@ -1,5 +1,5 @@
 use super::*;
-use crate::{analytic::Intersection as AnalyticIntersection, canvas::{
+use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection}, canvas::{
         RenderOptions as FloatRenderOptions, RenderWorkspace as FloatRenderWorkspace,
         rasterize_path_clip as rasterize_float_path_clip,
         render_paint as render_float_paint,
@@ -64,21 +64,21 @@ fn rectangle(left: f32, top: f32, right: f32, bottom: f32) -> Path {
 
 struct AnalyticBuffers<const EDGES: usize, const WIDTH: usize> {
     intersections: [AnalyticIntersection; EDGES],
-    edges: [Edge; EDGES], row_coverage: [f32; WIDTH],
+    edges: [Edge; EDGES], cells: [AnalyticCell; WIDTH],
     row_offsets: [u32; 9], edge_indices: [u32; EDGES],
 }
 
 impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     fn new() -> Self { Self {
         intersections: [AnalyticIntersection::default(); EDGES],
-        edges: [Edge::default(); EDGES], row_coverage: [0.0; WIDTH],
+        edges: [Edge::default(); EDGES], cells: [AnalyticCell::default(); WIDTH],
         row_offsets: [0; 9], edge_indices: [0; EDGES],
     } }
 
     fn workspace(&mut self) -> FloatRenderWorkspace<'_> {
         FloatRenderWorkspace {
             edges: &mut self.edges, intersections: &mut self.intersections,
-            row_coverage: &mut self.row_coverage, row_offsets: &mut self.row_offsets,
+            cells: &mut self.cells, row_offsets: &mut self.row_offsets,
             edge_indices: &mut self.edge_indices,
         }
     }

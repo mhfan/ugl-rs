@@ -29,6 +29,9 @@ use ugl_rs::{analytic::{BinWorkspace as AnalyticBinWorkspace,
 }
 struct PointLinearSampler<'a, S>(&'a S);
 struct CompositeLinearSampler<'a, S>(&'a S);
+struct SolidBufferSink<'a> {
+    pixels: &'a mut [u8], stride: usize, color: [u8; 4],
+}
 
 impl<S: LinearPaintSampler> LinearPaintSampler for PointLinearSampler<'_, S> {
     fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
@@ -68,6 +71,26 @@ impl CoverageSink for SpanStatistics {
             0..=1 => 0, 2..=3 => 1, 4..=7 => 2,
             8..=15 => 3, 16..=31 => 4, _ => 5,
         }] += 1;
+        Ok(())
+    }
+}
+
+impl CoverageSink for SolidBufferSink<'_> {
+    type Error = core::convert::Infallible;
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        let scale = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
+        let alpha = scale(self.color[3], coverage);
+        let source = self.color.map(|channel| scale(channel, coverage));
+        let start = y as usize * self.stride + x as usize * 4;
+        let end = start + len as usize * 4;
+        for pixel in self.pixels[start..end].chunks_exact_mut(4) {
+            for channel in 0..3 {
+                pixel[channel] = source[channel]
+                    .saturating_add(scale(pixel[channel], u8::MAX - alpha));
+            }
+            pixel[3] = alpha.saturating_add(scale(pixel[3], u8::MAX - alpha));
+        }
         Ok(())
     }
 }
@@ -126,7 +149,7 @@ fn benchmark_f32(c: &mut Criterion) {
     let mut pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
 
-    let (mut edges, mut intersections, mut row_coverage) = (
+    let (mut edges, mut intersections, mut sampled_row_coverage) = (
         vec![Edge::default(); EDGE_CAPACITY],
         vec![Intersection::default(); EDGE_CAPACITY],
         vec![0.0; WIDTH as usize],
@@ -137,13 +160,14 @@ fn benchmark_f32(c: &mut Criterion) {
         render_solid_sampled(&path, Affine::identity(), RGBA::new(40, 120, 220, 192),
             SampledRenderOptions::default(), &mut target, &mut SampledRenderWorkspace {
                 edges: &mut edges, intersections: &mut intersections,
-                row_coverage: &mut row_coverage,
+                row_coverage: &mut sampled_row_coverage,
             },
         ).unwrap();
         black_box(&pixels);
     }));
 
     let mut analytic_intersections = vec![AnalyticIntersection::default(); EDGE_CAPACITY];
+    let mut analytic_cells = vec![AnalyticCell::default(); WIDTH as usize];
     let (mut analytic_offsets, mut analytic_indices) =
         (vec![0; HEIGHT as usize + 1], vec![0; EDGE_CAPACITY]);
     group.bench_function(BenchmarkId::new("analytic", "64_rectangles"), |b| b.iter(|| {
@@ -152,7 +176,7 @@ fn benchmark_f32(c: &mut Criterion) {
         render_solid(&path, Affine::identity(), RGBA::new(40, 120, 220, 192),
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut analytic_intersections,
-                row_coverage: &mut row_coverage,
+                cells: &mut analytic_cells,
                 row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
             },
         ).unwrap();
@@ -170,7 +194,7 @@ fn benchmark_f32(c: &mut Criterion) {
                 SRGBA::new(40, 120, 220, 192), RenderOptions::default(),
                 &mut target, &mut RenderWorkspace {
                     edges: &mut edges, intersections: &mut analytic_intersections,
-                    row_coverage: &mut row_coverage,
+                    cells: &mut analytic_cells,
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
                 }).unwrap();
             black_box(&linear_pixels);
@@ -191,7 +215,7 @@ fn benchmark_f32(c: &mut Criterion) {
                 &PointLinearSampler(&gradient), RenderOptions::default(),
                 &mut target, &mut RenderWorkspace {
                     edges: &mut edges, intersections: &mut analytic_intersections,
-                    row_coverage: &mut row_coverage,
+                    cells: &mut analytic_cells,
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
                 }).unwrap();
             black_box(&linear_pixels);
@@ -206,7 +230,7 @@ fn benchmark_f32(c: &mut Criterion) {
         render_paint_linear(&path, Affine::identity(), &PointLinearSampler(&radial),
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut analytic_intersections,
-                row_coverage: &mut row_coverage,
+                cells: &mut analytic_cells,
                 row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
             }).unwrap();
         black_box(&linear_pixels);
@@ -226,7 +250,7 @@ fn benchmark_f32(c: &mut Criterion) {
                 RenderOptions::default(), &mut target,
                 &mut RenderWorkspace {
                     edges: &mut edges, intersections: &mut analytic_intersections,
-                    row_coverage: &mut row_coverage,
+                    cells: &mut analytic_cells,
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
                 }).unwrap();
             black_box(&linear_pixels);
@@ -240,7 +264,7 @@ fn benchmark_f32(c: &mut Criterion) {
         render_paint_linear(&path, Affine::identity(), &radial,
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut analytic_intersections,
-                row_coverage: &mut row_coverage,
+                cells: &mut analytic_cells,
                 row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
             }).unwrap();
         black_box(&linear_pixels);
@@ -254,7 +278,7 @@ fn benchmark_f32(c: &mut Criterion) {
                 RenderOptions::default(), &mut target,
                 &mut RenderWorkspace {
                     edges: &mut edges, intersections: &mut analytic_intersections,
-                    row_coverage: &mut row_coverage,
+                    cells: &mut analytic_cells,
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
                 }).unwrap();
             black_box(&linear_pixels);
@@ -274,7 +298,7 @@ fn benchmark_f32(c: &mut Criterion) {
             &CompositeLinearSampler(&opaque_gradient), RenderOptions::default(),
             &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut analytic_intersections,
-                row_coverage: &mut row_coverage,
+                cells: &mut analytic_cells,
                 row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
             }).unwrap();
         black_box(&linear_pixels);
@@ -287,7 +311,7 @@ fn benchmark_f32(c: &mut Criterion) {
         render_paint_linear(&path, Affine::identity(), &opaque_gradient,
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut analytic_intersections,
-                row_coverage: &mut row_coverage,
+                cells: &mut analytic_cells,
                 row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
             }).unwrap();
         black_box(&linear_pixels);
@@ -301,7 +325,7 @@ fn benchmark_f32(c: &mut Criterion) {
                 SRGBA::new(40, 120, 220, 192), RenderOptions::default(),
                 &mut target, &mut RenderWorkspace {
                     edges: &mut edges, intersections: &mut analytic_intersections,
-                    row_coverage: &mut row_coverage,
+                    cells: &mut analytic_cells,
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
                 }).unwrap();
             target.encode_into(
@@ -321,7 +345,7 @@ fn benchmark_f32(c: &mut Criterion) {
                 SRGBA::new(40, 120, 220, 192), RenderOptions::default(),
                 &mut target, &mut RenderWorkspace {
                     edges: &mut edges, intersections: &mut analytic_intersections,
-                    row_coverage: &mut row_coverage,
+                    cells: &mut analytic_cells,
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
                 }).unwrap();
             target.encode_into_with(
@@ -339,7 +363,7 @@ fn benchmark_f32(c: &mut Criterion) {
                 SRGBA::new(40, 120, 220, 192), RenderOptions::default(),
                 &mut target, &mut RenderWorkspace {
                     edges: &mut edges, intersections: &mut analytic_intersections,
-                    row_coverage: &mut row_coverage,
+                    cells: &mut analytic_cells,
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
                 }).unwrap();
             target.encode_dirty_into_with(
@@ -362,10 +386,11 @@ fn benchmark_linear_presentation(c: &mut Criterion) {
     let encoder = Srgb8Encoder::new(&mut transfer_lut).unwrap();
     let mut dirty_tiles =
         vec![0; LinearPixmap::dirty_tile_words(WIDTH, HEIGHT).unwrap()];
-    let (mut edges, mut intersections, mut row_coverage,
+    let (mut edges, mut intersections, mut cells,
         mut row_offsets, mut edge_indices) = (
         vec![Edge::default(); 4], vec![AnalyticIntersection::default(); 4],
-        vec![0.0; WIDTH as usize], vec![0; HEIGHT as usize + 1], vec![0; 4],
+        vec![AnalyticCell::default(); WIDTH as usize],
+        vec![0; HEIGHT as usize + 1], vec![0; 4],
     );
     let mut group = c.benchmark_group("linear_present_rgba8888");
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
@@ -376,7 +401,7 @@ fn benchmark_linear_presentation(c: &mut Criterion) {
         render_solid_linear(&path, Affine::identity(), SRGBA::white(),
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut intersections,
-                row_coverage: &mut row_coverage,
+                cells: &mut cells,
                 row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
             }).unwrap();
         target.encode_into_with(
@@ -390,7 +415,7 @@ fn benchmark_linear_presentation(c: &mut Criterion) {
         render_solid_linear(&path, Affine::identity(), SRGBA::white(),
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut intersections,
-                row_coverage: &mut row_coverage,
+                cells: &mut cells,
                 row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
             }).unwrap();
         target.encode_dirty_into_with(
@@ -528,12 +553,12 @@ fn benchmark_stroke(c: &mut Criterion) {
             stroke_requirements(&path, options);
         let scratch = format!("{point_count}p_{contour_count}c_{edge_count}e");
         let (mut points, mut contours, mut edges, mut intersections,
-            mut row_coverage, mut pixels) = (
+            mut cells, mut pixels) = (
             vec![Default::default(); point_count],
             vec![StrokeContour::default(); contour_count],
             vec![Edge::default(); edge_count],
             vec![AnalyticIntersection::default(); edge_count],
-            vec![0.0; WIDTH as usize],
+            vec![AnalyticCell::default(); WIDTH as usize],
             vec![0; WIDTH as usize * HEIGHT as usize * 4],
         );
         let (mut row_offsets, mut edge_indices) =
@@ -545,7 +570,7 @@ fn benchmark_stroke(c: &mut Criterion) {
                 &mut Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
                 &mut StrokeWorkspace {
                     points: &mut points, contours: &mut contours, edges: &mut edges,
-                    intersections: &mut intersections, row_coverage: &mut row_coverage,
+                    intersections: &mut intersections, cells: &mut cells,
                     row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
                 }).unwrap();
             black_box(&pixels);
@@ -665,6 +690,30 @@ fn benchmark_stroke(c: &mut Criterion) {
                 intersections: &mut cell_active, cells: &mut cells,
             }, &mut sink).unwrap();
         black_box((sink.runs, sink.pixels));
+    }));
+    let color = SRGBA::new(40, 120, 220, 192).premul_encoded().to_array();
+    let mut blend_pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
+    stages.bench_function(BenchmarkId::new("coverage_blend", &scratch), |b| b.iter(|| {
+        blend_pixels.fill(0);
+        let mut sink = SolidBufferSink {
+            pixels: &mut blend_pixels, stride: WIDTH as usize * 4, color,
+        };
+        rasterize_edges_binned(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+            &mut AnalyticWorkspace {
+                intersections: &mut active, row_coverage: &mut row,
+            }, &mut sink).unwrap();
+        black_box(&blend_pixels);
+    }));
+    stages.bench_function(BenchmarkId::new("coverage_cells_blend", &scratch), |b| b.iter(|| {
+        blend_pixels.fill(0);
+        let mut sink = SolidBufferSink {
+            pixels: &mut blend_pixels, stride: WIDTH as usize * 4, color,
+        };
+        rasterize_edges_cells(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+            &mut AnalyticCellWorkspace {
+                intersections: &mut cell_active, cells: &mut cells,
+            }, &mut sink).unwrap();
+        black_box(&blend_pixels);
     }));
     stages.finish();
 

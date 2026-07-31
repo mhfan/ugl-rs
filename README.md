@@ -366,12 +366,13 @@ measurement produced these central estimates:
 | centerline curve flatten | 1.72 µs |
 | stroke outline expansion | 1.77 µs |
 | sparse row bin construction | 6.88 µs |
-| analytic coverage integration and run emission | 320.32 µs initial; 262.64 µs no_std; 221.18 µs current std |
-| complete clear + stroke + encoded composite | 233.70 µs current matched harness |
+| analytic coverage integration and run emission | 320.32 µs initial; 221.18 µs integer-slab; about 97 µs sparse cells |
+| complete clear + stroke + encoded composite | about 113 µs with sparse cells |
 
 The independently measured stages are not strictly additive, but they locate
 the dominant cost: flatten, outline, and binning total only about 10.4 µs,
-whereas coverage consumes roughly 87% of the complete draw. A prepared-stroke
+whereas the former integer-slab coverage consumed roughly 87% of the complete
+draw. A prepared-stroke
 API can still remove repeated geometry work for retained content, but it cannot
 close the measured Blend2D gap by itself. Active-edge processing, slab event
 handling, area integration, and emitted-run cost therefore take priority;
@@ -390,8 +391,17 @@ rounding; hard-float MCUs select a no_std arithmetic implementation by ABI,
 without coupling FPU policy to standard-library availability. On the same
 stroke scene, native desktop rounding first measured 212.66 µs; the current
 30-sample rerun measured 221.18 µs and Criterion detected no change from its
-saved baseline. A whole-row difference accumulator was also rejected: short stroke
-interiors did not amortize its extra boundary writes and prefix scan.
+saved baseline. A naive whole-row difference accumulator was initially
+rejected because it retained integer slab events and did not amortize its
+extra writes and prefix scan. The production sparse-cell path instead removes
+integer-x slab events, integrates boundary cells in closed form, and represents
+guaranteed-full intervals with two delta writes. It reduced the representative
+480-edge stroke coverage stage from about 218 µs to 97 µs and the complete
+encoded draw to about 113 µs. A 32-edge crossing stress scene fell from about
+1.97 ms to 283 µs. Its caller-owned row scratch is 8 bytes per pixel rather
+than the former 4 bytes; short-edge churn is statistically unchanged, while
+the 64-small-rectangle scene currently regresses about 5.7%. Optimizing that
+simple/vertical case is the next scalar performance task.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the

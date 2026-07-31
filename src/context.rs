@@ -257,7 +257,7 @@ fn render_workspace<'a>(
     workspace: &'a mut StrokeWorkspace<'_>) -> RenderWorkspace<'a> {
     RenderWorkspace {
         edges: workspace.edges, intersections: workspace.intersections,
-        row_coverage: workspace.row_coverage, row_offsets: workspace.row_offsets,
+        cells: workspace.cells, row_offsets: workspace.row_offsets,
         edge_indices: workspace.edge_indices,
     }
 }
@@ -265,7 +265,7 @@ fn render_workspace<'a>(
 fn reborrow_stroke<'a>(workspace: &'a mut StrokeWorkspace<'_>) -> StrokeWorkspace<'a> {
     StrokeWorkspace {
         points: workspace.points, contours: workspace.contours, edges: workspace.edges,
-        intersections: workspace.intersections, row_coverage: workspace.row_coverage,
+        intersections: workspace.intersections, cells: workspace.cells,
         row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
     }
 }
@@ -273,7 +273,7 @@ fn reborrow_stroke<'a>(workspace: &'a mut StrokeWorkspace<'_>) -> StrokeWorkspac
 #[derive(Default)] struct CanvasStorage {
     points: Vec<Point>, contours: Vec<StrokeContour>, edges: Vec<Edge>,
     dash_points: Vec<Point>, dash_contours: Vec<DashContour>,
-    intersections: Vec<AnalyticIntersection>, row_coverage: Vec<f32>,
+    intersections: Vec<AnalyticIntersection>, cells: Vec<crate::analytic::Cell>,
     row_offsets: Vec<u32>, edge_indices: Vec<u32>,
 }
 
@@ -282,7 +282,7 @@ impl CanvasStorage {
         StrokeWorkspace {
             points: &mut self.points, contours: &mut self.contours,
             edges: &mut self.edges, intersections: &mut self.intersections,
-            row_coverage: &mut self.row_coverage, row_offsets: &mut self.row_offsets,
+            cells: &mut self.cells, row_offsets: &mut self.row_offsets,
             edge_indices: &mut self.edge_indices,
         }, &mut self.dash_points, &mut self.dash_contours)
     }
@@ -308,7 +308,7 @@ impl CanvasStorage {
     fn prepare_render(&mut self, required: RenderRequirements) {
         self.edges.resize(required.edges, Edge::default());
         self.intersections.resize(required.intersections, AnalyticIntersection::default());
-        self.row_coverage.resize(required.row_coverage, 0.0);
+        self.cells.resize(required.cells, crate::analytic::Cell::default());
         self.row_offsets.resize(required.row_offsets, 0);
         self.edge_indices.resize(required.edge_indices, 0);
     }
@@ -626,7 +626,7 @@ impl<'target> Canvas<'target> {
     struct Buffers {
         points: [Point; 8], contours: [StrokeContour; 2], edges: [Edge; 32],
         dash_points: [Point; 16], dash_contours: [DashContour; 8],
-        intersections: [AnalyticIntersection; 32], row_coverage: [f32; 4],
+        intersections: [AnalyticIntersection; 32], cells: [crate::analytic::Cell; 4],
         row_offsets: [u32; 5], edge_indices: [u32; 32],
     }
 
@@ -636,7 +636,8 @@ impl<'target> Canvas<'target> {
             dash_points: [Point::default(); 16],
             dash_contours: [DashContour::default(); 8],
             edges: [Edge::default(); 32],
-            intersections: [AnalyticIntersection::default(); 32], row_coverage: [0.0; 4],
+            intersections: [AnalyticIntersection::default(); 32],
+            cells: [crate::analytic::Cell::default(); 4],
             row_offsets: [0; 5], edge_indices: [0; 32],
         } }
 
@@ -644,7 +645,7 @@ impl<'target> Canvas<'target> {
             Workspace::new(StrokeWorkspace {
                     points: &mut self.points, contours: &mut self.contours,
                     edges: &mut self.edges, intersections: &mut self.intersections,
-                    row_coverage: &mut self.row_coverage,
+                    cells: &mut self.cells,
                     row_offsets: &mut self.row_offsets,
                     edge_indices: &mut self.edge_indices,
                 }, &mut self.dash_points, &mut self.dash_contours)
@@ -783,7 +784,7 @@ impl<'target> Canvas<'target> {
             .set_clip_mask(CoverageMask::new(&mask_data, 4, 4, 4).unwrap());
         let mut planning_edges = [Edge::default(); 8];
         let required = context.fill_requirements(&rectangle(), &mut planning_edges).unwrap();
-        assert_eq!((required.edges, required.row_coverage), (2, 4));
+        assert_eq!((required.edges, required.cells), (2, 4));
         context.fill(&rectangle()).unwrap();
         assert_eq!(
             &pixels[..16], &[0, 0, 0, 0, 64, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0]);

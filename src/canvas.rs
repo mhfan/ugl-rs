@@ -10,8 +10,8 @@ use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
     dash::{dash_polyline, DashContour, DashError, DashPattern, DashWorkspace},
     edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{BinError as AnalyticBinError, BinWorkspace as AnalyticBinWorkspace,
-        Intersection as AnalyticIntersection, Workspace as AnalyticWorkspace,
-        build_row_bins, rasterize_edges_binned},
+        Cell as AnalyticCell, CellWorkspace as AnalyticWorkspace,
+        Intersection as AnalyticIntersection, build_row_bins, rasterize_edges_cells},
     flatten::{FlattenError, FlattenOptions}, sampler::{PaintSampler, SolidPaint},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, Intersection,
         MaskClipSink, RasterError, RasterOptions, RasterWorkspace, RectClipSink,
@@ -189,7 +189,7 @@ pub struct SampledRenderWorkspace<'a> {
 
 pub struct RenderWorkspace<'a> {
     pub intersections: &'a mut [AnalyticIntersection],
-    pub  row_coverage: &'a mut [f32],
+    pub cells: &'a mut [AnalyticCell],
     pub edges: &'a mut [Edge],
     pub row_offsets: &'a mut [u32],
     pub edge_indices: &'a mut [u32],
@@ -201,7 +201,7 @@ pub struct StrokeWorkspace<'a> {
     pub  edges: &'a mut [Edge],
     pub contours: &'a mut [StrokeContour],
     pub intersections: &'a mut [AnalyticIntersection],
-    pub  row_coverage: &'a mut [f32],
+    pub cells: &'a mut [AnalyticCell],
     pub row_offsets: &'a mut [u32],
     pub edge_indices: &'a mut [u32],
 }
@@ -229,7 +229,7 @@ pub struct DashedStrokePlanningWorkspace<'a> {
 pub struct RenderRequirements {
     pub edges: usize,
     pub intersections: usize,
-    pub row_coverage: usize,
+    pub cells: usize,
     pub row_offsets: usize,
     pub edge_indices: usize,
 }
@@ -297,7 +297,7 @@ pub struct StrokePathOptions {
 /// let mut edges = [Edge::default(); 8];
 /// let required = render_requirements(&path.build(), Affine::identity(),
 ///     RenderOptions::default(), 4, 4, &mut edges).unwrap();
-/// assert_eq!((required.edges, required.row_coverage), (2, 4));
+/// assert_eq!((required.edges, required.cells), (2, 4));
 /// ```
 pub fn render_requirements(path: &Path, transform: Affine, options: RenderOptions,
     width: u32, height: u32, edges: &mut [Edge]) ->
@@ -361,7 +361,7 @@ pub fn dashed_stroke_requirements(path: &Path, transform: Affine,
     AnalyticBinOffsetCapacity { required: usize },
     AnalyticBinIndexCapacity { required: usize },
     #[cfg(feature = "fixed")] FixedRaster(FixedRasterError),
-    RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
+    RasterWorkspaceTooSmall { intersections: usize, cells: usize },
     CoverageDimensionsMismatch { coverage: (u32, u32), target: (u32, u32), },
 }
 
@@ -543,7 +543,7 @@ pub fn rasterize_path_clip(path: &Path, transform: Affine,
     mask.clear();
     rasterize(&workspace.edges[..edge_count], mask.width(), mask.height(),
         options.fill_rule, AnalyticWorkspace {
-            intersections: workspace.intersections, row_coverage: workspace.row_coverage,
+            intersections: workspace.intersections, cells: workspace.cells,
         }, AnalyticBinWorkspace {
             row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
         }, mask)
@@ -641,10 +641,10 @@ fn build_dashed_stroke_edges(path: &Path, transform: Affine,
 
 fn requirements_from_edges(edges: &[Edge], width: u32, height: u32) ->
     Result<RenderRequirements, RenderError> {
-    let row_coverage = usize::try_from(width).map_err(|_| RenderError::DimensionsOverflow)?;
+    let cells = usize::try_from(width).map_err(|_| RenderError::DimensionsOverflow)?;
     let bins = crate::analytic::bin_requirements(edges, height).map_err(map_bin_error)?;
     Ok(RenderRequirements {
-        edges: edges.len(), intersections: edges.len(), row_coverage,
+        edges: edges.len(), intersections: edges.len(), cells,
         row_offsets: bins.offsets, edge_indices: bins.indices,
     })
 }
@@ -656,7 +656,7 @@ pub(crate) fn rasterize<S>(edges: &[Edge], width: u32, height: u32,
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
     let bins = build_row_bins(edges, height, bin_workspace)
         .map_err(map_bin_error)?;
-    rasterize_edges_binned(edges, bins, width, height, fill_rule,
+    rasterize_edges_cells(edges, bins, width, height, fill_rule,
         &mut workspace, sink).map_err(map_raster_error)
 }
 
@@ -667,7 +667,7 @@ pub(crate) fn render_path_to<S>(path: &Path, transform: Affine,
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     rasterize(&workspace.edges[..edge_count], width, height, options.fill_rule,
         AnalyticWorkspace {
-            intersections: workspace.intersections, row_coverage: workspace.row_coverage,
+            intersections: workspace.intersections, cells: workspace.cells,
         }, AnalyticBinWorkspace {
             row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
         }, sink)
@@ -678,11 +678,11 @@ pub(crate) fn render_stroke_to<S>(path: &Path, transform: Affine,
     workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
     let StrokeWorkspace {
-        points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
+        points, contours, edges, intersections, cells, row_offsets, edge_indices,
     } = workspace;
     let usage = build_stroke_edges(path, transform, options, points, contours, edges)?;
     rasterize(&edges[..usage.edges], width, height, FillRule::NonZero,
-        AnalyticWorkspace { intersections, row_coverage },
+        AnalyticWorkspace { intersections, cells },
         AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
 }
 
@@ -692,7 +692,7 @@ pub(crate) fn render_stroke_dashed_to<S>(path: &Path, transform: Affine,
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
     let DashedStrokeWorkspace {
         stroke: StrokeWorkspace {
-            points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
+            points, contours, edges, intersections, cells, row_offsets, edge_indices,
         }, dash_points, dash_contours,
     } = workspace;
     let mut path_workspace = StrokePathWorkspace { points, contours };
@@ -702,7 +702,7 @@ pub(crate) fn render_stroke_dashed_to<S>(path: &Path, transform: Affine,
     let usage = build_dashed_stroke_edges(path, transform, options,
         &mut path_workspace, &mut dash_workspace, edges)?;
     rasterize(&edges[..usage.edges], width, height, FillRule::NonZero,
-        AnalyticWorkspace { intersections, row_coverage },
+        AnalyticWorkspace { intersections, cells },
         AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
 }
 
@@ -802,7 +802,7 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
         RasterError::InvalidEdgeBins => RenderError::InvalidEdgeBins,
         RasterError::InvalidSampleCount => RenderError::InvalidSampleCount,
         RasterError::WorkspaceTooSmall { intersections, row_coverage } =>
-            RenderError::RasterWorkspaceTooSmall { intersections, row_coverage },
+            RenderError::RasterWorkspaceTooSmall { intersections, cells: row_coverage },
         RasterError::Sink(error) => match error {},
     }
 }

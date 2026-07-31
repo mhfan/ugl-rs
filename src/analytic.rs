@@ -1,8 +1,9 @@
 //! Allocation-free analytic scan conversion for linear directed edges.
 //!
-//! Each pixel row is split at edge endpoints, edge crossings, and integer-x
-//! crossings. Inside each resulting slab, pixel overlap varies linearly in y,
-//! so trapezoidal integration is exact apart from `f32` arithmetic.
+//! The production sparse-cell path splits rows only at edge endpoints and real
+//! crossings, integrates boundary cells in closed form, and records full spans
+//! as range deltas. The retained dense reference path additionally splits at
+//! integer-x crossings and integrates trapezoids into a row buffer.
 //!
 //! Active edges persist in caller-owned storage across slabs and rows. Empty
 //! vertical ranges are skipped, while active edges are ordered only at event

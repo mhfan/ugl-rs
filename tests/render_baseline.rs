@@ -1,5 +1,5 @@
 
-use ugl_rs::{analytic::Intersection as AnalyticIntersection,
+use ugl_rs::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection},
     color::{PremulSRGBA8, LinearPremulRGBA, PremulRGBA, SRGBA, SRGBA as RGBA},
     canvas::{RenderOptions, RenderWorkspace, StrokePathOptions,
         StrokeWorkspace, Pixmap, render_paint as render_canvas_paint, render_solid,
@@ -24,14 +24,15 @@ fn render(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = Pixmap::from_buffer(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
-        [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
+        [Edge::default(); 8], [AnalyticIntersection::default(); 8],
+        [AnalyticCell::default(); WIDTH as usize],
     );
     let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
     render_solid(&builder.build(), Affine::identity(), RGBA::new(20, 200, 40, 160),
         RenderOptions { fill_rule, ..Default::default() }, &mut target,
         &mut RenderWorkspace {
             edges: &mut edges, intersections: &mut intersections,
-            row_coverage: &mut row_coverage,
+            cells: &mut row_coverage,
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
         },
     ).unwrap();
@@ -44,13 +45,14 @@ fn render_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = Pixmap::from_buffer(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
-        [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
+        [Edge::default(); 8], [AnalyticIntersection::default(); 8],
+        [AnalyticCell::default(); WIDTH as usize],
     );
     let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
     render_canvas_paint(&builder.build(), Affine::identity(), sampler,
         RenderOptions::default(), &mut target, &mut RenderWorkspace {
             edges: &mut edges, intersections: &mut intersections,
-            row_coverage: &mut row_coverage,
+            cells: &mut row_coverage,
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
         },
     ).unwrap();
@@ -63,7 +65,8 @@ fn render_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = Pixmap::from_buffer(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut contours, mut edges) = ([StrokeContour::default(); 2], [Edge::default(); 64]);
-    let (mut points, mut row_coverage) = ([Default::default(); 8], [0.0; WIDTH as usize]);
+    let (mut points, mut row_coverage) =
+        ([Default::default(); 8], [AnalyticCell::default(); WIDTH as usize]);
     let mut intersections = [AnalyticIntersection::default(); 64];
     let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 64]);
     render_stroke_solid(&builder.build(), Affine::identity(),
@@ -71,7 +74,7 @@ fn render_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
         StrokePathOptions { stroke, ..Default::default() }, &mut target,
         &mut StrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut edges,
-            intersections: &mut intersections, row_coverage: &mut row_coverage,
+            intersections: &mut intersections, cells: &mut row_coverage,
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
         }).unwrap();
     core::array::from_fn(|index|
@@ -88,14 +91,15 @@ fn render_linear_layers(builder: PathBuilder, colors: &[SRGBA<u8>]) ->
     let mut linear = [LinearPremulRGBA::default(); 16];
     let mut target = LinearPixmap::from_buffer(&mut linear, WIDTH, HEIGHT, WIDTH).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
-        [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
+        [Edge::default(); 8], [AnalyticIntersection::default(); 8],
+        [AnalyticCell::default(); WIDTH as usize],
     );
     let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
     for color in colors {
         render_solid_linear(&path, Affine::identity(), *color,
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut intersections,
-                row_coverage: &mut row_coverage,
+                cells: &mut row_coverage,
                 row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
             }).unwrap();
     }
@@ -112,13 +116,14 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
     let mut linear = [LinearPremulRGBA::default(); 16];
     let mut target = LinearPixmap::from_buffer(&mut linear, WIDTH, HEIGHT, WIDTH).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
-        [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
+        [Edge::default(); 8], [AnalyticIntersection::default(); 8],
+        [AnalyticCell::default(); WIDTH as usize],
     );
     let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
     render_paint_linear(&builder.build(), Affine::identity(), sampler,
         RenderOptions::default(), &mut target, &mut RenderWorkspace {
             edges: &mut edges, intersections: &mut intersections,
-            row_coverage: &mut row_coverage,
+            cells: &mut row_coverage,
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
         }).unwrap();
     let mut bytes = [0; 16 * 4];

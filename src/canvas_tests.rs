@@ -1,6 +1,6 @@
 
 use super::*;
-use crate::{analytic::Intersection as AnalyticIntersection,
+use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection},
     color::{PremulSRGBA8, RGBA as GenericRGBA, SRGBA as RGBA},
     edge::Edge,
     geometry::{Affine, PathBuilder}, raster::Intersection,
@@ -21,21 +21,21 @@ fn red_blue_stops() -> [GradientStop; 2] {
 
 struct AnalyticBuffers<const EDGES: usize, const WIDTH: usize> {
     intersections: [AnalyticIntersection; EDGES],
-    edges: [Edge; EDGES], row_coverage: [f32; WIDTH],
+    edges: [Edge; EDGES], cells: [AnalyticCell; WIDTH],
     row_offsets: [u32; 9], edge_indices: [u32; EDGES],
 }
 
 impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     fn new() -> Self { Self {
             intersections: [AnalyticIntersection::default(); EDGES],
-            edges: [Edge::default(); EDGES], row_coverage: [0.0; WIDTH],
+            edges: [Edge::default(); EDGES], cells: [AnalyticCell::default(); WIDTH],
             row_offsets: [0; 9], edge_indices: [0; EDGES],
     } }
 
     fn workspace(&mut self) -> RenderWorkspace<'_> {
         RenderWorkspace { edges: &mut self.edges,
             intersections: &mut self.intersections,
-             row_coverage: &mut self.row_coverage,
+            cells: &mut self.cells,
             row_offsets: &mut self.row_offsets, edge_indices: &mut self.edge_indices,
         }
     }
@@ -98,7 +98,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let fill = render_requirements(&path, Affine::identity(), RenderOptions::default(),
         4, 4, &mut fill_edges).unwrap();
     assert_eq!(fill, RenderRequirements {
-        edges: 2, intersections: 2, row_coverage: 4,
+        edges: 2, intersections: 2, cells: 4,
         row_offsets: 5, edge_indices: 2,
     });
 
@@ -181,13 +181,13 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     builder.move_to((0.5, 0.5)).line_to((2.5, 0.5));
     let mut contours = [StrokeContour::default(); 1];
     let mut intersections = [AnalyticIntersection::default(); 4];
-    let (mut row_coverage, mut pixels) = ([0.0; 3], [0; 12]);
+    let (mut cells, mut pixels) = ([AnalyticCell::default(); 3], [0; 12]);
     let (mut points, mut edges) = ([Point::default(); 2], [Edge::default(); 4]);
     render_stroke_solid(&builder.build(), Affine::identity(), RGBA::white(),
         StrokePathOptions::default(), &mut Pixmap::from_buffer(&mut pixels, 3, 1, 12).unwrap(),
         &mut StrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut edges,
-            intersections: &mut intersections, row_coverage: &mut row_coverage,
+            intersections: &mut intersections, cells: &mut cells,
             row_offsets: &mut [0; 2], edge_indices: &mut [0; 4],
         }).unwrap();
     assert_eq!(pixels, [128, 128, 128, 128, 255, 255, 255, 255, 128, 128, 128, 128]);
@@ -202,8 +202,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let (mut points, mut dash_points) = ([Point::default(); 2], [Point::default(); 8]);
     let (mut contours, mut dash_contours) =
         ([StrokeContour::default(); 1], [DashContour::default(); 4]);
-    let (mut edges, mut intersections, mut row_coverage) =
-        ([Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; 5]);
+    let (mut edges, mut intersections, mut cells) = ([Edge::default(); 8],
+        [AnalyticIntersection::default(); 8], [AnalyticCell::default(); 5]);
     render_stroke_paint_dashed(&builder.build(), Affine::identity(),
         &SolidPaint::new(RGBA::white()), DashedStrokePathOptions {
             flatten: FlattenOptions::default(), stroke: StrokeOptions::default(),
@@ -212,7 +212,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         &mut DashedStrokeWorkspace {
             stroke: StrokeWorkspace {
                 points: &mut points, contours: &mut contours, edges: &mut edges,
-                intersections: &mut intersections, row_coverage: &mut row_coverage,
+                intersections: &mut intersections, cells: &mut cells,
                 row_offsets: &mut [0; 2], edge_indices: &mut [0; 8],
             },
             dash_points: &mut dash_points, dash_contours: &mut dash_contours,
@@ -226,14 +226,14 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     builder.move_to((0.5, 0.5)).line_to((2.5, 0.5));
     let mut contours = [StrokeContour::default(); 1];
     let mut intersections = [AnalyticIntersection::default(); 4];
-    let (mut row_coverage, mut pixels) = ([0.0; 3], [17; 12]);
+    let (mut cells, mut pixels) = ([AnalyticCell::default(); 3], [17; 12]);
     let mut points = [Point::default(); 1];
     let error = render_stroke_solid(&builder.build(), Affine::identity(),
         RGBA::white(), StrokePathOptions::default(),
         &mut Pixmap::from_buffer(&mut pixels, 3, 1, 12).unwrap(),
         &mut StrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut [],
-            intersections: &mut intersections, row_coverage: &mut row_coverage,
+            intersections: &mut intersections, cells: &mut cells,
             row_offsets: &mut [0; 2], edge_indices: &mut [],
         },
     );
@@ -245,15 +245,16 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut builder = PathBuilder::new();
     builder.move_to((0.5, 0.5)).line_to((2.5, 0.5));
     let path = builder.build();
-    let (mut points, mut intersections, mut row_coverage) = (
-        [Point::default(); 2], [AnalyticIntersection::default(); 4], [0.0; 3],
+    let (mut points, mut intersections, mut cells) = (
+        [Point::default(); 2], [AnalyticIntersection::default(); 4],
+        [AnalyticCell::default(); 3],
     );
     let mut pixels = [17; 12];
     let error = render_stroke_solid(&path, Affine::identity(), RGBA::white(),
         StrokePathOptions::default(), &mut Pixmap::from_buffer(&mut pixels, 3, 1, 12).unwrap(),
         &mut StrokeWorkspace {
             points: &mut points, contours: &mut [], edges: &mut [],
-            intersections: &mut intersections, row_coverage: &mut row_coverage,
+            intersections: &mut intersections, cells: &mut cells,
             row_offsets: &mut [0; 2], edge_indices: &mut [],
         });
     assert_eq!(error, Err(RenderError::StrokeContourCapacity { needed_at_least: 1 }));
@@ -265,7 +266,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         StrokePathOptions::default(), &mut Pixmap::from_buffer(&mut pixels, 3, 1, 12).unwrap(),
         &mut StrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut edges,
-            intersections: &mut intersections, row_coverage: &mut row_coverage,
+            intersections: &mut intersections, cells: &mut cells,
             row_offsets: &mut [0; 2], edge_indices: &mut [0; 1],
         });
     assert_eq!(error, Err(RenderError::EdgeCapacity { needed_at_least: 2 }));
@@ -301,14 +302,14 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         let mut contours = [StrokeContour::default(); 1];
         let mut edges = [Edge::default(); 512];
         let mut intersections = [AnalyticIntersection::default(); 512];
-        let mut row_coverage = [0.0; 8];
+        let mut cells = [AnalyticCell::default(); 8];
         let mut target = Pixmap::from_buffer(&mut pixels, 8, 8, 32).unwrap();
         render_stroke_solid(&builder.build(), Affine::identity(),
             RGBA::new(37, 149, 211, 173),
             StrokePathOptions { stroke, ..Default::default() }, &mut target,
             &mut StrokeWorkspace {
                 points: &mut points, contours: &mut contours, edges: &mut edges,
-                intersections: &mut intersections, row_coverage: &mut row_coverage,
+                intersections: &mut intersections, cells: &mut cells,
                 row_offsets: &mut [0; 9], edge_indices: &mut [0; 512],
             }).unwrap();
         for y in 0..8 {
@@ -328,12 +329,13 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let gradient = LinearGradient::new((0.0, 0.0), (2.0, 0.0),
         GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
     let (mut points, mut edges) = ([Point::default(); 2], [Edge::default(); 4]);
-    let (mut row_coverage, mut contours) = ([0.0; 2], [StrokeContour::default(); 1]);
+    let (mut cells, mut contours) =
+        ([AnalyticCell::default(); 2], [StrokeContour::default(); 1]);
     let mut intersections = [AnalyticIntersection::default(); 4];
     let (mut row_offsets, mut edge_indices) = ([0; 2], [0; 4]);
     let mut workspace = StrokeWorkspace {
         points: &mut points, contours: &mut contours, edges: &mut edges,
-        intersections: &mut intersections, row_coverage: &mut row_coverage,
+        intersections: &mut intersections, cells: &mut cells,
         row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
     };
 

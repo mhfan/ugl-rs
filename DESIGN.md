@@ -408,9 +408,11 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   16-edge rows from about 148 us to 109 us, versus 105 us for the primary path.
   Churning short vertical edges are statistically even, while a 32-edge
   crossing scene fell from about 1.97 ms to 283 us and the representative
-  480-edge stroke coverage stage from about 218 us to 97 us. Keep this path
-  separate until broader scenes validate its extra row memory and a deliberate
-  workspace/API migration, but use it as the leading f32 production candidate.
+  480-edge stroke coverage stage from about 218 us to 97 us. End-to-end solid
+  compositing retained the gain, and the f32 Canvas now uses this path with an
+  explicit one-`Cell`-per-column workspace. That doubles row scratch from four
+  to eight bytes per target column. The 64-small-rectangle case regresses about
+  5.7%, so simple vertical geometry remains the next specialization target.
 
 ## Implementation rules
 
