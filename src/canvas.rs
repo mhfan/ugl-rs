@@ -175,6 +175,41 @@ pub struct DashedStrokeWorkspace<'a> {
     pub dash_contours: &'a mut [DashContour],
 }
 
+pub struct StrokePlanningWorkspace<'a> {
+    pub points: &'a mut [Point],
+    pub contours: &'a mut [StrokeContour],
+    pub edges: &'a mut [Edge],
+}
+
+pub struct DashedStrokePlanningWorkspace<'a> {
+    pub stroke: StrokePlanningWorkspace<'a>,
+    pub dash_points: &'a mut [Point],
+    pub dash_contours: &'a mut [DashContour],
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RenderRequirements {
+    pub edges: usize,
+    pub intersections: usize,
+    pub row_coverage: usize,
+    pub row_offsets: usize,
+    pub edge_indices: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StrokeRequirements {
+    pub render: RenderRequirements,
+    pub points: usize,
+    pub contours: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DashedStrokeRequirements {
+    pub stroke: StrokeRequirements,
+    pub dash_points: usize,
+    pub dash_contours: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct SampledRenderOptions {
     pub fill_rule: FillRule,
     pub flatten: FlattenOptions,
@@ -206,6 +241,52 @@ pub struct StrokePathOptions {
     pub flatten: FlattenOptions,
     pub stroke: StrokeOptions,
     pub dash: DashPattern<'a>,
+}
+
+/// Computes exact fill capacities without touching a render target.
+///
+/// `edges` is planning scratch. If it is too small, the returned
+/// [`RenderError::EdgeCapacity`] gives the next required lower bound; retrying
+/// with sufficient edge storage returns the complete exact requirements.
+pub fn render_requirements(path: &Path, transform: Affine, options: RenderOptions,
+    width: u32, height: u32, edges: &mut [Edge]) ->
+    Result<RenderRequirements, RenderError> {
+    let edge_count = build_edges(path, transform, options.flatten, edges)?;
+    requirements_from_edges(&edges[..edge_count], width, height)
+}
+
+/// Computes exact undashed stroke capacities using caller-owned planning scratch.
+pub fn stroke_requirements(path: &Path, transform: Affine, options: StrokePathOptions,
+    dimensions: (u32, u32), workspace: &mut StrokePlanningWorkspace<'_>) ->
+    Result<StrokeRequirements, RenderError> {
+    let usage = build_stroke_edges(path, transform, options,
+        workspace.points, workspace.contours, workspace.edges)?;
+    Ok(StrokeRequirements {
+        render: requirements_from_edges(
+            &workspace.edges[..usage.edges], dimensions.0, dimensions.1)?,
+        points: usage.points, contours: usage.contours,
+    })
+}
+
+/// Computes exact dashed stroke capacities using caller-owned planning scratch.
+pub fn dashed_stroke_requirements(path: &Path, transform: Affine,
+    options: DashedStrokePathOptions<'_>, dimensions: (u32, u32),
+    workspace: &mut DashedStrokePlanningWorkspace<'_>) ->
+    Result<DashedStrokeRequirements, RenderError> {
+    let usage = build_dashed_stroke_edges(path, transform, options,
+        &mut StrokePathWorkspace {
+            points: workspace.stroke.points, contours: workspace.stroke.contours,
+        }, &mut DashWorkspace {
+            points: workspace.dash_points, contours: workspace.dash_contours,
+        }, workspace.stroke.edges)?;
+    Ok(DashedStrokeRequirements {
+        stroke: StrokeRequirements {
+            render: requirements_from_edges(
+                &workspace.stroke.edges[..usage.edges], dimensions.0, dimensions.1)?,
+            points: usage.points, contours: usage.contours,
+        },
+        dash_points: usage.dash_points, dash_contours: usage.dash_contours,
+    })
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RenderError {
@@ -446,37 +527,67 @@ pub(crate) fn build_edges(path: &Path, transform: Affine, options: FlattenOption
     Ok(sink.len)
 }
 
+pub(crate) struct StrokeUsage { points: usize, contours: usize, edges: usize }
+
 pub(crate) fn build_stroke_edges(path: &Path, transform: Affine,
     options: StrokePathOptions,
     points: &mut [Point], contours: &mut [StrokeContour], edges: &mut [Edge]) ->
-    Result<usize, RenderError> {
+    Result<StrokeUsage, RenderError> {
     let mut path_workspace = StrokePathWorkspace { points, contours };
     let flattened = flatten_stroke_path(path, transform, options.flatten,
         &mut path_workspace).map_err(map_stroke_flatten_error)?;
+    let (point_count, contour_count) =
+        (flattened.point_count(), flattened.contour_count());
     let mut sink = EdgeSliceSink { edges, len: 0 };
     for (points, closed) in flattened.contours() {
         stroke_polyline(points, closed, options.stroke, &mut sink)
             .map_err(map_stroke_expand_error)?;
-    }   Ok(sink.len)
+    }
+    Ok(StrokeUsage {
+        points: point_count, contours: contour_count, edges: sink.len,
+    })
+}
+
+struct DashedStrokeUsage {
+    points: usize, contours: usize, edges: usize,
+    dash_points: usize, dash_contours: usize,
 }
 
 fn build_dashed_stroke_edges(path: &Path, transform: Affine,
     options: DashedStrokePathOptions<'_>,
     path_workspace: &mut StrokePathWorkspace<'_>,
     dash_workspace: &mut DashWorkspace<'_>, edges: &mut [Edge]) ->
-    Result<usize, RenderError> {
+    Result<DashedStrokeUsage, RenderError> {
     let flattened = flatten_stroke_path(path, transform, options.flatten,
         path_workspace).map_err(map_stroke_flatten_error)?;
+    let (point_count, contour_count) =
+        (flattened.point_count(), flattened.contour_count());
+    let (mut dash_points, mut dash_contours) = (0, 0);
     let mut sink = EdgeSliceSink { edges, len: 0 };
     for (points, closed) in flattened.contours() {
         let dashed = dash_polyline(points, closed, options.dash, dash_workspace)
             .map_err(map_dash_error)?;
+        dash_points = dash_points.max(dashed.point_count());
+        dash_contours = dash_contours.max(dashed.contour_count());
         for (points, closed) in dashed.contours() {
             stroke_polyline(points, closed, options.stroke, &mut sink)
                 .map_err(map_stroke_expand_error)?;
         }
     }
-    Ok(sink.len)
+    Ok(DashedStrokeUsage {
+        points: point_count, contours: contour_count, edges: sink.len,
+        dash_points, dash_contours,
+    })
+}
+
+fn requirements_from_edges(edges: &[Edge], width: u32, height: u32) ->
+    Result<RenderRequirements, RenderError> {
+    let row_coverage = usize::try_from(width).map_err(|_| RenderError::DimensionsOverflow)?;
+    let bins = crate::analytic::bin_requirements(edges, height).map_err(map_bin_error)?;
+    Ok(RenderRequirements {
+        edges: edges.len(), intersections: edges.len(), row_coverage,
+        row_offsets: bins.offsets, edge_indices: bins.indices,
+    })
 }
 
 pub(crate) fn rasterize<S>(edges: &[Edge], width: u32, height: u32,
@@ -510,8 +621,8 @@ pub(crate) fn render_stroke_to<S>(path: &Path, transform: Affine,
     let StrokeWorkspace {
         points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
     } = workspace;
-    let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
-    rasterize(&edges[..edge_count], width, height, FillRule::NonZero,
+    let usage = build_stroke_edges(path, transform, options, points, contours, edges)?;
+    rasterize(&edges[..usage.edges], width, height, FillRule::NonZero,
         AnalyticWorkspace { intersections, row_coverage },
         AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
 }
@@ -529,9 +640,9 @@ pub(crate) fn render_stroke_dashed_to<S>(path: &Path, transform: Affine,
     let mut dash_workspace = DashWorkspace {
         points: dash_points, contours: dash_contours,
     };
-    let edge_count = build_dashed_stroke_edges(path, transform, options,
+    let usage = build_dashed_stroke_edges(path, transform, options,
         &mut path_workspace, &mut dash_workspace, edges)?;
-    rasterize(&edges[..edge_count], width, height, FillRule::NonZero,
+    rasterize(&edges[..usage.edges], width, height, FillRule::NonZero,
         AnalyticWorkspace { intersections, row_coverage },
         AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
 }

@@ -90,6 +90,47 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(target.pixel_bytes(3, 3), Some([0; 4]));
 }
 
+#[test] fn planners_return_exact_capacities_for_fill_stroke_and_dash() {
+    let path = rectangle(0.5, 0.5, 3.5, 3.5);
+    let mut fill_edges = [Edge::default(); 8];
+    let fill = render_requirements(&path, Affine::identity(), RenderOptions::default(),
+        4, 4, &mut fill_edges).unwrap();
+    assert_eq!(fill, RenderRequirements {
+        edges: 2, intersections: 2, row_coverage: 4,
+        row_offsets: 5, edge_indices: 2,
+    });
+
+    let mut builder = PathBuilder::new();
+    builder.move_to((0.0, 1.0)).line_to((4.0, 1.0));
+    let line = builder.build();
+    let stroke_options = StrokePathOptions::default();
+    let (mut points, mut contours, mut edges) = (
+        [Point::default(); 8], [StrokeContour::default(); 4], [Edge::default(); 32],
+    );
+    let stroke = stroke_requirements(&line, Affine::identity(), stroke_options, (4, 3),
+        &mut StrokePlanningWorkspace {
+            points: &mut points, contours: &mut contours, edges: &mut edges,
+        }).unwrap();
+    assert_eq!((stroke.points, stroke.contours), (2, 1));
+    assert_eq!(stroke.render.edges, 2);
+
+    let pattern = DashPattern::new(&[1.0, 1.0], 0.0).unwrap();
+    let (mut dash_points, mut dash_contours) =
+        ([Point::default(); 8], [DashContour::default(); 4]);
+    let dashed = dashed_stroke_requirements(&line, Affine::identity(),
+        DashedStrokePathOptions {
+            flatten: FlattenOptions::default(), stroke: StrokeOptions::default(), dash: pattern,
+        }, (4, 3), &mut DashedStrokePlanningWorkspace {
+            stroke: StrokePlanningWorkspace {
+                points: &mut points, contours: &mut contours, edges: &mut edges,
+            },
+            dash_points: &mut dash_points, dash_contours: &mut dash_contours,
+        }).unwrap();
+    assert_eq!((dashed.stroke.points, dashed.stroke.contours), (2, 1));
+    assert_eq!((dashed.dash_points, dashed.dash_contours), (4, 2));
+    assert_eq!(dashed.stroke.render.edges, 4);
+}
+
 #[test] fn edge_capacity_failure_reports_required_lower_bound() {
     let (mut builder, mut pixels) = (PathBuilder::new(), [0; 16]);
     builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).line_to((2.0, 0.0));

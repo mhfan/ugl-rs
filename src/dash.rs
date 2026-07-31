@@ -92,6 +92,9 @@ pub struct DashWorkspace<'a, T = Scalar> {
 }
 
 impl<'a, T> DashedPath<'a, T> {
+    pub fn point_count(&self) -> usize { self.points.len() }
+    pub fn contour_count(&self) -> usize { self.contours.len() }
+
     pub fn contours(&self) -> impl ExactSizeIterator<Item = (&'a [Point<T>], bool)> + 'a {
         self.contours.iter().map(|contour| {
             let start = contour.start as usize;

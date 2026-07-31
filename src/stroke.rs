@@ -111,6 +111,9 @@ pub struct FlattenedStrokePath<'a, T = Scalar> {
 }
 
 impl<'a, T> FlattenedStrokePath<'a, T> {
+    pub fn point_count(&self) -> usize { self.points.len() }
+    pub fn contour_count(&self) -> usize { self.contours.len() }
+
     pub fn contours(&self) -> impl ExactSizeIterator<Item = (&'a [Point<T>], bool)> + 'a {
         self.contours.iter().map(|contour| {
             let start: usize = contour.start as _;
