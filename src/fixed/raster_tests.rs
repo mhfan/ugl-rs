@@ -4,9 +4,28 @@ use alloc::{vec, vec::Vec};
 use core::convert::Infallible;
 use crate::analytic::{Intersection as AnalyticIntersection,
     Workspace as AnalyticWorkspace, rasterize_edges as rasterize_edges_analytic};
-use crate::test_support::{assert_coverage_near, polygon_edges};
 
 fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }
+
+fn polygon_edges<T: Copy + PartialOrd>(points: &[Point<T>]) -> Vec<Edge<T>> {
+    let mut edges = Vec::new();
+    for index in 0..points.len() {
+        if let Some(edge) = Edge::from_line(
+            points[index], points[(index + 1) % points.len()]) {
+            edges.push(edge);
+        }
+    }
+    edges
+}
+
+fn assert_coverage_near(
+    actual: &[u8], expected: &[u8], tolerance: u8, context: impl core::fmt::Display) {
+    assert_eq!(actual.len(), expected.len(), "{context}: coverage dimensions differ");
+    for (pixel, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
+        assert!(actual.abs_diff(expected) <= tolerance,
+            "{context}, pixel {pixel}: actual={actual}, expected={expected}");
+    }
+}
 
 fn render(edges: &[Edge<Scalar>], width: usize, height: usize,
     fill_rule: FillRule) -> Vec<u8> {
