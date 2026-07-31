@@ -192,6 +192,25 @@ No layer allocates destination or raster scratch implicitly. Context
 construction borrows a `ContextWorkspace`; dash buffers may be empty when
 dashed strokes are not used.
 
+### Workspace planning
+
+Both backends expose exact, target-independent planners for fill, stroke, and
+dash. The f32 entry points are `render_requirements`, `stroke_requirements`,
+and `dashed_stroke_requirements`; fixed equivalents live under
+`fixed::canvas`. Context methods with matching names apply the current
+transform, fill/stroke state, and target dimensions.
+
+Planning is deliberately staged. Exact stroke edges depend on actual curve
+flattening and cap/join expansion, while exact row/strip indices depend on the
+resulting edges. A planner therefore borrows geometry-only planning scratch
+and never touches the destination. If that scratch is insufficient, it returns
+the existing capacity error and a required lower bound; once sufficient, the
+returned structure contains the complete exact render-time capacities.
+
+`path_clip_requirements` uses the same fill pipeline and reports the workspace
+needed by `rasterize_path_clip`. Mask pixel storage remains separately and
+explicitly sized as `stride × height`.
+
 ### Arbitrary path clipping
 
 Free-path clipping is deliberately a two-stage operation so its image-sized

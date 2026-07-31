@@ -4,7 +4,10 @@ use crate::{
     canvas::{PixmapMut, RenderError},
     color::{PremulSRGBA8, SRGBA}, context::{Clip, DrawState},
     dash::DashContour, fixed::{Scalar, canvas::{DashedStrokePathOptions,
-            DashedStrokeWorkspace, GeometryWorkspace, RenderOptions, StrokePathOptions,
+            DashedStrokeRequirements, DashedStrokeWorkspace, GeometryWorkspace,
+            RenderOptions, RenderRequirements, StrokePathOptions,
+            StrokePlanningWorkspace, StrokeRequirements,
+            dashed_stroke_requirements as plan_dashed_stroke, render_requirements,
             prepare_dashed_stroke_path, prepare_stroke_path,
             render_paint, render_paint_clipped, render_paint_masked,
             render_path, render_path_clipped, render_path_masked},
@@ -101,6 +104,15 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         self.fill_with(path, &paint)
     }
 
+    pub fn fill_requirements(&self, path: &Path<Scalar>,
+        workspace: &mut GeometryWorkspace<'_>) ->
+        Result<RenderRequirements, RenderError> {
+        render_requirements(path, RenderOptions {
+            transform: self.state.transform, flatten: self.state.flatten,
+            fill_rule: self.state.fill_rule,
+        }, (self.target.width(), self.target.height()), workspace)
+    }
+
     pub fn fill_with<S: PaintSampler>(&mut self, path: &Path<Scalar>,
         paint: &S) -> Result<(), RenderError> {
         let (options, clip) = (RenderOptions {
@@ -121,6 +133,15 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
     pub fn stroke(&mut self, path: &Path<Scalar>) -> Result<(), RenderError> {
         let paint = self.state.paint;
         self.stroke_with(path, &paint)
+    }
+
+    pub fn stroke_requirements(&self, path: &Path<Scalar>,
+        workspace: &mut StrokePlanningWorkspace<'_>) ->
+        Result<StrokeRequirements, RenderError> {
+        crate::fixed::canvas::stroke_requirements(path, StrokePathOptions {
+            transform: self.state.transform, flatten: self.state.flatten,
+            stroke: self.state.stroke,
+        }, (self.target.width(), self.target.height()), workspace)
     }
 
     pub fn stroke_with<S: PaintSampler>(&mut self, path: &Path<Scalar>,
@@ -147,6 +168,18 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         Result<(), RenderError> {
         let paint = self.state.paint;
         self.stroke_dashed_with(path, &paint, dash)
+    }
+
+    pub fn dashed_stroke_requirements(&self, path: &Path<Scalar>, dash: DashPattern<'_>,
+        workspace: &mut DashedStrokeWorkspace<'_>) ->
+        Result<DashedStrokeRequirements, RenderError> {
+        plan_dashed_stroke(path, DashedStrokePathOptions {
+            path: StrokePathOptions {
+                transform: self.state.transform, flatten: self.state.flatten,
+                stroke: self.state.stroke,
+            },
+            dash,
+        }, (self.target.width(), self.target.height()), workspace)
     }
 
     pub fn stroke_dashed_with<S: PaintSampler>(&mut self, path: &Path<Scalar>,

@@ -302,6 +302,11 @@ strip IDs, and SIMD layouts do not enter the common `Edge` representation.
   segment slice so fixed-capacity and static paths require no owned `Path`.
 - Allocation-free rasterizers accept caller-provided edge and coverage
   workspaces and report the required capacity when they are too small.
+- Public fill/stroke/dash planners run geometry without a target and return
+  exact backend-specific render capacities once caller-owned planning scratch
+  is sufficient. Planning is staged because stroke expansion determines edges
+  and actual edges determine row/strip index counts; no API presents a loose
+  formula-derived upper bound as an exact requirement.
 - Optional fixed retained coverage stores only non-empty 16-row strips. A
   12-byte strip descriptor indexes 12-byte uniform non-zero run records; the
   run's `u8` row is relative to its strip while x and length remain `u32`.
@@ -559,8 +564,10 @@ names; rectangle/mask clip state and statically dispatched custom paint are
 supported. Arbitrary path clipping is intentionally explicit: low-level
 `rasterize_path_clip` writes caller-owned `CoverageMaskMut`, after which the
 facade borrows the mask with `set_clip_mask`. Caller-owned save/restore,
-multi-clip mask combination, and workspace sizing helpers remain before the
-facade can be considered complete.
+multi-clip mask combination, and convenience allocation remain before the
+facade can be considered complete. Exact fill/stroke/dash planning is available
+both through low-level functions and Context methods; path clips reuse the fill
+planner through the semantic `path_clip_requirements` entry point.
 
 All methods preserve existing error and mutation contracts. Geometry/capacity
 failure before rasterization leaves the target unchanged. Once span emission
@@ -604,5 +611,5 @@ only where names collide.
 - Document which fixed methods are completely no-FPU. Do not let an encoded
   compatibility sampler or f32 rectangle clip weaken that claim implicitly.
 - Treat workspace structs and exhaustive error enums as pre-1.0 API until
-  sizing helpers, MSRV CI, 32-bit builds, real MCU builds, and code-size
-  measurements are in release gates.
+  planner contracts stabilize and real MCU builds and code-size measurements
+  are in release gates.

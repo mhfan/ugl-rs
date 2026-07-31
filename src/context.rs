@@ -1,8 +1,11 @@
 //! Stateful drawing facades over the allocation-free rendering pipelines.
 
 use crate::{
-    canvas::{DashedStrokePathOptions, DashedStrokeWorkspace, RenderOptions,
-        RenderWorkspace, StrokePathOptions, StrokeWorkspace, PixmapMut, RenderError, render_paint,
+    canvas::{DashedStrokePathOptions, DashedStrokePlanningWorkspace,
+        DashedStrokeRequirements, DashedStrokeWorkspace, RenderOptions,
+        RenderRequirements, RenderWorkspace, StrokePathOptions, StrokePlanningWorkspace,
+        StrokeRequirements, StrokeWorkspace, PixmapMut, RenderError,
+        dashed_stroke_requirements as plan_dashed_stroke, render_paint, render_requirements,
         render_paint_clipped, render_paint_masked,
         render_stroke_paint_dashed, render_stroke_paint_dashed_clipped,
         render_stroke_paint_dashed_masked,
@@ -101,6 +104,13 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         self.fill_with(path, &paint)
     }
 
+    pub fn fill_requirements(&self, path: &Path, edges: &mut [crate::edge::Edge]) ->
+        Result<RenderRequirements, RenderError> {
+        render_requirements(path, self.state.transform, RenderOptions {
+            fill_rule: self.state.fill_rule, flatten: self.state.flatten,
+        }, self.target.width(), self.target.height(), edges)
+    }
+
     pub fn fill_with<S: PaintSampler>(&mut self, path: &Path, paint: &S) ->
         Result<(), RenderError> {
         let (transform, options, clip) = (
@@ -127,6 +137,14 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         self.stroke_with(path, &paint)
     }
 
+    pub fn stroke_requirements(&self, path: &Path,
+        workspace: &mut StrokePlanningWorkspace<'_>) ->
+        Result<StrokeRequirements, RenderError> {
+        crate::canvas::stroke_requirements(path, self.state.transform, StrokePathOptions {
+            flatten: self.state.flatten, stroke: self.state.stroke,
+        }, (self.target.width(), self.target.height()), workspace)
+    }
+
     pub fn stroke_with<S: PaintSampler>(&mut self, path: &Path, paint: &S) ->
         Result<(), RenderError> {
         let (transform, options, clip) = (
@@ -151,6 +169,14 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         Result<(), RenderError> {
         let paint = self.state.paint;
         self.stroke_dashed_with(path, &paint, dash)
+    }
+
+    pub fn dashed_stroke_requirements(&self, path: &Path, dash: DashPattern<'_>,
+        workspace: &mut DashedStrokePlanningWorkspace<'_>) ->
+        Result<DashedStrokeRequirements, RenderError> {
+        plan_dashed_stroke(path, self.state.transform, DashedStrokePathOptions {
+            flatten: self.state.flatten, stroke: self.state.stroke, dash,
+        }, (self.target.width(), self.target.height()), workspace)
     }
 
     pub fn stroke_dashed_with<S: PaintSampler>(&mut self, path: &Path,
@@ -260,6 +286,9 @@ fn reborrow_stroke<'a>(workspace: &'a mut StrokeWorkspace<'_>) -> StrokeWorkspac
         context.set_color(SRGBA::new(255, 0, 0, 128))
             .set_transform(Affine::translate(1.0, 0.0))
             .set_clip_mask(CoverageMask::new(&mask_data, 4, 4, 4).unwrap());
+        let mut planning_edges = [Edge::default(); 8];
+        let required = context.fill_requirements(&rectangle(), &mut planning_edges).unwrap();
+        assert_eq!((required.edges, required.row_coverage), (2, 4));
         context.fill(&rectangle()).unwrap();
         assert_eq!(
             &pixels[..16], &[0, 0, 0, 0, 64, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0]);

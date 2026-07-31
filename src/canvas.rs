@@ -248,11 +248,32 @@ pub struct StrokePathOptions {
 /// `edges` is planning scratch. If it is too small, the returned
 /// [`RenderError::EdgeCapacity`] gives the next required lower bound; retrying
 /// with sufficient edge storage returns the complete exact requirements.
+///
+/// ```
+/// use ugl_rs::{canvas::{RenderOptions, render_requirements},
+///     edge::Edge, geometry::{Affine, PathBuilder}};
+///
+/// let mut path = PathBuilder::new();
+/// path.move_to((0.5, 0.5)).line_to((3.5, 0.5))
+///     .line_to((3.5, 3.5)).line_to((0.5, 3.5));
+/// let mut edges = [Edge::default(); 8];
+/// let required = render_requirements(&path.build(), Affine::identity(),
+///     RenderOptions::default(), 4, 4, &mut edges).unwrap();
+/// assert_eq!((required.edges, required.row_coverage), (2, 4));
+/// ```
 pub fn render_requirements(path: &Path, transform: Affine, options: RenderOptions,
     width: u32, height: u32, edges: &mut [Edge]) ->
     Result<RenderRequirements, RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, edges)?;
     requirements_from_edges(&edges[..edge_count], width, height)
+}
+
+/// Computes the exact capacities for [`rasterize_path_clip`].
+pub fn path_clip_requirements(path: &Path, transform: Affine, options: RenderOptions,
+    dimensions: (u32, u32), edges: &mut [Edge]) ->
+    Result<RenderRequirements, RenderError> {
+    render_requirements(
+        path, transform, options, dimensions.0, dimensions.1, edges)
 }
 
 /// Computes exact undashed stroke capacities using caller-owned planning scratch.

@@ -106,6 +106,13 @@ pub fn render_requirements(path: &Path<Scalar>, options: RenderOptions,
         usage.edges, &workspace.lines[..usage.lines], dimensions)
 }
 
+/// Computes the exact capacities for [`rasterize_path_clip`].
+pub fn path_clip_requirements(path: &Path<Scalar>, options: RenderOptions,
+    dimensions: (u32, u32), workspace: &mut GeometryWorkspace<'_>) ->
+    Result<RenderRequirements, RenderError> {
+    render_requirements(path, options, dimensions, workspace)
+}
+
 /// Computes exact fixed stroke capacities using caller-owned planning scratch.
 pub fn stroke_requirements(path: &Path<Scalar>, options: StrokePathOptions,
     dimensions: (u32, u32), workspace: &mut StrokePlanningWorkspace<'_>) ->
