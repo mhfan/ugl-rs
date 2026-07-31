@@ -158,6 +158,11 @@ and SIMD layouts do not enter the common `Edge` representation.
   transfer-function reference, while `encode_into_with` uses a caller-owned
   4096-entry `Srgb8Encoder` table and is constrained to one RGBA8 code value per
   channel of the reference by tests.
+- `LinearPixmapMut::with_dirty_tiles` optionally borrows one bit per 16×16 tile.
+  Coverage spans mark tiles during composition; incremental presentation
+  consumes those bits and preserves untouched destination tiles. At 50% dirty
+  tile area it switches to contiguous full-frame encoding. Known-dense callers
+  should omit tracking to avoid its span-marking cost.
 - Integer conversion maps channel extrema exactly and uses round-to-nearest.
 
 ## Paint and gradients
@@ -223,6 +228,8 @@ and SIMD layouts do not enter the common `Edge` representation.
 - The desktop linear working target costs 16 bytes per pixel and the fast sRGB8
   presentation LUT costs 4096 bytes. The encoded compatibility target remains
   4 bytes per pixel; the MCU path must not inherit the desktop `f32` storage.
+- Optional linear dirty tracking costs one bit per 16×16 tile and uses only
+  caller-owned storage.
 - Invalid dimensions, insufficient destination/scratch storage, non-finite
   geometry, coordinate overflow, and unsupported operations return errors.
 - Library code must not panic for data-dependent input.

@@ -150,12 +150,21 @@ measurement, and 100 samples:
 | encoded RGBA8888 compatibility | 123.87 µs | 123.66–124.06 µs | 529.09 Mpixel/s |
 | linear `f32` working buffer | 155.88 µs | 155.16–156.71 µs | 420.44 Mpixel/s |
 | linear + 4096-entry LUT presentation | 357.79 µs | 357.08–358.63 µs | 183.17 Mpixel/s |
+| linear + adaptive dirty tracking, dense scene | 381.27 µs | 379.44–384.42 µs | 171.89 Mpixel/s |
 | linear + exact `powf` presentation | 4.2181 ms | 4.2036–4.2368 ms | 15.54 Mpixel/s |
 
 The working-buffer row includes clearing and compositing but no presentation.
 Both presentation rows encode the complete 256 × 256 target after rendering;
 the LUT is prepared before the timed loop and stays within one RGBA8 code value
 per channel of the exact transfer path in the boundary tests.
+
+For an incremental scene containing one 22.5 × 21.75 rectangle, full-frame LUT
+presentation measured 69.52 µs while adaptive 16 × 16 dirty-tile presentation
+measured 12.52 µs, a 5.55× reduction. On the dense 64-rectangle scene, tracking
+adds about 6.6%; the adaptive presenter switches to a contiguous full-frame
+encode when at least half the tile area is dirty, but span-marking still has a
+cost. Callers which know every frame is dense should use the non-tracking
+constructor and full presentation APIs.
 
 The additional fixed distribution scenes measure 45.76 µs for 16 sparse
 rectangles and 185.37 µs for 256 short-edge rectangles. Before strip binning
@@ -174,7 +183,8 @@ The initial caller-owned scratch budgets are:
 The compact target uses 4 bytes per pixel. `LinearPixmapMut` deliberately uses
 16 bytes per pixel (`LinearPremulRGBA<f32>`) and its fast presentation path
 borrows an additional 4096-byte sRGB encoding LUT. This desktop-quality working
-buffer is not the intended MCU storage path.
+buffer is not the intended MCU storage path. Optional dirty tracking costs one
+bit per 16 × 16 tile: 32 bytes for a 256 × 256 target.
 
 Renderer allocation count inside the measured path is zero by API
 construction: every mutable geometry, crossing, area, and destination buffer

@@ -8,12 +8,14 @@
 use core::convert::Infallible;
 use crate::{analytic::{AnalyticBinWorkspace, AnalyticWorkspace},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
-        AnalyticStrokeWorkspace, PixmapMut, RenderError, build_edges, build_stroke_edges,
-        rasterize_analytic},
+        AnalyticStrokeWorkspace, PixmapMut, RenderError,
+        build_edges, build_stroke_edges, rasterize_analytic},
     color::{LinearPremulRGBA, Srgb8Encoder, SRGBA}, geometry::{Affine, Path, Rect},
     raster::{CoverageMask, CoverageSink, MaskClipSink, RectClipSink},
     sampler::{LinearPaintSampler, SolidPaint},
 };
+
+pub const LINEAR_DIRTY_TILE_SIZE: u32 = 16;
 
 /// Borrowed premultiplied linear-light RGBA `f32` target.
 ///
@@ -22,11 +24,14 @@ use crate::{analytic::{AnalyticBinWorkspace, AnalyticWorkspace},
 #[derive(Debug)] pub struct LinearPixmapMut<'a> {
     data: &'a mut [LinearPremulRGBA<f32>],
     width: u32, height: u32, stride: u32,
+    dirty_tiles: Option<&'a mut [u64]>, dirty_tile_columns: u32, dirty_tile_count: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum LinearPixmapError {
     StrideTooSmall { minimum: u32, actual: u32 },
     BufferTooSmall { minimum: usize, actual: usize },
+    DirtyTileStorageTooSmall { minimum: usize, actual: usize },
+    DirtyTrackingUnavailable,
     DimensionsOverflow,
     DimensionsMismatch { source: (u32, u32), destination: (u32, u32) },
 }
@@ -34,6 +39,34 @@ use crate::{analytic::{AnalyticBinWorkspace, AnalyticWorkspace},
 impl<'a> LinearPixmapMut<'a> {
     pub fn new(data: &'a mut [LinearPremulRGBA<f32>], width: u32, height: u32,
         stride: u32) -> Result<Self, LinearPixmapError> {
+        Self::new_inner(data, width, height, stride, None)
+    }
+
+    /// Creates a target which records modified 16×16 tiles in caller storage.
+    pub fn with_dirty_tiles(data: &'a mut [LinearPremulRGBA<f32>], width: u32,
+        height: u32, stride: u32, dirty_tiles: &'a mut [u64]) ->
+        Result<Self, LinearPixmapError> {
+        let required = Self::dirty_tile_words(width, height)?;
+        if dirty_tiles.len() < required {
+            return Err(LinearPixmapError::DirtyTileStorageTooSmall {
+                minimum: required, actual: dirty_tiles.len(),
+            });
+        }
+        dirty_tiles[..required].fill(0);
+        Self::new_inner(data, width, height, stride, Some(&mut dirty_tiles[..required]))
+    }
+
+    pub fn dirty_tile_words(width: u32, height: u32) -> Result<usize, LinearPixmapError> {
+        let columns = width.div_ceil(LINEAR_DIRTY_TILE_SIZE);
+        let rows = height.div_ceil(LINEAR_DIRTY_TILE_SIZE);
+        let tiles = columns.checked_mul(rows).ok_or(LinearPixmapError::DimensionsOverflow)?;
+        usize::try_from(tiles.div_ceil(u64::BITS))
+            .map_err(|_| LinearPixmapError::DimensionsOverflow)
+    }
+
+    fn new_inner(data: &'a mut [LinearPremulRGBA<f32>], width: u32, height: u32,
+        stride: u32, dirty_tiles: Option<&'a mut [u64]>) ->
+        Result<Self, LinearPixmapError> {
         if stride < width {
             return Err(LinearPixmapError::StrideTooSmall { minimum: width, actual: stride });
         }
@@ -50,7 +83,9 @@ impl<'a> LinearPixmapMut<'a> {
         if data.len() < minimum {
             return Err(LinearPixmapError::BufferTooSmall { minimum, actual: data.len() });
         }
-        Ok(Self { data, width, height, stride })
+        Ok(Self { data, width, height, stride, dirty_tiles,
+            dirty_tile_columns: width.div_ceil(LINEAR_DIRTY_TILE_SIZE), dirty_tile_count: 0,
+        })
     }
 
     pub fn width(&self) -> u32 { self.width }
@@ -88,6 +123,64 @@ impl<'a> LinearPixmapMut<'a> {
         Ok(())
     }
 
+    /// Encodes and consumes only tiles modified since construction or the last
+    /// incremental presentation. Untouched destination pixels are preserved.
+    pub fn encode_dirty_into(&mut self, destination: &mut PixmapMut<'_>) ->
+        Result<(), LinearPixmapError> {
+        self.encode_dirty_with(destination, |color| color.to_encoded_srgba8())
+    }
+
+    /// LUT-accelerated incremental presentation of modified tiles.
+    pub fn encode_dirty_into_with(&mut self, destination: &mut PixmapMut<'_>,
+        encoder: Srgb8Encoder<'_>) -> Result<(), LinearPixmapError> {
+        self.encode_dirty_with(destination, |color| encoder.encode(color))
+    }
+
+    fn encode_dirty_with<F>(&mut self, destination: &mut PixmapMut<'_>, encode: F) ->
+        Result<(), LinearPixmapError>
+    where F: Fn(LinearPremulRGBA<f32>) -> crate::color::EncodedPremulSRGBA8 {
+        self.validate_destination(destination)?;
+        let tile_area = u64::from(LINEAR_DIRTY_TILE_SIZE).pow(2);
+        let pixel_count = u64::from(self.width) * u64::from(self.height);
+        if u64::from(self.dirty_tile_count) * tile_area * 2 >= pixel_count {
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    let color = self.data[y as usize * self.stride as usize + x as usize];
+                    destination.write_encoded_pixel(x, y, encode(color));
+                }
+            }
+            self.dirty_tiles.as_deref_mut()
+                .ok_or(LinearPixmapError::DirtyTrackingUnavailable)?.fill(0);
+            self.dirty_tile_count = 0;
+            return Ok(());
+        }
+        let dirty = self.dirty_tiles.as_deref_mut()
+            .ok_or(LinearPixmapError::DirtyTrackingUnavailable)?;
+        let (width, height, stride, columns) =
+            (self.width, self.height, self.stride, self.dirty_tile_columns);
+        let tile_count = columns * height.div_ceil(LINEAR_DIRTY_TILE_SIZE);
+        for tile in 0..tile_count {
+            let (word, mask) = ((tile / u64::BITS) as usize, 1_u64 << (tile % u64::BITS));
+            if dirty[word] & mask == 0 { continue; }
+            let (tile_x, tile_y) = (tile % columns, tile / columns);
+            let (x_start, y_start) =
+                (tile_x * LINEAR_DIRTY_TILE_SIZE, tile_y * LINEAR_DIRTY_TILE_SIZE);
+            let (x_end, y_end) = (
+                (x_start + LINEAR_DIRTY_TILE_SIZE).min(width),
+                (y_start + LINEAR_DIRTY_TILE_SIZE).min(height),
+            );
+            for y in y_start..y_end {
+                for x in x_start..x_end {
+                    let color = self.data[y as usize * stride as usize + x as usize];
+                    destination.write_encoded_pixel(x, y, encode(color));
+                }
+            }
+            dirty[word] &= !mask;
+        }
+        self.dirty_tile_count = 0;
+        Ok(())
+    }
+
     fn validate_destination(&self, destination: &PixmapMut<'_>) ->
         Result<(), LinearPixmapError> {
         if (self.width, self.height) != (destination.width(), destination.height()) {
@@ -101,6 +194,8 @@ impl<'a> LinearPixmapMut<'a> {
 
     fn blend_sampled_span<S: LinearPaintSampler>(&mut self, x: u32, y: u32, len: u32,
         sampler: &S, coverage: u8) {
+        if coverage == 0 || len == 0 { return; }
+        self.mark_dirty_span(x, y, len);
         let factor = coverage as f32 / u8::MAX as f32;
         if let Some(color) = sampler.solid_color_linear() {
             let source = color.scale(factor);
@@ -116,6 +211,22 @@ impl<'a> LinearPixmapMut<'a> {
                 .scale(factor);
             let pixel = &mut self.data[row + pixel_x as usize];
             *pixel = source.src_over(*pixel);
+        }
+    }
+
+    fn mark_dirty_span(&mut self, x: u32, y: u32, len: u32) {
+        let Some(dirty) = self.dirty_tiles.as_deref_mut() else { return; };
+        let tile_y = y / LINEAR_DIRTY_TILE_SIZE;
+        let first = x / LINEAR_DIRTY_TILE_SIZE;
+        let last = (x + len - 1) / LINEAR_DIRTY_TILE_SIZE;
+        for tile_x in first..=last {
+            let tile = tile_y * self.dirty_tile_columns + tile_x;
+            let (word, mask) =
+                ((tile / u64::BITS) as usize, 1_u64 << (tile % u64::BITS));
+            if dirty[word] & mask == 0 {
+                dirty[word] |= mask;
+                self.dirty_tile_count += 1;
+            }
         }
     }
 }
@@ -322,6 +433,14 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
             LinearPixmapError::DimensionsMismatch {
                 source: (2, 1), destination: (1, 1),
             });
+        assert_eq!(LinearPixmapMut::dirty_tile_words(32, 16), Ok(1));
+        assert_eq!(LinearPixmapMut::with_dirty_tiles(
+            &mut [LinearPremulRGBA::default(); 1], 32, 16, 32, &mut []).unwrap_err(),
+            LinearPixmapError::DirtyTileStorageTooSmall { minimum: 1, actual: 0 });
+        assert_eq!(LinearPixmapMut::new(
+            &mut [LinearPremulRGBA::default(); 1], 1, 1, 1).unwrap()
+            .encode_dirty_into(&mut PixmapMut::new(&mut [0; 4], 1, 1, 4).unwrap())
+            .unwrap_err(), LinearPixmapError::DirtyTrackingUnavailable);
     }
 
     #[test] fn linear_source_over_differs_from_encoded_domain_and_encodes_once() {
@@ -398,5 +517,29 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
             }).unwrap();
         assert_eq!(stroke_pixels[0].to_array()[3], 1.0);
         assert_eq!(stroke_pixels[1].to_array()[3], 1.0);
+    }
+
+    #[test] fn dirty_presentation_updates_touched_tiles_once() {
+        let mut pixels = [LinearPremulRGBA::default(); 48 * 16];
+        let mut dirty = [u64::MAX; 1];
+        let mut target =
+            LinearPixmapMut::with_dirty_tiles(&mut pixels, 48, 16, 48, &mut dirty).unwrap();
+        render_solid_analytic(&rectangle(), Affine::identity(), SRGBA::white(),
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                intersections: &mut [AnalyticIntersection::default(); 4],
+                row_coverage: &mut [0.0; 48], edges: &mut [Edge::default(); 4],
+                row_offsets: &mut [0; 17], edge_indices: &mut [0; 4],
+            }).unwrap();
+
+        let mut bytes = [17; 48 * 16 * 4];
+        target.encode_dirty_into(&mut PixmapMut::new(&mut bytes, 48, 16, 192).unwrap())
+            .unwrap();
+        assert_eq!(&bytes[..4], &[255; 4]);
+        assert_eq!(&bytes[16 * 4..16 * 4 + 4], &[17; 4]);
+
+        bytes[..4].fill(9);
+        target.encode_dirty_into(&mut PixmapMut::new(&mut bytes, 48, 16, 192).unwrap())
+            .unwrap();
+        assert_eq!(&bytes[..4], &[9; 4]);
     }
 }

@@ -114,6 +114,8 @@ fn benchmark_f32(c: &mut Criterion) {
         }));
     let mut transfer_lut = vec![0; SRGB8_ENCODE_LUT_SIZE];
     let encoder = Srgb8Encoder::new(&mut transfer_lut).unwrap();
+    let mut dirty_tiles =
+        vec![0; LinearPixmapMut::dirty_tile_words(WIDTH, HEIGHT).unwrap()];
     group.bench_function(BenchmarkId::new("analytic_linear_present_lut", "64_rectangles"),
         |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());
@@ -131,6 +133,75 @@ fn benchmark_f32(c: &mut Criterion) {
                 encoder).unwrap();
             black_box(&pixels);
         }));
+    group.bench_function(
+        BenchmarkId::new("analytic_linear_present_dirty_lut", "64_rectangles"),
+        |b| b.iter(|| {
+            linear_pixels.fill(LinearPremulRGBA::default());
+            let mut target = LinearPixmapMut::with_dirty_tiles(
+                &mut linear_pixels, WIDTH, HEIGHT, WIDTH, &mut dirty_tiles).unwrap();
+            render_solid_linear_analytic(&path, Affine::identity(),
+                SRGBA::new(40, 120, 220, 192), AnalyticRenderOptions::default(),
+                &mut target, &mut AnalyticRenderWorkspace {
+                    edges: &mut edges, intersections: &mut analytic_intersections,
+                    row_coverage: &mut row_coverage,
+                    row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+                }).unwrap();
+            target.encode_dirty_into_with(
+                &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
+                encoder).unwrap();
+            black_box(&pixels);
+        }));
+    group.finish();
+}
+
+fn benchmark_linear_presentation(c: &mut Criterion) {
+    let mut builder = PathBuilder::new();
+    builder.move_to((4.25, 4.5)).line_to((26.75, 4.5))
+        .line_to((26.75, 26.25)).line_to((4.25, 26.25));
+    let path = builder.build();
+    let mut linear_pixels =
+        vec![LinearPremulRGBA::default(); WIDTH as usize * HEIGHT as usize];
+    let mut encoded_pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
+    let mut transfer_lut = vec![0; SRGB8_ENCODE_LUT_SIZE];
+    let encoder = Srgb8Encoder::new(&mut transfer_lut).unwrap();
+    let mut dirty_tiles =
+        vec![0; LinearPixmapMut::dirty_tile_words(WIDTH, HEIGHT).unwrap()];
+    let (mut edges, mut intersections, mut row_coverage,
+        mut row_offsets, mut edge_indices) = (
+        vec![Edge::default(); 4], vec![AnalyticIntersection::default(); 4],
+        vec![0.0; WIDTH as usize], vec![0; HEIGHT as usize + 1], vec![0; 4],
+    );
+    let mut group = c.benchmark_group("linear_present_rgba8888");
+    group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
+
+    group.bench_function("sparse_full_frame_lut", |b| b.iter(|| {
+        let mut target =
+            LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+        render_solid_linear_analytic(&path, Affine::identity(), SRGBA::white(),
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut intersections,
+                row_coverage: &mut row_coverage,
+                row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
+            }).unwrap();
+        target.encode_into_with(
+            &mut PixmapMut::new(&mut encoded_pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
+            encoder).unwrap();
+        black_box(&encoded_pixels);
+    }));
+    group.bench_function("sparse_dirty_tiles_lut", |b| b.iter(|| {
+        let mut target = LinearPixmapMut::with_dirty_tiles(
+            &mut linear_pixels, WIDTH, HEIGHT, WIDTH, &mut dirty_tiles).unwrap();
+        render_solid_linear_analytic(&path, Affine::identity(), SRGBA::white(),
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut intersections,
+                row_coverage: &mut row_coverage,
+                row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
+            }).unwrap();
+        target.encode_dirty_into_with(
+            &mut PixmapMut::new(&mut encoded_pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
+            encoder).unwrap();
+        black_box(&encoded_pixels);
+    }));
     group.finish();
 }
 
@@ -574,6 +645,7 @@ fn benchmark_paint(c: &mut Criterion) {
 fn  benchmarks(c: &mut Criterion) {
     #[cfg(feature = "fixed")] benchmark_fixed(c);
     benchmark_f32(c);
+    benchmark_linear_presentation(c);
     benchmark_analytic_active(c);
     benchmark_stroke(c);
     benchmark_paint(c);
