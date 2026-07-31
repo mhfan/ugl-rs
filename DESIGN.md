@@ -497,13 +497,16 @@ directly into caller-owned `CoverageMaskMut` storage. The fixed path-mask route
 uses the existing bounded geometry and raster workspaces, so mask production
 and consumption remain allocation-free and no-FPU.
 
-Two cross-cutting API reviews also remain:
+The framebuffer boundary now distinguishes raw storage from valid color:
+solid paint and gradient-stop inputs use straight encoded `SRGBA<u8>`;
+`PixmapMut::pixel_bytes` exposes physical RGBA bytes unchanged; and `pixel`
+returns only validated `EncodedPremulSRGBA8`. Construction remains O(1) with
+respect to image area and therefore does not scan caller-owned destination
+contents. Compositing over existing bytes requires the caller to uphold the
+premultiplied invariant.
 
-- Finish the framebuffer boundary audit. Solid paint and gradient-stop inputs
-  now use explicit straight encoded `SRGBA<u8>`; generic `RGBA<T>` remains only
-  a transfer-neutral arithmetic building block. Pixel readback and raw target
-  validation still need to state whether invalid premultiplied input bytes are
-  rejected, exposed unchanged, or normalized.
+One cross-cutting API review remains:
+
 - Design a stateful `Canvas`/`Context` facade over the low-level rendering
   functions. It should own or borrow target state, current transform, paint,
   clip stack, fill/stroke options, and reusable workspaces where appropriate,

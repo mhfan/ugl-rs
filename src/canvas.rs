@@ -1,7 +1,7 @@
 //! Borrowed pixel targets and the first complete reference rendering path.
 
 use core::convert::Infallible;
-use crate::{color::{PremulRGBA, SRGBA},
+use crate::{color::{EncodedPremulSRGBA8, PremulRGBA, SRGBA},
     dash::{dash_polyline, DashContour, DashError, DashPattern, DashWorkspace},
     edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticBinError, AnalyticBinWorkspace, AnalyticIntersection,
@@ -43,7 +43,12 @@ const BYTES_PER_PIXEL: u32 = 4;
 }
 
 impl<'a> PixmapMut<'a> {
-    /// Creates a premultiplied RGBA8888 target with explicit row stride.
+    /// Creates an encoded-premultiplied sRGBA8 target with explicit row stride.
+    ///
+    /// Construction validates only layout and capacity; it does not scan pixel
+    /// contents. Before compositing over existing contents, callers must ensure
+    /// every destination pixel satisfies `RGB <= alpha`. [`Self::pixel`] can
+    /// validate individual pixels without changing their bytes.
     pub fn new(data: &'a mut [u8], width: u32, height: u32, stride: u32) ->
         Result<Self, PixmapError> {
         let row_bytes = width.checked_mul(BYTES_PER_PIXEL)
@@ -70,16 +75,25 @@ impl<'a> PixmapMut<'a> {
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
 
-    pub fn pixel(&self, x: u32, y: u32) -> Option<PremulRGBA<u8>> {
+    /// Returns the physical RGBA bytes without interpreting their invariants.
+    pub fn pixel_bytes(&self, x: u32, y: u32) -> Option<[u8; 4]> {
         if x >= self.width || y >= self.height { return None; }
         let offset = y as usize * self.stride as usize +
                      x as usize * BYTES_PER_PIXEL as usize;
-        Some((self.data[offset], self.data[offset + 1],
-              self.data[offset + 2], self.data[offset + 3]).into())
+        Some([self.data[offset], self.data[offset + 1],
+              self.data[offset + 2], self.data[offset + 3]])
+    }
+
+    /// Returns a validated encoded-premultiplied sRGB pixel.
+    ///
+    /// `None` indicates either an out-of-bounds coordinate or raw target bytes
+    /// that violate the premultiplied `RGB <= alpha` invariant.
+    pub fn pixel(&self, x: u32, y: u32) -> Option<EncodedPremulSRGBA8> {
+        EncodedPremulSRGBA8::from_array(self.pixel_bytes(x, y)?)
     }
 
     pub(crate) fn write_encoded_pixel(&mut self, x: u32, y: u32,
-        color: crate::color::EncodedPremulSRGBA8) {
+        color: EncodedPremulSRGBA8) {
         let offset = y as usize * self.stride as usize +
                      x as usize * BYTES_PER_PIXEL as usize;
         self.data[offset..offset + BYTES_PER_PIXEL as usize]

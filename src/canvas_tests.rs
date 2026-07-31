@@ -1,12 +1,13 @@
 
 use super::*;
 use crate::{analytic::AnalyticIntersection,
-    color::{EncodedPremulSRGBA8, PremulRGBA, RGBA as GenericRGBA, SRGBA as RGBA},
+    color::{EncodedPremulSRGBA8, RGBA as GenericRGBA, SRGBA as RGBA},
     edge::Edge,
     geometry::{Affine, PathBuilder}, raster::Intersection,
     sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient, SpreadMode},
     stroke::{LineCap, LineJoin},
 };
+#[cfg(feature = "fixed")] use crate::color::PremulRGBA;
 use alloc::vec;
 
 fn rectangle(left: f32, top: f32, right: f32, bottom: f32) -> Path {
@@ -48,8 +49,16 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         PixmapError::StrideTooSmall { minimum: 8, actual: 7 });
     let mut target = PixmapMut::new(&mut data, 2, 1, 11).unwrap();
     target.blend_solid_span(0, 0, 2, GenericRGBA::<u8>::red().premul(), 255);
-    assert_eq!(target.pixel(1, 0), Some(GenericRGBA::<u8>::red().premul()));
+    assert_eq!(target.pixel_bytes(1, 0), Some([255, 0, 0, 255]));
     assert_eq!(&target.data[8..], &[0, 0, 0]);
+}
+
+#[test] fn pixmap_distinguishes_raw_bytes_from_valid_encoded_premul_pixels() {
+    let mut data = [200, 20, 10, 100];
+    let target = PixmapMut::new(&mut data, 1, 1, 4).unwrap();
+    assert_eq!(target.pixel_bytes(0, 0), Some([200, 20, 10, 100]));
+    assert_eq!(target.pixel(0, 0), None);
+    assert_eq!(target.pixel_bytes(1, 0), None);
 }
 
 #[test] fn source_over_combines_coverage_alpha_and_premultiplied_destination() {
@@ -57,11 +66,11 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut target = PixmapMut::new(&mut data, 1, 1, 4).unwrap();
     target.blend_solid_span(
         0, 0, 1, GenericRGBA::<u8>::new(255, 0, 0, 128).premul(), 255);
-    assert_eq!(target.pixel(0, 0), Some((128, 0, 127, 255).into()));
-    let before = target.pixel(0, 0);
+    assert_eq!(target.pixel_bytes(0, 0), Some([128, 0, 127, 255]));
+    let before = target.pixel_bytes(0, 0);
     target.blend_solid_span(0, 0, 1,
         GenericRGBA::<u8>::new(1, 2, 3, 0).premul(), 255);
-    assert_eq!(target.pixel(0, 0), before);
+    assert_eq!(target.pixel_bytes(0, 0), before);
 }
 
 #[test] fn solid_rectangle_renders_end_to_end_without_allocation() {
@@ -77,10 +86,10 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
              row_coverage: &mut row_coverage,
         },
     ).unwrap();
-    assert_eq!(target.pixel(0, 0), Some(PremulRGBA::zeroed()));
-    assert_eq!(target.pixel(1, 1), Some((128, 0, 0, 128).into()));
-    assert_eq!(target.pixel(2, 2), Some((128, 0, 0, 128).into()));
-    assert_eq!(target.pixel(3, 3), Some(PremulRGBA::zeroed()));
+    assert_eq!(target.pixel_bytes(0, 0), Some([0; 4]));
+    assert_eq!(target.pixel_bytes(1, 1), Some([128, 0, 0, 128]));
+    assert_eq!(target.pixel_bytes(2, 2), Some([128, 0, 0, 128]));
+    assert_eq!(target.pixel_bytes(3, 3), Some([0; 4]));
 }
 
 #[test] fn edge_capacity_failure_reports_required_lower_bound() {
@@ -106,7 +115,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut buffers = AnalyticBuffers::<2, 1>::new();
     render_solid_analytic(&builder.build(), Affine::identity(), RGBA::white(),
         AnalyticRenderOptions::default(), &mut target, &mut buffers.workspace()).unwrap();
-    assert_eq!(target.pixel(0, 0), Some((128, 128, 128, 128).into()));
+    assert_eq!(target.pixel_bytes(0, 0), Some([128; 4]));
 }
 
 #[test] fn analytic_sampled_paint_uses_device_pixel_centers_and_coverage() {
@@ -122,8 +131,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut buffers = AnalyticBuffers::<4, 2>::new();
     render_paint_analytic(&path, Affine::identity(), &CoordinatePaint,
         AnalyticRenderOptions::default(), &mut target, &mut buffers.workspace()).unwrap();
-    assert_eq!(target.pixel(0, 0), Some((10, 10, 0, 128).into()));
-    assert_eq!(target.pixel(1, 0), Some((60, 20, 0, 255).into()));
+    assert_eq!(target.pixel_bytes(0, 0), Some([10, 10, 0, 128]));
+    assert_eq!(target.pixel_bytes(1, 0), Some([60, 20, 0, 255]));
 }
 
 #[test] fn analytic_stroke_runs_path_expansion_and_composition_without_allocation() {
@@ -263,7 +272,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             }).unwrap();
         for y in 0..8 {
             for x in 0..8 {
-                let [red, green, blue, alpha] = target.pixel(x, y).unwrap().to_array();
+                let [red, green, blue, alpha] = target.pixel_bytes(x, y).unwrap();
                 assert!(red <= alpha && green <= alpha && blue <= alpha,
                     "case {case}, pixel ({x}, {y}) is not premultiplied");
             }
@@ -313,8 +322,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_paint_analytic(&path, Affine::identity(), &gradient,
         AnalyticRenderOptions::default(), &mut target,
         &mut buffers.workspace()).unwrap();
-    assert_eq!(target.pixel(0, 0), Some((225, 0, 137, 255).into()));
-    assert_eq!(target.pixel(1, 0), Some((137, 0, 225, 255).into()));
+    assert_eq!(target.pixel_bytes(0, 0), Some([225, 0, 137, 255]));
+    assert_eq!(target.pixel_bytes(1, 0), Some([137, 0, 225, 255]));
 }
 
 #[test] fn analytic_radial_gradient_renders_end_to_end() {
@@ -327,9 +336,9 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_paint_analytic(&path, Affine::identity(), &gradient,
         AnalyticRenderOptions::default(), &mut target,
         &mut buffers.workspace()).unwrap();
-    assert_eq!(target.pixel(0, 0), Some((156, 0, 213, 255).into()));
-    assert_eq!(target.pixel(1, 0), Some((255, 0, 0, 255).into()));
-    assert_eq!(target.pixel(2, 0), target.pixel(0, 0));
+    assert_eq!(target.pixel_bytes(0, 0), Some([156, 0, 213, 255]));
+    assert_eq!(target.pixel_bytes(1, 0), Some([255, 0, 0, 255]));
+    assert_eq!(target.pixel_bytes(2, 0), target.pixel_bytes(0, 0));
 }
 
 #[test] fn analytic_gradient_composes_through_rectangle_and_path_clips() {
@@ -365,11 +374,11 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         Rect::from_ltrb(0.5, 0.25, 2.5, 1.0).unwrap(),
         AnalyticRenderOptions::default(), &mut target,
         &mut buffers.workspace()).unwrap();
-    assert_eq!((target.pixel(0, 0), target.pixel(1, 0), target.pixel(2, 0)),
-        (Some((96, 96, 96, 96).into()), Some((191, 191, 191, 191).into()),
-         Some((96, 96, 96, 96).into()))
+    assert_eq!((target.pixel_bytes(0, 0), target.pixel_bytes(1, 0),
+                target.pixel_bytes(2, 0)),
+        (Some([96; 4]), Some([191; 4]), Some([96; 4]))
     );
-    assert_eq!(target.pixel(1, 1), Some(PremulRGBA::zeroed()));
+    assert_eq!(target.pixel_bytes(1, 1), Some([0; 4]));
 }
 
 #[test] fn analytic_path_clip_uses_reusable_caller_owned_coverage() {
@@ -476,8 +485,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             strip_offsets: &mut strip_offsets,
             strip_indices: &mut strip_indices,
         }).unwrap();
-    assert_eq!(target.pixel(0, 0), Some((128, 128, 128, 128).into()));
-    assert_eq!(target.pixel(1, 0), Some((128, 128, 128, 128).into()));
+    assert_eq!(target.pixel_bytes(0, 0), Some([128; 4]));
+    assert_eq!(target.pixel_bytes(1, 0), Some([128; 4]));
 
     struct CoordinatePaint;
     impl PaintSampler for CoordinatePaint {
@@ -708,7 +717,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             let expected = if y < 2 && (1..3).contains(&x) {
                 (255, 255, 255, 255).into()
             } else { PremulRGBA::zeroed() };
-            assert_eq!(target.pixel(x, y), Some(expected), "pixel=({x}, {y})");
+            assert_eq!(target.pixel_bytes(x, y), Some(expected.to_array()),
+                "pixel=({x}, {y})");
         }
     }
 }
@@ -832,9 +842,9 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             strip_indices: &mut strip_indices,
         }).unwrap();
     let target = PixmapMut::new(&mut pixels, 4, 4, 16).unwrap();
-    assert_eq!(target.pixel(1, 1), Some(GenericRGBA::<u8>::white().premul()));
-    assert_eq!(target.pixel(2, 2), Some(GenericRGBA::<u8>::white().premul()));
-    assert_eq!(target.pixel(0, 0), Some(PremulRGBA::zeroed()));
+    assert_eq!(target.pixel_bytes(1, 1), Some([255; 4]));
+    assert_eq!(target.pixel_bytes(2, 2), Some([255; 4]));
+    assert_eq!(target.pixel_bytes(0, 0), Some([0; 4]));
 }
 
 #[cfg(feature = "fixed")]

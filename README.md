@@ -155,9 +155,6 @@ binary-turn angle and a fixed 16-step integer CORDIC.
 
 Pending architectural work includes:
 
-- finish the framebuffer boundary audit: solid paints and gradient stops now
-  accept explicit straight encoded `SRGBA<u8>`, while pixel readback and raw
-  target validation still need an explicit encoded-premultiplied contract;
 - design a `Canvas`/`Context` facade that consolidates target, transform, paint,
   clipping, drawing options, and workspace reuse without removing the bounded,
   allocation-free low-level APIs;
@@ -169,6 +166,12 @@ Pending architectural work includes:
 Both f32 analytic and Q24.8 fixed paths can rasterize arbitrary path clips into
 caller-owned `CoverageMaskMut` storage. Fixed compositors can therefore produce
 and consume arbitrary path masks end to end without an FPU.
+
+Color boundaries are explicit: solid paints and gradient stops accept straight
+encoded `SRGBA<u8>`, while `PixmapMut::pixel` returns only validated
+`EncodedPremulSRGBA8`. `pixel_bytes` exposes the physical RGBA bytes unchanged.
+Pixmap construction intentionally validates layout without scanning the image;
+source-over callers are responsible for valid premultiplied destination data.
 
 ## Benchmarking
 

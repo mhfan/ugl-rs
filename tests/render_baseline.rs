@@ -1,6 +1,6 @@
 
 use ugl_rs::{analytic::AnalyticIntersection,
-    color::{LinearPremulRGBA, PremulRGBA, SRGBA, SRGBA as RGBA},
+    color::{EncodedPremulSRGBA8, LinearPremulRGBA, PremulRGBA, SRGBA, SRGBA as RGBA},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,
         render_stroke_solid_analytic,
@@ -14,6 +14,11 @@ use ugl_rs::{analytic::AnalyticIntersection,
 
 const  WIDTH: u32 = 4;
 const HEIGHT: u32 = 4;
+
+fn legacy_pixel(pixel: EncodedPremulSRGBA8) -> PremulRGBA<u8> {
+    let [r, g, b, a] = pixel.to_array();
+    (r, g, b, a).into()
+}
 
 fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
@@ -30,7 +35,8 @@ fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
         },
     ).unwrap();
-    core::array::from_fn(|index| target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
+    core::array::from_fn(|index| legacy_pixel(
+        target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap()))
 }
 
 fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
@@ -49,7 +55,7 @@ fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
         },
     ).unwrap();
     core::array::from_fn(|index|
-        target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
+        legacy_pixel(target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap()))
 }
 
 fn render_analytic_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
@@ -69,7 +75,7 @@ fn render_analytic_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
         }).unwrap();
     core::array::from_fn(|index|
-        target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
+        legacy_pixel(target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap()))
 }
 
 fn render_analytic_stroke(builder: PathBuilder) -> [PremulRGBA<u8>; 16] {
@@ -97,7 +103,8 @@ fn render_linear_layers(builder: PathBuilder, colors: &[SRGBA<u8>]) ->
     let mut encoded = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     target.encode_into(&mut encoded).unwrap();
     core::array::from_fn(|index|
-        encoded.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
+        legacy_pixel(encoded.pixel(
+            index as u32 % WIDTH, index as u32 / WIDTH).unwrap()))
 }
 
 fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) ->
@@ -118,7 +125,8 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
     let mut encoded = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     target.encode_into(&mut encoded).unwrap();
     core::array::from_fn(|index|
-        encoded.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
+        legacy_pixel(encoded.pixel(
+            index as u32 % WIDTH, index as u32 / WIDTH).unwrap()))
 }
 
 #[test] fn aligned_rectangle_rgba_golden() {

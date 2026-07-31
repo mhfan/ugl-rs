@@ -376,6 +376,7 @@ impl EncodedPremulSRGBA8 {
     pub fn new(r: u8, g: u8, b: u8, a: u8) -> Option<Self> {
         PremulRGBA::new(r, g, b, a).map(Self)
     }
+    pub fn from_array([r, g, b, a]: [u8; 4]) -> Option<Self> { Self::new(r, g, b, a) }
     pub fn zeroed() -> Self { Self(PremulRGBA::zeroed()) }
     pub fn to_array(self) -> [u8; 4] { self.0.to_array() }
     /// Decodes encoded premultiplied bytes into linear-light premultiplied color.
