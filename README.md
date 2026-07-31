@@ -155,10 +155,7 @@ binary-turn angle and a fixed 16-step integer CORDIC.
 
 Pending architectural work includes:
 
-- design a `Canvas`/`Context` facade that consolidates target, transform, paint,
-  clipping, drawing options, and workspace reuse without removing the bounded,
-  allocation-free low-level APIs;
-- evaluate moving fixed-only implementation into `src/fixed/` as part of that
+- evaluate moving fixed-only implementation into `src/fixed/` as part of the
   API cleanup. The layout should strengthen feature and backend boundaries
   without duplicating shared abstractions or accidentally changing public
   module paths.
@@ -172,6 +169,12 @@ encoded `SRGBA<u8>`, while `PixmapMut::pixel` returns only validated
 `PremulSRGBA8`. `pixel_bytes` exposes the physical RGBA bytes unchanged.
 Pixmap construction intentionally validates layout without scanning the image;
 source-over callers are responsible for valid premultiplied destination data.
+
+`Context` and `FixedContext` provide parallel stateful drawing APIs for the
+analytic f32 and Q24.8 pipelines. They retain transform, fill rule, flattening,
+stroke, solid color, and rectangle/mask clip state while borrowing the target
+and bounded scratch storage. `fill_with` and `stroke_with` preserve static
+sampler dispatch; all original low-level functions remain available.
 
 ## Benchmarking
 

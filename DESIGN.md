@@ -545,6 +545,12 @@ The first stable method vocabulary is small:
   caller data and requires additional bounded scratch. It is not hidden inside
   an enum that expands every context.
 
+Status: the first `Context` and `FixedContext` fill/stroke facade is
+implemented. Both share generic state storage and parallel method names;
+rectangle/mask clip state and statically dispatched custom paint are supported.
+Dashed methods, caller-owned save/restore, and workspace sizing helpers remain
+before the facade can be considered complete.
+
 All methods preserve existing error and mutation contracts. Geometry/capacity
 failure before rasterization leaves the target unchanged. Once span emission
 begins, sink/raster errors follow the documented low-level behavior. Context

@@ -582,13 +582,31 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
     sampler: &S, options: FixedRenderOptions,
     target: &mut PixmapMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
     raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
-    build_fill_edges_fixed(path, options.transform, options.flatten, &mut sink)
-        .map_err(map_fixed_flatten_error)?;
-    let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
-        .map_err(RenderError::FixedRaster)?;
+    let line_count = prepare_fixed_path(path, options, geometry)?;
     render_native_paint_fixed(&geometry.lines[..line_count], sampler,
         options.fill_rule, target, raster_workspace)
+}
+
+/// Transforms, flattens, and fills a Q24.8 path through a rectangle clip.
+#[cfg(feature = "fixed")] pub fn render_native_path_fixed_clipped<
+    S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>,
+    sampler: &S, clip: Rect, options: FixedRenderOptions,
+    target: &mut PixmapMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
+    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
+    let line_count = prepare_fixed_path(path, options, geometry)?;
+    render_native_paint_fixed_clipped(&geometry.lines[..line_count], sampler,
+        clip, options.fill_rule, target, raster_workspace)
+}
+
+/// Transforms, flattens, and fills a Q24.8 path through a coverage mask.
+#[cfg(feature = "fixed")] pub fn render_native_path_fixed_masked<
+    S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>,
+    sampler: &S, mask: CoverageMask<'_>, options: FixedRenderOptions,
+    target: &mut PixmapMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
+    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
+    let line_count = prepare_fixed_path(path, options, geometry)?;
+    render_native_paint_fixed_masked(&geometry.lines[..line_count], sampler,
+        mask, options.fill_rule, target, raster_workspace)
 }
 
 /// Expands and renders a Q24.8 polyline with no floating-point operations.
@@ -613,6 +631,26 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
     path_workspace: &mut StrokePathWorkspace<'_, FixedScalar>,
     geometry: &mut FixedGeometryWorkspace<'_>,
     raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
+    let line_count = prepare_fixed_stroke_path(path, options, path_workspace, geometry)?;
+    render_native_paint_fixed(&geometry.lines[..line_count], sampler,
+        FillRule::NonZero, target, raster_workspace)
+}
+
+#[cfg(feature = "fixed")]
+fn prepare_fixed_path(path: &Path<FixedScalar>, options: FixedRenderOptions,
+    geometry: &mut FixedGeometryWorkspace<'_>) -> Result<usize, RenderError> {
+    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
+    build_fill_edges_fixed(path, options.transform, options.flatten, &mut sink)
+        .map_err(map_fixed_flatten_error)?;
+    prepare_lines(&sink.edges[..sink.len], geometry.lines)
+        .map_err(RenderError::FixedRaster)
+}
+
+#[cfg(feature = "fixed")]
+pub(crate) fn prepare_fixed_stroke_path(
+    path: &Path<FixedScalar>, options: FixedStrokePathOptions,
+    path_workspace: &mut StrokePathWorkspace<'_, FixedScalar>,
+    geometry: &mut FixedGeometryWorkspace<'_>) -> Result<usize, RenderError> {
     let flattened = flatten_stroke_path_fixed(
         path, options.transform, options.flatten, path_workspace)
         .map_err(map_fixed_stroke_flatten_error)?;
@@ -621,10 +659,8 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
         stroke_polyline_fixed(points, closed, options.stroke, &mut sink)
             .map_err(map_fixed_stroke_expand_error)?;
     }
-    let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
-        .map_err(RenderError::FixedRaster)?;
-    render_native_paint_fixed(&geometry.lines[..line_count], sampler,
-        FillRule::NonZero, target, raster_workspace)
+    prepare_lines(&sink.edges[..sink.len], geometry.lines)
+        .map_err(RenderError::FixedRaster)
 }
 
 /// Renders a transformed, dashed Q24.8 path without floating-point operations.
