@@ -144,6 +144,17 @@ transforms, center crossings, and all spread modes with a maximum linear-channel
 tolerance of `1e-4`. Non-concentric radial and conic paints retain their general
 point-sampling fallback.
 
+Conic gradients keep exact `atan2f` as the default and expose
+`ConicAngleMode::Fast` as an explicit quality/performance choice. Fast mode
+uses the same Sollya-generated seventh-degree unit-angle polynomial as
+[Skia's CPU raster pipeline](https://skia.googlesource.com/skia/+/084fa9d8601a7f7895fc64efad3035098107d319/src/opts/SkRasterPipeline_opts.h#3152).
+An exhaustive 65,536-angle test measured at most `2.66e-5` turns of circular
+error. That bound can move a discontinuous seam by the same amount, so fast
+mode is never selected implicitly. A short diagnostic measured 65,536 linear
+conic samples at about 486.6 µs versus 603.7 µs for exact evaluation
+(approximately 19% faster); the 64-rectangle analytic render measured about
+691.5 µs versus 799.8 µs (approximately 14% faster).
+
 These are scalar reference costs, not optimized paint targets. In particular,
 the general radial sampler performs stable two-circle root solving per pixel;
 future specialized concentric/span-stepping paths must retain byte-equivalent

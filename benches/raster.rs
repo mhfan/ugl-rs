@@ -13,8 +13,8 @@ use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWork
         render_paint_analytic as render_paint_linear_analytic,
         render_solid_analytic as render_solid_linear_analytic},
     geometry::{Affine, Path, PathBuilder},
-    sampler::{ConicGradient, GradientStop, GradientStops, LinearGradient, LinearPaintSampler,
-        PaintSampler, RadialGradient, SolidPaint, SpreadMode},
+    sampler::{ConicAngleMode, ConicGradient, GradientStop, GradientStops, LinearGradient,
+        LinearPaintSampler, PaintSampler, RadialGradient, SolidPaint, SpreadMode},
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions, StrokePathWorkspace,
         flatten_stroke_path, stroke_polyline},
 };
@@ -141,6 +141,27 @@ fn benchmark_f32(c: &mut Criterion) {
             }).unwrap();
         black_box(&linear_pixels);
     }));
+    let conic = ConicGradient::new(
+        (WIDTH as f32 * 0.5, HEIGHT as f32 * 0.5), 0.37, gradient_stops).unwrap();
+    let conic_fast = ConicGradient::with_angle_mode(
+        (WIDTH as f32 * 0.5, HEIGHT as f32 * 0.5), 0.37,
+        gradient_stops, ConicAngleMode::Fast).unwrap();
+    for (name, paint) in [("analytic_linear_conic", &conic),
+                          ("analytic_linear_conic_fast", &conic_fast)] {
+        group.bench_function(BenchmarkId::new(name, "64_rectangles"), |b| b.iter(|| {
+            linear_pixels.fill(LinearPremulRGBA::default());
+            let mut target =
+                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            render_paint_linear_analytic(&path, Affine::identity(), paint,
+                AnalyticRenderOptions::default(), &mut target,
+                &mut AnalyticRenderWorkspace {
+                    edges: &mut edges, intersections: &mut analytic_intersections,
+                    row_coverage: &mut row_coverage,
+                    row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+                }).unwrap();
+            black_box(&linear_pixels);
+        }));
+    }
     group.bench_function(BenchmarkId::new(
         "analytic_linear_radial_concentric", "64_rectangles"), |b| b.iter(|| {
         linear_pixels.fill(LinearPremulRGBA::default());
@@ -517,6 +538,8 @@ fn benchmark_paint(c: &mut Criterion) {
     let concentric = RadialGradient::new(
         (128.0, 128.0), 180.0, linear_stops, SpreadMode::Pad).unwrap();
     let conic = ConicGradient::new((128.0, 128.0), 0.37, linear_stops).unwrap();
+    let conic_fast = ConicGradient::with_angle_mode(
+        (128.0, 128.0), 0.37, linear_stops, ConicAngleMode::Fast).unwrap();
     let mut group = c.benchmark_group("paint_sample_linear");
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
     group.bench_function("solid",  |b| b.iter(|| black_box(sample_linear_checksum(&solid))));
@@ -530,6 +553,8 @@ fn benchmark_paint(c: &mut Criterion) {
     group.bench_function("radial_concentric_span", |b| b.iter(||
         black_box(sample_linear_span_checksum(&concentric))));
     group.bench_function("conic",  |b| b.iter(|| black_box(sample_linear_checksum(&conic))));
+    group.bench_function("conic_fast",
+        |b| b.iter(|| black_box(sample_linear_checksum(&conic_fast))));
     group.finish();
 
     let exact = LinearGradient::new((0.0, 0.0), (WIDTH as _, HEIGHT as _),

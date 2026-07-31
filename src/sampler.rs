@@ -438,7 +438,19 @@ impl LinearPaintSampler for RadialGradient<'_> {
 
 /// A full-turn conic gradient around `center`.
 #[derive(Clone, Copy, Debug)] pub struct ConicGradient<'a> {
-    center: Point, start_turn: f32, stops: GradientStops<'a>,
+    center: Point, start_turn: f32, stops: GradientStops<'a>, angle_mode: ConicAngleMode,
+}
+
+/// Angle evaluation policy for conic gradients.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ConicAngleMode {
+    /// Uses `atan2f` as the scalar reference path.
+    #[default] Exact,
+    /// Uses Skia's seventh-degree unit-angle approximation.
+    ///
+    /// The approximation can shift a discontinuous gradient seam slightly;
+    /// choose this mode only when that bounded quality tradeoff is acceptable.
+    Fast,
 }
 
 const TAU: f32 = core::f32::consts::PI * 2.0;
@@ -446,25 +458,55 @@ impl<'a> ConicGradient<'a> {
     /// Creates a conic gradient whose zero stop lies at `start_angle` radians.
     pub fn new(center: impl Into<Point>, start_angle: f32, stops: GradientStops<'a>) ->
         Result<Self, GradientError> {
+        Self::with_angle_mode(center, start_angle, stops, ConicAngleMode::Exact)
+    }
+
+    pub fn with_angle_mode(center: impl Into<Point>, start_angle: f32,
+        stops: GradientStops<'a>, angle_mode: ConicAngleMode) -> Result<Self, GradientError> {
         let center = center.into();
         if !center.x.is_finite() || !center.y.is_finite() || !start_angle.is_finite() {
             return Err(GradientError::NonFiniteGeometry);
-        }   Ok(Self { center, start_turn: start_angle / TAU, stops })
+        }   Ok(Self { center, start_turn: start_angle / TAU, stops, angle_mode })
+    }
+
+    fn turn(&self, x: f32, y: f32) -> f32 {
+        let (x, y) = (x - self.center.x, y - self.center.y);
+        match self.angle_mode {
+            ConicAngleMode::Exact => libm::atan2f(y, x) / TAU,
+            ConicAngleMode::Fast => unit_angle_approx(x, y),
+        }
     }
 }
 
 impl PaintSampler for ConicGradient<'_> {
     fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
-        let turn =  libm::atan2f(y - self.center.y, x - self.center.x) / TAU;
-        self.stops.sample(SpreadMode::Repeat.map(turn - self.start_turn))
+        self.stops.sample(SpreadMode::Repeat.map(self.turn(x, y) - self.start_turn))
     }
 }
 
 impl LinearPaintSampler for ConicGradient<'_> {
     fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
-        let turn = libm::atan2f(y - self.center.y, x - self.center.x) / TAU;
-        self.stops.sample_linear(SpreadMode::Repeat.map(turn - self.start_turn))
+        self.stops.sample_linear(SpreadMode::Repeat.map(self.turn(x, y) - self.start_turn))
     }
+}
+
+/// Skia's [Sollya-generated] seventh-degree approximation of `atan(x) / TAU`.
+///
+/// The quadrant reconstruction follows SkRasterPipeline's `xy_to_unit_angle`.
+///
+/// [Sollya-generated]: https://skia.googlesource.com/skia/+/084fa9d8601a7f7895fc64efad3035098107d319/src/opts/SkRasterPipeline_opts.h#3152
+fn unit_angle_approx(x: f32, y: f32) -> f32 {
+    let (x_abs, y_abs) = (x.abs(), y.abs());
+    let maximum = x_abs.max(y_abs);
+    if maximum == 0.0 || !maximum.is_finite() { return 0.0; }
+    let slope = x_abs.min(y_abs) / maximum;
+    let squared = slope * slope;
+    let mut turn = slope * (0.159_121_17 + squared * (-0.051_853_97 +
+        squared * (0.024_761_02 + squared * -0.007_054_738)));
+    if x_abs < y_abs { turn = 0.25 - turn; }
+    if x < 0.0 { turn = 0.5 - turn; }
+    if y < 0.0 { turn = 1.0 - turn; }
+    turn
 }
 
 #[cfg(test)] mod tests { use super::*;
@@ -605,6 +647,41 @@ impl LinearPaintSampler for ConicGradient<'_> {
         assert_eq!(rotated.sample(2.0, 4.0), encoded(RGBA::<u8>::red()));
         assert_eq!(conic.sample(3.0, 3.0 + 1e-4), encoded(RGBA::<u8>::red()));
         assert_eq!(conic.sample(3.0, 3.0 - 1e-4), encoded(RGBA::<u8>::blue()));
+    }
+
+    #[test] fn fast_conic_angle_tracks_exact_across_quadrants_and_seam() {
+        let stops = red_blue_stops();
+        let stops = GradientStops::new(&stops).unwrap();
+        let exact = ConicGradient::new((0.0, 0.0), 0.37, stops).unwrap();
+        let fast = ConicGradient::with_angle_mode(
+            (0.0, 0.0), 0.37, stops, ConicAngleMode::Fast).unwrap();
+        let (mut maximum_error, mut maximum_color_error) = (0.0_f32, 0.0_f32);
+        for step in 0..65_536 {
+            let angle = step as f32 / 65_536.0 * TAU - core::f32::consts::PI;
+            let (x, y) = (libm::cosf(angle) * 17.0, libm::sinf(angle) * 17.0);
+            let (exact_turn, fast_turn) = (
+                SpreadMode::Repeat.map(exact.turn(x, y)),
+                SpreadMode::Repeat.map(fast.turn(x, y)),
+            );
+            let difference = (exact_turn - fast_turn).abs();
+            maximum_error = maximum_error.max(difference.min(1.0 - difference));
+
+            let (exact_color, fast_color) =
+                (exact.sample_linear(x, y).to_array(), fast.sample_linear(x, y).to_array());
+            let gradient_turn = SpreadMode::Repeat.map(exact_turn - exact.start_turn);
+            if gradient_turn.min(1.0 - gradient_turn) > 3e-5 {
+                for channel in 0..4 {
+                    maximum_color_error = maximum_color_error.max(
+                        (exact_color[channel] - fast_color[channel]).abs());
+                }
+            }
+        }
+        assert!(maximum_error <= 3e-5, "maximum turn error={maximum_error}");
+        assert!(maximum_color_error <= 3e-5,
+            "maximum linear color error={maximum_color_error}");
+        assert_eq!(fast.sample_linear(0.0, 0.0), exact.sample_linear(0.0, 0.0));
+        assert_eq!(fast.sample(1.0, 1e-6), exact.sample(1.0, 1e-6));
+        assert_eq!(fast.sample(1.0, -1e-6), exact.sample(1.0, -1e-6));
     }
 
     #[test] fn transformed_paint_maps_device_coordinates_and_preserves_solid_fast_path() {

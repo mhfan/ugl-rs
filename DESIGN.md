@@ -211,6 +211,11 @@ and SIMD layouts do not enter the common `Edge` representation.
   and conic gradients retain the general point fallback. Specializations must
   remain equivalent to the general sampler within a documented linear-light
   tolerance.
+- Conic angle quality is explicit: `ConicAngleMode::Exact` uses `atan2f` and is
+  the default reference; `Fast` uses Skia's seventh-degree unit-angle
+  polynomial. Fast mode has a measured circular error below `3e-5` turns and
+  may shift a discontinuous seam within that bound, so it is never enabled
+  implicitly.
 
 ## Strokes
 
