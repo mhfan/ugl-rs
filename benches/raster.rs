@@ -612,7 +612,7 @@ fn sample_checksum(sampler: &impl PaintSampler) -> u64 {
 }
 
 #[cfg(feature = "fixed")]
-fn sample_fixed_checksum(sampler: &impl ugl_rs::fixed::sampler::FixedPaintSampler) -> u64 {
+fn sample_fixed_checksum(sampler: &impl ugl_rs::fixed::sampler::PaintSampler) -> u64 {
     let mut checksum = 0_u64;
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
@@ -714,14 +714,14 @@ fn benchmark_paint(c: &mut Criterion) {
             CoverageTileWorkspace, DirectTilePiece, DirectTileWorkspace,
             encode_coverage_tiles, requirements as tile_requirements,
             rasterize_lines_to_tiles},
-        }, geometry::FixedScalar,
+        }, fixed::Scalar,
         stroke::{StrokeContour, StrokePathWorkspace},
     };
 
     let stroke_points: Vec<_> = (0..64).map(|index|
-        (FixedScalar::from_num(index * 3 + 8),
-         FixedScalar::from_num(if index & 1 == 0 { 96 } else { 112 })).into()).collect();
-    let stroke_options = StrokeOptions::new(FixedScalar::from_num(3)).unwrap()
+        (Scalar::from_num(index * 3 + 8),
+         Scalar::from_num(if index & 1 == 0 { 96 } else { 112 })).into()).collect();
+    let stroke_options = StrokeOptions::new(Scalar::from_num(3)).unwrap()
         .with_cap(LineCap::Square).with_join(LineJoin::Miter);
     let round_stroke_options = stroke_options
         .with_cap(LineCap::Round).with_join(LineJoin::Round);
@@ -744,12 +744,12 @@ fn benchmark_paint(c: &mut Criterion) {
     }));
     stroke_group.finish();
 
-    let fixed_dash_lengths = [FixedScalar::from_num(6), FixedScalar::from_num(3),
-        FixedScalar::from_num(1.5), FixedScalar::from_num(3)];
+    let fixed_dash_lengths = [Scalar::from_num(6), Scalar::from_num(3),
+        Scalar::from_num(1.5), Scalar::from_num(3)];
     let fixed_dash = DashPattern::new(
-        &fixed_dash_lengths, FixedScalar::from_num(2)).unwrap();
+        &fixed_dash_lengths, Scalar::from_num(2)).unwrap();
     let (mut fixed_dash_points, mut fixed_dash_contours) = (
-        vec![(FixedScalar::ZERO, FixedScalar::ZERO).into(); 512],
+        vec![(Scalar::ZERO, Scalar::ZERO).into(); 512],
         vec![DashContour::default(); 256],
     );
     let mut dash_group = c.benchmark_group("stroke_dash_fixed");
@@ -771,17 +771,17 @@ fn benchmark_paint(c: &mut Criterion) {
     dash_group.finish();
 
     let mut curve_builder = PathBuilder::new();
-    curve_builder.move_to((FixedScalar::from_num(8), FixedScalar::from_num(128)));
+    curve_builder.move_to((Scalar::from_num(8), Scalar::from_num(128)));
     for index in 0..8 {
         let x = index * 28 + 8;
         curve_builder.cubic_to(
-            (FixedScalar::from_num(x + 7), FixedScalar::from_num(32)),
-            (FixedScalar::from_num(x + 21), FixedScalar::from_num(224)),
-            (FixedScalar::from_num(x + 28), FixedScalar::from_num(128)));
+            (Scalar::from_num(x + 7), Scalar::from_num(32)),
+            (Scalar::from_num(x + 21), Scalar::from_num(224)),
+            (Scalar::from_num(x + 28), Scalar::from_num(128)));
     }
     let curve_path = curve_builder.build();
     let (mut stroke_path_points, mut stroke_path_contours) =
-        (vec![(FixedScalar::ZERO, FixedScalar::ZERO).into(); 512],
+        (vec![(Scalar::ZERO, Scalar::ZERO).into(); 512],
          vec![StrokeContour::default(); 16]);
     let mut stroke_path_group = c.benchmark_group("stroke_path_fixed");
     stroke_path_group.throughput(Throughput::Elements(8));
@@ -819,7 +819,7 @@ fn benchmark_paint(c: &mut Criterion) {
     let mut ramp = vec![PremulSRGBA8::zeroed(); 1024];
     let stops = GradientStops::with_ramp(&stop_values, &mut ramp).unwrap();
     let ramp = stops.encoded_ramp().unwrap();
-    let fixed = FixedScalar::from_num;
+    let fixed = Scalar::from_num;
     let linear = LinearGradient::new(
         (fixed(0), fixed(0)), (fixed(WIDTH), fixed(HEIGHT)),
         ramp, SpreadMode::Pad).unwrap();
@@ -867,8 +867,8 @@ fn benchmark_paint(c: &mut Criterion) {
         let mut source_edges = Vec::with_capacity(rectangles.len() * 2);
         for [x, y, width, height] in rectangles {
             let (left, right, top, bottom) = (
-                FixedScalar::from_num(x), FixedScalar::from_num(x + width),
-                FixedScalar::from_num(y), FixedScalar::from_num(y + height),
+                Scalar::from_num(x), Scalar::from_num(x + width),
+                Scalar::from_num(y), Scalar::from_num(y + height),
             );
             source_edges.extend([
                 Edge { upper:  (left, top).into(), lower:  (left, bottom).into(), winding: -1 },

@@ -1,8 +1,8 @@
 //! No-FPU stroke expansion for Q24.8 polylines.
 
-use crate::{edge::{Edge, EdgeSink},
-    geometry::{Affine, FIXED_DEVICE_RAW_LIMIT, FixedScalar, Path, Point},
-    fixed::{flatten::{Error as FlattenError, Options as FlattenOptions},
+use crate::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point},
+    fixed::{DEVICE_RAW_LIMIT, Scalar,
+        flatten::{Error as FlattenError, Options as FlattenOptions},
         math::{Angle, cordic_turn, cordic_unit_vector, integer_sqrt_u64}},
     stroke::{FlattenedStrokePath, LineCap, LineJoin, StrokePathWorkspace,
         StrokeWorkspaceError, flatten_stroke_path_with}};
@@ -18,19 +18,19 @@ use crate::{edge::{Edge, EdgeSink},
 }
 
 impl Options {
-    pub fn new(width: FixedScalar) -> Result<Self, Error> {
+    pub fn new(width: Scalar) -> Result<Self, Error> {
         let width = width.to_bits();
         if width <= 0 { return Err(Error::NonPositiveWidth); }
-        if width > FIXED_DEVICE_RAW_LIMIT { return Err(Error::WidthOutOfRange); }
+        if width > DEVICE_RAW_LIMIT { return Err(Error::WidthOutOfRange); }
         Ok(Self { width, ..Self::default() })
     }
 
     pub fn with_cap(mut self, cap: LineCap) -> Self { self.cap = cap; self }
     pub fn with_join(mut self, join: LineJoin) -> Self { self.join = join; self }
 
-    pub fn with_miter_limit(mut self, limit: FixedScalar) ->
+    pub fn with_miter_limit(mut self, limit: Scalar) ->
         Result<Self, Error> {
-        if limit < FixedScalar::ONE { return Err(Error::MiterLimitTooSmall); }
+        if limit < Scalar::ONE { return Err(Error::MiterLimitTooSmall); }
         self.miter_limit = limit.to_bits();   Ok(self)
     }
 
@@ -40,8 +40,8 @@ impl Options {
         self.round_segments = segments;   Ok(self)
     }
 
-    pub fn width(&self) -> FixedScalar { FixedScalar::from_bits(self.width) }
-    pub fn miter_limit(&self) -> FixedScalar { FixedScalar::from_bits(self.miter_limit) }
+    pub fn width(&self) -> Scalar { Scalar::from_bits(self.width) }
+    pub fn miter_limit(&self) -> Scalar { Scalar::from_bits(self.miter_limit) }
     pub fn cap(&self) -> LineCap { self.cap }
     pub fn join(&self) -> LineJoin { self.join }
     pub fn round_segments(&self) -> u16 { self.round_segments }
@@ -49,7 +49,7 @@ impl Options {
 
 impl Default for Options {
     fn default() -> Self { Self {
-        width: FixedScalar::ONE.to_bits(), miter_limit: FixedScalar::ONE.to_bits() * 4,
+        width: Scalar::ONE.to_bits(), miter_limit: Scalar::ONE.to_bits() * 4,
         round_segments: 8, cap: LineCap::Butt, join: LineJoin::Miter,
     } }
 }
@@ -60,17 +60,17 @@ impl Default for Options {
 
 #[derive(Clone, Copy)] struct Direction { dx: i64, dy: i64, length: u64 }
 
-pub fn flatten_path<'a>(path: &Path<FixedScalar>,
-    transform: Affine<FixedScalar>, options: FlattenOptions,
-    workspace: &'a mut StrokePathWorkspace<'_, FixedScalar>) ->
-    Result<FlattenedStrokePath<'a, FixedScalar>,
+pub fn flatten_path<'a>(path: &Path<Scalar>,
+    transform: Affine<Scalar>, options: FlattenOptions,
+    workspace: &'a mut StrokePathWorkspace<'_, Scalar>) ->
+    Result<FlattenedStrokePath<'a, Scalar>,
         FlattenError<StrokeWorkspaceError>> {
     flatten_stroke_path_with(workspace,
         |sink| crate::fixed::flatten::flatten_path(path, transform, options, sink))
 }
 
-pub fn stroke_line<S: EdgeSink<FixedScalar>>(from: Point<FixedScalar>,
-    to: Point<FixedScalar>, options: Options, sink: &mut S) ->
+pub fn stroke_line<S: EdgeSink<Scalar>>(from: Point<Scalar>,
+    to: Point<Scalar>, options: Options, sink: &mut S) ->
     Result<(), ExpandError<S::Error>> {
     stroke_polyline(&[from, to], false, options, sink)
 }
@@ -78,7 +78,7 @@ pub fn stroke_line<S: EdgeSink<FixedScalar>>(from: Point<FixedScalar>,
 /// Expands a fixed open or closed polyline into consistently wound fill edges.
 ///
 /// All cap and join styles are supported without floating point.
-pub fn stroke_polyline<S: EdgeSink<FixedScalar>>(points: &[Point<FixedScalar>],
+pub fn stroke_polyline<S: EdgeSink<Scalar>>(points: &[Point<Scalar>],
     closed: bool, options: Options, sink: &mut S) ->
     Result<(), ExpandError<S::Error>> {
     if points.iter().any(|point| !point_in_range(*point)) {
@@ -113,18 +113,18 @@ pub fn stroke_polyline<S: EdgeSink<FixedScalar>>(points: &[Point<FixedScalar>],
     }
 }
 
-fn point_in_range(point: Point<FixedScalar>) -> bool {
+fn point_in_range(point: Point<Scalar>) -> bool {
     [point.x.to_bits(), point.y.to_bits()].iter()
-        .all(|value| value.unsigned_abs() <= FIXED_DEVICE_RAW_LIMIT as u32)
+        .all(|value| value.unsigned_abs() <= DEVICE_RAW_LIMIT as u32)
 }
 
-fn segment_at(points: &[Point<FixedScalar>], index: usize) ->
-    (Point<FixedScalar>, Point<FixedScalar>) {
+fn segment_at(points: &[Point<Scalar>], index: usize) ->
+    (Point<Scalar>, Point<Scalar>) {
     if index + 1 < points.len() { (points[index], points[index + 1])
     } else { (points[points.len() - 1], points[0]) }
 }
 
-fn direction(from: Point<FixedScalar>, to: Point<FixedScalar>) -> Option<Direction> {
+fn direction(from: Point<Scalar>, to: Point<Scalar>) -> Option<Direction> {
     let (dx, dy) = (to.x.to_bits() as i64 - from.x.to_bits() as i64,
                     to.y.to_bits() as i64 - from.y.to_bits() as i64);
     let squared = (dx * dx + dy * dy) as u64;
@@ -147,17 +147,17 @@ fn round_ratio(numerator: i128, denominator: i128) -> i64 {
     if numerator < 0 { -(magnitude as i64) } else { magnitude as _ }
 }
 
-fn offset<E>(point: Point<FixedScalar>, dx: i64, dy: i64) ->
-    Result<Point<FixedScalar>, ExpandError<E>> {
+fn offset<E>(point: Point<Scalar>, dx: i64, dy: i64) ->
+    Result<Point<Scalar>, ExpandError<E>> {
     let (x, y) = (point.x.to_bits() as i64 + dx, point.y.to_bits() as i64 + dy);
-    if [x, y].iter().any(|value| value.unsigned_abs() > FIXED_DEVICE_RAW_LIMIT as u64) {
+    if [x, y].iter().any(|value| value.unsigned_abs() > DEVICE_RAW_LIMIT as u64) {
         return Err(ExpandError::CoordinateOutOfRange);
     }
-    Ok((FixedScalar::from_bits(x as _), FixedScalar::from_bits(y as _)).into())
+    Ok((Scalar::from_bits(x as _), Scalar::from_bits(y as _)).into())
 }
 
-fn emit_segment_body<S: EdgeSink<FixedScalar>>(from: Point<FixedScalar>,
-    to: Point<FixedScalar>, direction: Direction, width: i32, sink: &mut S) ->
+fn emit_segment_body<S: EdgeSink<Scalar>>(from: Point<Scalar>,
+    to: Point<Scalar>, direction: Direction, width: i32, sink: &mut S) ->
     Result<(), ExpandError<S::Error>> {
     let (nx, ny) = normal(direction, width);
     emit_polygon(&[
@@ -168,7 +168,7 @@ fn emit_segment_body<S: EdgeSink<FixedScalar>>(from: Point<FixedScalar>,
     ], sink)
 }
 
-fn emit_cap<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>, direction: Direction,
+fn emit_cap<S: EdgeSink<Scalar>>(point: Point<Scalar>, direction: Direction,
     start: bool, options: Options, sink: &mut S) ->
     Result<(), ExpandError<S::Error>> {
     if options.cap == LineCap::Butt { return Ok(()) }
@@ -191,7 +191,7 @@ fn emit_cap<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>, direction: Dire
     emit_segment_body(point, end, direction, options.width, sink)
 }
 
-fn emit_square_point<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>, width: i32,
+fn emit_square_point<S: EdgeSink<Scalar>>(point: Point<Scalar>, width: i32,
     sink: &mut S) -> Result<(), ExpandError<S::Error>> {
     let (low, high) = (-(width as i64) / 2, (width as i64 + 1) / 2);
     emit_polygon(&[
@@ -202,7 +202,7 @@ fn emit_square_point<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>, width:
     ], sink)
 }
 
-fn emit_round_point<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>,
+fn emit_round_point<S: EdgeSink<Scalar>>(point: Point<Scalar>,
     options: Options, sink: &mut S) ->
     Result<(), ExpandError<S::Error>> {
     let segments = options.round_segments as usize * 2;
@@ -216,7 +216,7 @@ fn emit_round_point<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>,
     contour.close()
 }
 
-fn emit_join<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>,
+fn emit_join<S: EdgeSink<Scalar>>(point: Point<Scalar>,
     before: Direction, after: Direction, options: Options, sink: &mut S) ->
     Result<(), ExpandError<S::Error>> {
     let cross = before.dx as i128 * after.dy as i128 -
@@ -257,15 +257,15 @@ fn emit_join<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>,
         round_ratio(before.dy as i128 * distance, cross))?;
     let (dx, dy) = (miter.x.to_bits() as i128 - point.x.to_bits() as i128,
                     miter.y.to_bits() as i128 - point.y.to_bits() as i128);
-    let scale = 2_i128 * FixedScalar::ONE.to_bits() as i128;
+    let scale = 2_i128 * Scalar::ONE.to_bits() as i128;
     let limit = options.width as i128 * options.miter_limit as i128;
     if (dx * dx + dy * dy) * scale * scale <= limit * limit {
         emit_polygon(&[point, before_outer, miter, after_outer], sink)
     } else { emit_polygon(&[point, before_outer, after_outer], sink) }
 }
 
-fn circle_point<E>(center: Point<FixedScalar>, width: i32, angle: Angle) ->
-    Result<Point<FixedScalar>, ExpandError<E>> {
+fn circle_point<E>(center: Point<Scalar>, width: i32, angle: Angle) ->
+    Result<Point<Scalar>, ExpandError<E>> {
     let (cosine, sine) = cordic_unit_vector(angle);
     let denominator = 2_i128 << 30;
     offset(center,
@@ -273,7 +273,7 @@ fn circle_point<E>(center: Point<FixedScalar>, width: i32, angle: Angle) ->
         round_ratio(  sine as i128 * width as i128, denominator))
 }
 
-fn emit_round_wedge<S: EdgeSink<FixedScalar>>(center: Point<FixedScalar>, width: i32,
+fn emit_round_wedge<S: EdgeSink<Scalar>>(center: Point<Scalar>, width: i32,
     start: u32, sweep: i64, segments: usize, sink: &mut S) ->
     Result<(), ExpandError<S::Error>> {
     let mut contour = EdgeContour::new(sink);
@@ -287,7 +287,7 @@ fn emit_round_wedge<S: EdgeSink<FixedScalar>>(center: Point<FixedScalar>, width:
     contour.close()
 }
 
-fn emit_polygon<S: EdgeSink<FixedScalar>>(points: &[Point<FixedScalar>], sink: &mut S) ->
+fn emit_polygon<S: EdgeSink<Scalar>>(points: &[Point<Scalar>], sink: &mut S) ->
     Result<(), ExpandError<S::Error>> {
     for pair in points.windows(2) {
         if let Some(edge) = Edge::from_line(pair[0], pair[1]) {
@@ -302,15 +302,15 @@ fn emit_polygon<S: EdgeSink<FixedScalar>>(points: &[Point<FixedScalar>], sink: &
 }
 
 struct EdgeContour<'a, S> {
-    sink: &'a mut S, first: Option<Point<FixedScalar>>, previous: Option<Point<FixedScalar>>,
+    sink: &'a mut S, first: Option<Point<Scalar>>, previous: Option<Point<Scalar>>,
 }
 
 impl<'a, S> EdgeContour<'a, S> {
     fn new(sink: &'a mut S) -> Self { Self { sink, first: None, previous: None } }
 }
 
-impl<S: EdgeSink<FixedScalar>> EdgeContour<'_, S> {
-    fn point(&mut self, point: Point<FixedScalar>) ->
+impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
+    fn point(&mut self, point: Point<Scalar>) ->
         Result<(), ExpandError<S::Error>> {
         if let Some(previous) = self.previous {
             if let Some(edge) = Edge::from_line(previous, point) {
@@ -333,10 +333,10 @@ impl<S: EdgeSink<FixedScalar>> EdgeContour<'_, S> {
     use alloc::vec::Vec;
     use core::convert::Infallible;
 
-    fn fixed(value: f32) -> FixedScalar { FixedScalar::from_num(value) }
+    fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }
 
     fn collect(points: &[(f32, f32)], closed: bool, options: Options) ->
-        Vec<Edge<FixedScalar>> {
+        Vec<Edge<Scalar>> {
         let points: Vec<_> = points.iter().map(|&(x, y)| (fixed(x), fixed(y)).into()).collect();
         let mut edges = Vec::new();
         stroke_polyline(&points, closed, options, &mut |edge| {
@@ -345,13 +345,13 @@ impl<S: EdgeSink<FixedScalar>> EdgeContour<'_, S> {
         edges
     }
 
-    fn x_bounds(edges: &[Edge<FixedScalar>]) -> (FixedScalar, FixedScalar) {
+    fn x_bounds(edges: &[Edge<Scalar>]) -> (Scalar, Scalar) {
         edges.iter().flat_map(|edge| [edge.upper.x, edge.lower.x])
-            .fold((FixedScalar::MAX, FixedScalar::MIN),
+            .fold((Scalar::MAX, Scalar::MIN),
                 |(minimum, maximum), x| (minimum.min(x), maximum.max(x)))
     }
 
-    #[test] fn fixed_line_caps_have_exact_device_bounds() {
+    #[test] fn line_caps_have_exact_device_bounds() {
         let options = Options::new(fixed(2.0)).unwrap();
         let butt = collect(&[(2.0, 3.0), (6.0, 3.0)], false, options);
         let square = collect(&[(2.0, 3.0), (6.0, 3.0)], false,
@@ -360,7 +360,7 @@ impl<S: EdgeSink<FixedScalar>> EdgeContour<'_, S> {
         assert_eq!(x_bounds(&square), (fixed(1.0), fixed(7.0)));
     }
 
-    #[test] fn fixed_diagonal_offsets_track_the_f32_reference() {
+    #[test] fn diagonal_offsets_track_the_f32_reference() {
         let options = Options::new(fixed(2.0)).unwrap();
         let actual = collect(&[(2.0, 2.0), (6.0, 6.0)], false, options);
         let mut expected = Vec::new();
@@ -382,15 +382,15 @@ impl<S: EdgeSink<FixedScalar>> EdgeContour<'_, S> {
         }
     }
 
-    #[test] fn fixed_bevel_and_miter_joins_follow_limit_and_degenerate_rules() {
+    #[test] fn bevel_and_miter_joins_follow_limit_and_degenerate_rules() {
         let base = Options::new(fixed(2.0)).unwrap();
         let points = [(2.0, 4.0), (4.0, 4.0), (4.0, 6.0)];
         let bevel = collect(&points, false, base.with_join(LineJoin::Bevel));
         let miter = collect(&points, false, base);
         let fallback = collect(&points, false,
-            base.with_miter_limit(FixedScalar::ONE).unwrap());
+            base.with_miter_limit(Scalar::ONE).unwrap());
         let corner = (fixed(5.0), fixed(3.0)).into();
-        let has_corner = |edges: &[Edge<FixedScalar>]| edges.iter()
+        let has_corner = |edges: &[Edge<Scalar>]| edges.iter()
             .any(|edge| [edge.upper, edge.lower].contains(&corner));
         assert!(!has_corner(&bevel));
         assert!(has_corner(&miter));
@@ -403,7 +403,7 @@ impl<S: EdgeSink<FixedScalar>> EdgeContour<'_, S> {
         assert!(!collect(&[(1.0, 2.0), (5.0, 2.0)], true, base).is_empty());
     }
 
-    #[test] fn fixed_round_caps_and_joins_are_bounded_and_configurable() {
+    #[test] fn round_caps_and_joins_are_bounded_and_configurable() {
         let base = Options::new(fixed(2.0)).unwrap()
             .with_round_segments(8).unwrap();
         let round = collect(&[(2.0, 3.0), (6.0, 3.0)], false,
@@ -420,11 +420,11 @@ impl<S: EdgeSink<FixedScalar>> EdgeContour<'_, S> {
             Err(Error::RoundSegmentLimitZero));
     }
 
-    #[test] fn fixed_stroke_rejects_out_of_range_before_writing() {
-        assert_eq!(Options::new(FixedScalar::ZERO),
+    #[test] fn stroke_rejects_out_of_range_before_writing() {
+        assert_eq!(Options::new(Scalar::ZERO),
             Err(Error::NonPositiveWidth));
         let mut edges = Vec::new();
-        let outside = FixedScalar::from_bits(FIXED_DEVICE_RAW_LIMIT + 1);
+        let outside = Scalar::from_bits(DEVICE_RAW_LIMIT + 1);
         assert_eq!(stroke_line((outside, fixed(0.0)).into(),
             (fixed(1.0), fixed(0.0)).into(), Options::default(),
             &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }),

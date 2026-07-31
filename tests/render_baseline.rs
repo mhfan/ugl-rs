@@ -269,11 +269,11 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
 #[test] fn fixed_triangles_track_the_analytic_pipeline() {
     use ugl_rs::{fixed::{canvas::render_solid, raster::{
             Line, Workspace, Segment, Trapezoid, prepare_lines, strip_requirements,
-        }}, geometry::{FixedScalar, Point},
+        }}, fixed::Scalar, geometry::Point,
     };
 
-    fn fixed_edge(from: Point<FixedScalar>, to: Point<FixedScalar>) ->
-        Option<Edge<FixedScalar>> {
+    fn fixed_edge(from: Point<Scalar>, to: Point<Scalar>) ->
+        Option<Edge<Scalar>> {
         if from.y < to.y {
             Some(Edge { upper: from, lower: to, winding: 1 })
         } else if from.y > to.y {
@@ -290,7 +290,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
         let reference = render_analytic(path, FillRule::NonZero);
 
         let fixed_points = points.map(|(x, y)|
-            (FixedScalar::from_num(x), FixedScalar::from_num(y)).into());
+            (Scalar::from_num(x), Scalar::from_num(y)).into());
         let edges: Vec<_> = (0..3).filter_map(|index|
             fixed_edge(fixed_points[index], fixed_points[(index + 1) % 3])).collect();
         let (mut lines, mut segments, mut trapezoids, mut row_area) = (

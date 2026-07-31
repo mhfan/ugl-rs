@@ -1,7 +1,7 @@
 //! Widened arithmetic primitives for the Q24.8 fixed-point raster backend.
 
 use core::cmp::Ordering;
-use crate::{edge::Edge, geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar, Point},
+use crate::{edge::Edge, fixed::{DEVICE_RAW_LIMIT, Scalar}, geometry::Point,
     raster::{CoverageSink, FillRule}};
 
 /// Accepted Q24.8 raw-coordinate magnitude for the fixed rasterizer.
@@ -9,7 +9,6 @@ use crate::{edge::Edge, geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar, Point},
 /// This corresponds to ±2,097,152 device units and leaves enough headroom for
 /// every line-intersection multiply-add to remain in `i64`.
 pub const   SUBPIXEL_SCALE: u32 = 1 << 8;
-pub const DEVICE_RAW_LIMIT: i32 = FIXED_DEVICE_RAW_LIMIT;
 pub const STRIP_HEIGHT: u32 = 16;
 const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 
@@ -33,7 +32,7 @@ pub enum RenderError<E> { Raster(Error), Sink(E) }
 pub struct Line { x0: i32, y0: i32, dx: i64, dy: u32, winding: i8 }
 
 impl Line {
-    pub fn new(edge: Edge<FixedScalar>) -> Result<Self, Error> {
+    pub fn new(edge: Edge<Scalar>) -> Result<Self, Error> {
         let (x0, y0, x1, y1) = (
             edge.upper.x.to_bits(), edge.upper.y.to_bits(),
             edge.lower.x.to_bits(), edge.lower.y.to_bits(),
@@ -49,14 +48,14 @@ impl Line {
         Ok(Self { x0, y0, dx: x1 as i64 - x0 as i64, dy: dy as _, winding: edge.winding })
     }
 
-    pub fn intersection(&self, y: FixedScalar) -> Intersection {
+    pub fn intersection(&self, y: Scalar) -> Intersection {
         let offset = y.to_bits() as i64 - self.y0 as i64;
         Intersection {  den: self.dy, winding: self.winding,
             num: self.x0 as i64 * self.dy as i64 +  self.dx * offset,
         }
     }
 
-    fn contains_y(&self, y: FixedScalar) -> bool {
+    fn contains_y(&self, y: Scalar) -> bool {
         let y = y.to_bits();
         self.y0 <= y && (y as i64) < self.y0 as i64 + self.dy as i64
     }
@@ -65,8 +64,8 @@ impl Line {
         let (line_top, line_bottom) = (self.y0, self.y0 + self.dy as i32);
         let (top_y, bottom_y) = (top.max(line_top), bottom.min(line_bottom));
         (top_y < bottom_y).then(|| Segment { line_index, top_y, bottom_y,
-               top_x: self.intersection(FixedScalar::from_bits(top_y)),
-            bottom_x: self.intersection(FixedScalar::from_bits(bottom_y)),
+               top_x: self.intersection(Scalar::from_bits(top_y)),
+            bottom_x: self.intersection(Scalar::from_bits(bottom_y)),
         })
     }
 }
@@ -108,8 +107,8 @@ pub struct Segment { line_index: u32, top_y: i32, bottom_y: i32,
 }
 
 impl Segment {
-       pub fn top_y(self) -> FixedScalar { FixedScalar::from_bits(self.top_y) }
-    pub fn bottom_y(self) -> FixedScalar { FixedScalar::from_bits(self.bottom_y) }
+       pub fn top_y(self) -> Scalar { Scalar::from_bits(self.top_y) }
+    pub fn bottom_y(self) -> Scalar { Scalar::from_bits(self.bottom_y) }
     pub fn height_raw(self) -> u32 { (self.bottom_y - self.top_y) as _ }
 }
 
@@ -434,8 +433,8 @@ pub fn rasterize_lines<S>(lines: &[Line], width: u32, height: u32,
             pending = 0;
         }
         let row = &mut workspace.row_area[..width_usize];  row.fill(0);
-        let (mut top, bottom) = (FixedScalar::from_bits(extent(y)     as i32),
-                                 FixedScalar::from_bits(extent(y + 1) as i32));
+        let (mut top, bottom) = (Scalar::from_bits(extent(y)     as i32),
+                                 Scalar::from_bits(extent(y + 1) as i32));
         while top < bottom {
             active_count = retain_active_lines(
                 lines, workspace.segments, active_count, top);
@@ -618,7 +617,7 @@ fn build_strip_bins<'a>(lines: &[Line], height: u32, offsets: &'a mut [u32],
 }
 
 fn retain_active_lines(lines: &[Line], segments: &mut [Segment],
-    count: usize, top: FixedScalar) -> usize {
+    count: usize, top: Scalar) -> usize {
     let top = top.to_bits();
     let mut retained = 0;
     for index in 0..count {
@@ -631,7 +630,7 @@ fn retain_active_lines(lines: &[Line], segments: &mut [Segment],
 }
 
 fn activate_pending_lines(lines: &[Line], strip_lines: &[u32], pending: &mut usize,
-    top: FixedScalar, segments: &mut [Segment], active_count: &mut usize) {
+    top: Scalar, segments: &mut [Segment], active_count: &mut usize) {
     let top = top.to_bits();
     while let Some(&line_index) = strip_lines.get(*pending) {
         let line = lines[line_index as usize];
@@ -646,7 +645,7 @@ fn activate_pending_lines(lines: &[Line], strip_lines: &[u32], pending: &mut usi
 }
 
 fn next_active_slab_boundary(lines: &[Line], strip_lines: &[u32], pending: usize,
-    active: &[Segment], top: FixedScalar, bottom: FixedScalar) -> FixedScalar {
+    active: &[Segment], top: Scalar, bottom: Scalar) -> Scalar {
     let (top, mut boundary) = (top.to_bits(), bottom.to_bits());
     if let Some(&index) = strip_lines.get(pending) {
         let start = lines[index as usize].y0;
@@ -658,11 +657,11 @@ fn next_active_slab_boundary(lines: &[Line], strip_lines: &[u32], pending: usize
             line.y0 + line.dy as i32
         };
         if top < end && end < boundary { boundary = end; }
-    }   FixedScalar::from_bits(boundary)
+    }   Scalar::from_bits(boundary)
 }
 
 fn prepare_active_segments(lines: &[Line], segments: &mut [Segment],
-    top: FixedScalar, bottom: FixedScalar) -> Result<(), Error> {
+    top: Scalar, bottom: Scalar) -> Result<(), Error> {
     let (top, bottom) = (top.to_bits(), bottom.to_bits());
     for segment in segments {
         *segment = lines[segment.line_index as usize]
@@ -675,7 +674,7 @@ fn prepare_active_segments(lines: &[Line], segments: &mut [Segment],
 ///
 /// Validation is completed before output is written, so errors never expose a
 /// mixture of old and newly prepared lines.
-pub fn prepare_lines(edges: &[Edge<FixedScalar>], output: &mut [Line]) ->
+pub fn prepare_lines(edges: &[Edge<Scalar>], output: &mut [Line]) ->
     Result<usize, Error> {
     for edge in edges { Line::new(*edge)?; }
     if output.len() < edges.len() {
@@ -691,8 +690,8 @@ pub fn prepare_lines(edges: &[Edge<FixedScalar>], output: &mut [Line]) ->
 ///
 /// Repeatedly advancing `top` to the returned value partitions the slab so
 /// active segments share identical top and bottom coordinates.
-pub fn next_slab_boundary(lines: &[Line], top: FixedScalar, bottom: FixedScalar) ->
-    Result<FixedScalar, Error> {
+pub fn next_slab_boundary(lines: &[Line], top: Scalar, bottom: Scalar) ->
+    Result<Scalar, Error> {
     let (top, bottom) = validate_slab(top, bottom)?;
 
     let mut boundary = bottom;
@@ -700,14 +699,14 @@ pub fn next_slab_boundary(lines: &[Line], top: FixedScalar, bottom: FixedScalar)
         for vertex in [line.y0, line.y0 + line.dy as i32] {
             if top < vertex && vertex < boundary { boundary = vertex; }
         }
-    }   Ok(FixedScalar::from_bits(boundary))
+    }   Ok(Scalar::from_bits(boundary))
 }
 
 /// Clips prepared lines to a horizontal slab without rounding x coordinates.
 ///
 /// Only overlapping fragments are emitted. Capacity is checked before output
 /// is modified.
-pub fn collect_segments(lines: &[Line], top: FixedScalar, bottom: FixedScalar,
+pub fn collect_segments(lines: &[Line], top: Scalar, bottom: Scalar,
     output: &mut [Segment]) -> Result<usize, Error> {
     let (top, bottom) = validate_slab(top, bottom)?;
     if lines.len() > u32::MAX as usize { return Err(Error::DimensionsOverflow); }
@@ -729,8 +728,8 @@ pub fn collect_segments(lines: &[Line], top: FixedScalar, bottom: FixedScalar,
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] struct Crossing { y: i32, x: i64 }
 
 fn next_crossing_boundary(lines: &[Line], segments: &mut [Segment],
-    top: FixedScalar, bottom: FixedScalar) ->
-    Result<(FixedScalar, bool, bool), Error> {
+    top: Scalar, bottom: Scalar) ->
+    Result<(Scalar, bool, bool), Error> {
     let (top, bottom) = validate_slab(top, bottom)?;
     let (mut boundary, mut snap_top, mut snap_bottom) = (bottom, false, false);
     segments.sort_unstable_by(|left, right| left.top_x.cmp_x(&right.top_x)
@@ -748,7 +747,7 @@ fn next_crossing_boundary(lines: &[Line], segments: &mut [Segment],
             snap_bottom = true;
         }
     }
-    Ok((FixedScalar::from_bits(boundary), snap_top, snap_bottom))
+    Ok((Scalar::from_bits(boundary), snap_top, snap_bottom))
 }
 
 fn crossing_event(left: Line, right: Line) -> Option<Crossing> {
@@ -778,7 +777,7 @@ fn crossing_event(left: Line, right: Line) -> Option<Crossing> {
     })
 }
 
-fn snap_crossing_events(lines: &[Line], y: FixedScalar,
+fn snap_crossing_events(lines: &[Line], y: Scalar,
     segments: &mut [Segment], top: bool) {
     let y = y.to_bits();
     for left in 0..segments.len() {
@@ -797,7 +796,7 @@ fn snap_crossing_events(lines: &[Line], y: FixedScalar,
     }
 }
 
-fn validate_slab(top: FixedScalar, bottom: FixedScalar) ->
+fn validate_slab(top: Scalar, bottom: Scalar) ->
     Result<(i32, i32), Error> {
     let (top, bottom) = (top.to_bits(), bottom.to_bits());
     if top >= bottom { return Err(Error::InvalidSlab); }
@@ -868,7 +867,7 @@ fn walk_trapezoids<F>(segments: &[Segment], fill_rule: FillRule, mut emit: F) ->
 /// Edge activation uses the same half-open `[upper.y, lower.y)` convention as
 /// the floating-point reference. The caller must provide space for every
 /// potentially active line; no allocation or partial output occurs on error.
-pub fn collect_intersections(lines: &[Line], y: FixedScalar,
+pub fn collect_intersections(lines: &[Line], y: Scalar,
     output: &mut [Intersection]) -> Result<usize, Error> {
     let required = lines.iter().filter(|line| line.contains_y(y)).count();
     if output.len() < required {

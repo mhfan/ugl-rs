@@ -1,9 +1,9 @@
 //! Compact tile indexing for retained fixed-point coverage.
 
-use crate::{raster::{CoverageSink, FillRule}, fixed::raster::{
-    DEVICE_RAW_LIMIT, CoverageStrips, Line, Error, Workspace,
-    RenderError, WorkspaceKind, SUBPIXEL_SCALE, rasterize_lines,
-}};
+use crate::{fixed::{DEVICE_RAW_LIMIT, raster::{
+        CoverageStrips, Error, Line, RenderError, SUBPIXEL_SCALE, Workspace,
+        WorkspaceKind, rasterize_lines,
+    }}, raster::{CoverageSink, FillRule}};
 
 pub const TILE_WIDTH:  u32 = 16;
 pub const TILE_HEIGHT: u32 = 16;
@@ -416,7 +416,7 @@ fn tile_is_full(pieces: &[CoverageTilePiece], width: u32, height: u32) -> bool {
 #[cfg(test)] mod tests { use super::*;
     use alloc::{vec, vec::Vec};
     use core::convert::Infallible;
-    use crate::{edge::Edge, geometry::FixedScalar, raster::FillRule,
+    use crate::{edge::Edge, fixed::Scalar, raster::FillRule,
         fixed::raster::{CoverageRun, CoverageStrip, CoverageWorkspace,
             Line, Workspace, RenderError, Segment, Trapezoid,
             STRIP_HEIGHT, strip_requirements, prepare_lines, rasterize_lines,
@@ -424,9 +424,9 @@ fn tile_is_full(pieces: &[CoverageTilePiece], width: u32, height: u32) -> bool {
         },
     };
 
-    fn fixed(value: f32) -> FixedScalar { FixedScalar::from_num(value) }
+    fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }
 
-    fn scene() -> Vec<Edge<FixedScalar>> {
+    fn scene() -> Vec<Edge<Scalar>> {
         let edge = |x, top, bottom, winding| Edge {
             upper: (fixed(x), fixed(top)).into(),
             lower: (fixed(x), fixed(bottom)).into(), winding,
@@ -641,8 +641,8 @@ fn tile_is_full(pieces: &[CoverageTilePiece], width: u32, height: u32) -> bool {
                 for _ in 0..count {
                     let x = random() as i32 % ((width + 4) as i32 * 256) - 512;
                     let y = random() as i32 % ((height + 4) as i32 * 256) - 512;
-                    points.push((FixedScalar::from_bits(x),
-                                 FixedScalar::from_bits(y)).into());
+                    points.push((Scalar::from_bits(x),
+                                 Scalar::from_bits(y)).into());
                 }
                 for index in 0..count {
                     if let Some(edge) = Edge::from_line(points[index],

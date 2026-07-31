@@ -71,7 +71,7 @@ Both implementations locate every cut from the original segment and cumulative
 distance instead of repeatedly advancing rounded cut points. The f32 backend
 returns `DashPrecisionExhausted` when a requested dash is too short to advance
 at the segment's current magnitude rather than looping or silently dropping it.
-`dash_requirements` and `fixed_dash_requirements` return exact point/contour
+`dash_requirements` and `fixed::dash::requirements` return exact point/contour
 capacities. Both decomposition entry points run this preflight before writing,
 so capacity and numeric errors leave caller-owned dash scratch untouched.
 
@@ -145,7 +145,7 @@ The fixed raster APIs can feed any existing `PaintSampler` through streaming,
 retained-strip, or retained-tile coverage, with rectangle or borrowed path-mask
 clipping. This gives functional parity on desktop, but does not claim a wholly
 integer pipeline because those compatibility samplers use `f32`.
-`FixedPaintSampler` makes the no-FPU contract explicit.
+`fixed::sampler::PaintSampler` makes the no-FPU contract explicit.
 `fixed::sampler::LinearGradient` projects Q24.8 endpoints with widened integer
 arithmetic and samples a caller-owned encoded ramp; streaming and retained
 strip/tile compositors support the same rectangle and path-mask adapters.

@@ -35,12 +35,12 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     }
 }
 
-#[test] fn fixed_path_clip_supports_curves_and_preserves_mask_on_geometry_error() {
-    use crate::{geometry::FixedScalar,
+#[test] fn path_clip_supports_curves_and_preserves_mask_on_geometry_error() {
+    use crate::{fixed::Scalar,
         fixed::raster::{Line, Workspace, Segment, Trapezoid},
     };
 
-    let fixed = FixedScalar::from_num;
+    let fixed = Scalar::from_num;
     let mut builder = PathBuilder::new();
     builder.move_to((fixed(0.5), fixed(2.5)))
         .quad_to((fixed(2.0), fixed(-0.5)), (fixed(3.5), fixed(2.5)))
@@ -90,19 +90,19 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 
-#[test] fn fixed_coverage_uses_shared_paint_and_clip_compositor() {
-    use crate::{geometry::FixedScalar, fixed::raster::{
+#[test] fn coverage_uses_shared_paint_and_clip_compositor() {
+    use crate::{fixed::{Scalar, raster::{
             CoverageRun, CoverageStrip, CoverageWorkspace, Line,
             Workspace, Segment, Trapezoid, prepare_lines,
             rasterize_lines_to_strips,
-        },
+        }},
         fixed::sampler::LinearGradient,
         fixed::tile::{CoverageTile, CoverageTileRun, DirectTilePiece,
             DirectTileWorkspace, rasterize_lines_to_tiles,
         },
     };
 
-    let fixed = FixedScalar::from_num;
+    let fixed = Scalar::from_num;
     let edges = [Edge { upper: (fixed(0.5), fixed(0.0)).into(),
                         lower: (fixed(0.5), fixed(1.0)).into(), winding: 1 },
                  Edge { upper: (fixed(1.5), fixed(0.0)).into(),
@@ -123,7 +123,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(target.pixel_bytes(1, 0), Some([128; 4]));
 
     struct CoordinatePaint;
-    impl PaintSampler for CoordinatePaint {
+    impl crate::sampler::PaintSampler for CoordinatePaint {
         fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
             PremulSRGBA8::new((x * 40.0) as _, (y * 40.0) as _, 0, u8::MAX).unwrap()
         }
@@ -320,13 +320,13 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 
-#[test] fn native_fixed_stroke_renders_end_to_end_without_floating_point() {
-    use crate::{geometry::FixedScalar,
+#[test] fn stroke_renders_end_to_end_without_floating_point() {
+    use crate::{fixed::Scalar,
         fixed::raster::{Line, Workspace, Segment, Trapezoid},
         fixed::stroke::Options as StrokeOptions,
     };
 
-    let fixed = FixedScalar::from_num;
+    let fixed = Scalar::from_num;
     let points = [(fixed(1), fixed(1)).into(), (fixed(3), fixed(1)).into()];
     let (mut edge_storage, mut line_storage) =
         ([Edge::default(); 2], [Line::default(); 2]);
@@ -358,18 +358,18 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 
-#[test] fn native_fixed_curved_stroke_path_uses_bounded_workspaces() {
-    use crate::{geometry::{FixedScalar, PathBuilder},
+#[test] fn curved_stroke_path_uses_bounded_workspaces() {
+    use crate::{fixed::Scalar, geometry::PathBuilder,
         fixed::raster::{Line, Workspace, Segment, Trapezoid},
         stroke::{StrokeContour, StrokePathWorkspace},
     };
 
-    let fixed = FixedScalar::from_num;
+    let fixed = Scalar::from_num;
     let mut builder = PathBuilder::new();
     builder.move_to((fixed(0), fixed(1)))
         .quad_to((fixed(1), fixed(-1)), (fixed(2), fixed(1)));
     let path = builder.build();
-    let mut points = [(FixedScalar::ZERO, FixedScalar::ZERO).into(); 32];
+    let mut points = [(Scalar::ZERO, Scalar::ZERO).into(); 32];
     let mut contours = [StrokeContour::default(); 2];
     let (mut edges, mut lines) = ([Edge::default(); 128], [Line::default(); 128]);
     let (mut segments, mut trapezoids, mut row_area) =
@@ -406,20 +406,20 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 
-#[test] fn native_fixed_dashed_path_matches_f32_reference_coverage() {
-    use crate::{dash::DashContour, fixed::dash::Pattern,
-        geometry::{FixedScalar, PathBuilder},
+#[test] fn dashed_path_matches_f32_reference_coverage() {
+    use crate::{dash::DashContour, fixed::{Scalar, dash::Pattern},
+        geometry::PathBuilder,
         fixed::raster::{Line, Workspace, Segment, Trapezoid},
         stroke::{StrokeContour, StrokePathWorkspace},
     };
 
-    let fixed = FixedScalar::from_num;
+    let fixed = Scalar::from_num;
     let mut builder = PathBuilder::new();
     builder.move_to((fixed(0.5), fixed(0.5))).line_to((fixed(4.5), fixed(0.5)));
     let pattern_lengths = [fixed(1.0), fixed(1.0)];
-    let mut path_points = [(FixedScalar::ZERO, FixedScalar::ZERO).into(); 2];
+    let mut path_points = [(Scalar::ZERO, Scalar::ZERO).into(); 2];
     let mut path_contours = [StrokeContour::default(); 1];
-    let mut dash_points = [(FixedScalar::ZERO, FixedScalar::ZERO).into(); 8];
+    let mut dash_points = [(Scalar::ZERO, Scalar::ZERO).into(); 8];
     let mut dash_contours = [DashContour::default(); 4];
     let (mut edges, mut lines) = ([Edge::default(); 8], [Line::default(); 8]);
     let (mut segments, mut trapezoids, mut row_area) =
@@ -429,7 +429,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_dashed_stroke_path(&builder.build(),
         &SolidPaint::new(RGBA::white()), DashedStrokePathOptions {
             path: StrokePathOptions::default(),
-            dash: Pattern::new(&pattern_lengths, FixedScalar::ZERO).unwrap(),
+            dash: Pattern::new(&pattern_lengths, Scalar::ZERO).unwrap(),
         }, &mut PixmapMut::new(&mut pixels, 5, 1, 20).unwrap(),
         &mut DashedStrokeWorkspace {
             path: StrokePathWorkspace {
@@ -448,12 +448,12 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 
-#[test] fn native_fixed_curved_path_renders_end_to_end() {
-    use crate::{geometry::{FixedScalar, PathBuilder},
+#[test] fn curved_path_renders_end_to_end() {
+    use crate::{fixed::Scalar, geometry::PathBuilder,
         fixed::raster::{Line, Workspace, Segment, Trapezoid},
     };
 
-    let fixed = FixedScalar::from_num;
+    let fixed = Scalar::from_num;
     let mut builder = PathBuilder::new();
     builder.move_to((fixed(1), fixed(1)))
         .quad_to((fixed(2), fixed(0)), (fixed(3), fixed(1)))

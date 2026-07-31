@@ -3,38 +3,38 @@
 use crate::{
     canvas::{PixmapMut, RenderError},
     color::{PremulSRGBA8, SRGBA}, context::{Clip, DrawState},
-    fixed::{canvas::{GeometryWorkspace, RenderOptions, StrokePathOptions,
+    fixed::{Scalar, canvas::{GeometryWorkspace, RenderOptions, StrokePathOptions,
             prepare_stroke_path, render_paint, render_paint_clipped, render_paint_masked,
             render_path, render_path_clipped, render_path_masked},
         flatten::Options as FlattenOptions, raster::Workspace,
-        sampler::FixedPaintSampler, stroke::Options as StrokeOptions},
-    geometry::{Affine, FixedScalar, Path, Rect}, raster::{CoverageMask, FillRule},
+        sampler::PaintSampler, stroke::Options as StrokeOptions},
+    geometry::{Affine, Path, Rect}, raster::{CoverageMask, FillRule},
     stroke::StrokePathWorkspace,
 };
 
 /// Caller-owned scratch for [`Context`].
 pub struct ContextWorkspace<'a> {
-    pub path: StrokePathWorkspace<'a, FixedScalar>,
+    pub path: StrokePathWorkspace<'a, Scalar>,
     pub geometry: GeometryWorkspace<'a>,
     pub raster: Workspace<'a>,
 }
 
 #[derive(Clone, Copy)] struct SolidPaint(PremulSRGBA8);
 
-impl FixedPaintSampler for SolidPaint {
+impl PaintSampler for SolidPaint {
     fn sample(&self, _x: u32, _y: u32) -> PremulSRGBA8 { self.0 }
     fn solid_color(&self) -> Option<PremulSRGBA8> { Some(self.0) }
 }
 
 /// Stateful Q24.8 drawing facade.
 ///
-/// Methods accepting [`FixedPaintSampler`] are no-FPU except rectangle
+/// Methods accepting [`PaintSampler`] are no-FPU except rectangle
 /// clipping, whose compatibility coverage adapter currently uses f32. Use a
 /// pre-rasterized fixed path mask when the complete clip path must avoid an FPU.
 pub struct Context<'a, 'target, 'workspace, 'clip> {
     target: &'a mut PixmapMut<'target>,
     workspace: &'a mut ContextWorkspace<'workspace>,
-    state: DrawState<FixedScalar, FlattenOptions, StrokeOptions, SolidPaint>,
+    state: DrawState<Scalar, FlattenOptions, StrokeOptions, SolidPaint>,
     clip: Clip<'clip>,
 }
 
@@ -55,12 +55,12 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
 
     pub fn target(&self) -> &PixmapMut<'target> { self.target }
     pub fn target_mut(&mut self) -> &mut PixmapMut<'target> { self.target }
-    pub fn transform(&self) -> Affine<FixedScalar> { self.state.transform }
+    pub fn transform(&self) -> Affine<Scalar> { self.state.transform }
     pub fn fill_rule(&self) -> FillRule { self.state.fill_rule }
     pub fn flatten(&self) -> FlattenOptions { self.state.flatten }
     pub fn stroke_options(&self) -> StrokeOptions { self.state.stroke }
 
-    pub fn set_transform(&mut self, transform: Affine<FixedScalar>) -> &mut Self {
+    pub fn set_transform(&mut self, transform: Affine<Scalar>) -> &mut Self {
         self.state.transform = transform; self
     }
 
@@ -91,12 +91,12 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         self.clip = Clip::Mask(mask); self
     }
 
-    pub fn fill(&mut self, path: &Path<FixedScalar>) -> Result<(), RenderError> {
+    pub fn fill(&mut self, path: &Path<Scalar>) -> Result<(), RenderError> {
         let paint = self.state.paint;
         self.fill_with(path, &paint)
     }
 
-    pub fn fill_with<S: FixedPaintSampler>(&mut self, path: &Path<FixedScalar>,
+    pub fn fill_with<S: PaintSampler>(&mut self, path: &Path<Scalar>,
         paint: &S) -> Result<(), RenderError> {
         let (options, clip) = (RenderOptions {
             transform: self.state.transform, flatten: self.state.flatten,
@@ -113,12 +113,12 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         }
     }
 
-    pub fn stroke(&mut self, path: &Path<FixedScalar>) -> Result<(), RenderError> {
+    pub fn stroke(&mut self, path: &Path<Scalar>) -> Result<(), RenderError> {
         let paint = self.state.paint;
         self.stroke_with(path, &paint)
     }
 
-    pub fn stroke_with<S: FixedPaintSampler>(&mut self, path: &Path<FixedScalar>,
+    pub fn stroke_with<S: PaintSampler>(&mut self, path: &Path<Scalar>,
         paint: &S) -> Result<(), RenderError> {
         let (options, clip) = (StrokePathOptions {
             transform: self.state.transform, flatten: self.state.flatten,
@@ -144,18 +144,18 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
     use crate::{edge::Edge, fixed::raster::{Line, Segment, Trapezoid},
         geometry::PathBuilder, stroke::{StrokeContour, StrokePathWorkspace}};
 
-    #[test] fn fixed_context_matches_state_clip_and_workspace_shape() {
-        let fixed = FixedScalar::from_num;
+    #[test] fn context_matches_state_clip_and_workspace_shape() {
+        let fixed = Scalar::from_num;
         let mut builder = PathBuilder::new();
         builder.move_to((fixed(0), fixed(0))).line_to((fixed(2), fixed(0)))
             .line_to((fixed(2), fixed(2))).line_to((fixed(0), fixed(2)));
         let path = builder.build();
         let (mut points, mut contours) = (
-            [(FixedScalar::ZERO, FixedScalar::ZERO).into(); 8],
+            [(Scalar::ZERO, Scalar::ZERO).into(); 8],
             [StrokeContour::default(); 2],
         );
         let (mut edges, mut lines) = (
-            [Edge::<FixedScalar>::default(); 32], [Line::default(); 32],
+            [Edge::<Scalar>::default(); 32], [Line::default(); 32],
         );
         let (mut segments, mut trapezoids, mut row_area) = (
             [Segment::default(); 32], [Trapezoid::default(); 16], [0; 4],
@@ -181,7 +181,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         let mut target = PixmapMut::new(&mut pixels, 4, 3, 16).unwrap();
         let mut context = Context::new(&mut target, &mut workspace);
         context.set_color(SRGBA::new(255, 0, 0, 128))
-            .set_transform(Affine::translate(fixed(1), FixedScalar::ZERO))
+            .set_transform(Affine::translate(fixed(1), Scalar::ZERO))
             .set_clip_mask(CoverageMask::new(&mask_data, 4, 3, 4).unwrap());
         context.fill(&path).unwrap();
         assert_eq!(

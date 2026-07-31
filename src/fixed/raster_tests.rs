@@ -4,9 +4,9 @@ use alloc::{vec, vec::Vec};
 use core::convert::Infallible;
 use crate::analytic::{AnalyticIntersection, AnalyticWorkspace, rasterize_edges_analytic};
 
-fn fixed(value: f32) -> FixedScalar { FixedScalar::from_num(value) }
+fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }
 
-fn render(edges: &[Edge<FixedScalar>], width: usize, height: usize,
+fn render(edges: &[Edge<Scalar>], width: usize, height: usize,
     fill_rule: FillRule) -> Vec<u8> {
     let mut lines = vec![Line::default(); edges.len()];
     prepare_lines(edges, &mut lines).unwrap();
@@ -49,7 +49,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(intersection.floor_raw(), 128);
 }
 
-#[test] fn fixed_rasterizer_renders_aligned_and_fractional_rectangles() {
+#[test] fn rasterizer_renders_aligned_and_fractional_rectangles() {
     let rectangle = |left, right| [
         Edge { upper: (fixed(left), fixed(0.0)).into(),
                 lower: (fixed(left), fixed(1.0)).into(), winding: 1,
@@ -62,7 +62,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(render(&rectangle(0.5, 1.5), 2, 1, FillRule::NonZero), [128, 128]);
 }
 
-#[test] fn fixed_rasterizer_supports_both_fill_rules_end_to_end() {
+#[test] fn rasterizer_supports_both_fill_rules_end_to_end() {
     let edge = |x, winding| Edge {
         upper: (fixed(x), fixed(0.0)).into(),
         lower: (fixed(x), fixed(1.0)).into(), winding,
@@ -72,7 +72,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(render(&edges, 4, 1, FillRule::EvenOdd), [255, 0, 0, 255]);
 }
 
-#[test] fn fixed_triangles_track_the_f32_analytic_reference() {
+#[test] fn triangles_track_the_f32_analytic_reference() {
     let mut state = 0x8f31_7a2d_u32;
     let mut random_raw = || {
         state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -80,12 +80,12 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     };
     for case in 0..512 {
         let points = [
-            (FixedScalar::from_bits(random_raw()),
-                FixedScalar::from_bits(random_raw())).into(),
-            (FixedScalar::from_bits(random_raw()),
-                FixedScalar::from_bits(random_raw())).into(),
-            (FixedScalar::from_bits(random_raw()),
-                FixedScalar::from_bits(random_raw())).into(),
+            (Scalar::from_bits(random_raw()),
+                Scalar::from_bits(random_raw())).into(),
+            (Scalar::from_bits(random_raw()),
+                Scalar::from_bits(random_raw())).into(),
+            (Scalar::from_bits(random_raw()),
+                Scalar::from_bits(random_raw())).into(),
         ];
         let mut fixed_edges = Vec::new();
         for index in 0..3 {
@@ -110,13 +110,13 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     }
 }
 
-#[test] fn fixed_self_intersections_track_the_f32_analytic_reference() {
+#[test] fn self_intersections_track_the_f32_analytic_reference() {
     let scenes = [[(0, 0), (512, 512), (0, 512), (512, 0)],
                     [(32, 17), (737, 491), (61, 690), (689, 3)],
                     [(-64, 100), (800, 600), (0, 700), (720, -20)]];
     for (case, points) in scenes.into_iter().enumerate() {
         let points = points.map(|(x, y)|
-            (FixedScalar::from_bits(x), FixedScalar::from_bits(y)).into());
+            (Scalar::from_bits(x), Scalar::from_bits(y)).into());
         let mut fixed_edges = Vec::new();
         for index in 0..points.len() {
             if let Some(edge) = Edge::from_line(points[index],
@@ -149,14 +149,14 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(crossing_event(left, right), Some(Crossing { y: 205, x: 307 }));
 }
 
-#[test] fn randomized_fixed_quadrilaterals_track_the_f32_reference() {
+#[test] fn randomized_quadrilaterals_track_the_f32_reference() {
     let mut state = 0xd431_72a9_u32;
     let mut coordinate = || {
         state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        FixedScalar::from_bits((state % 2048) as i32 - 256)
+        Scalar::from_bits((state % 2048) as i32 - 256)
     };
     for case in 0..256 {
-        let points: [Point<FixedScalar>; 4] =
+        let points: [Point<Scalar>; 4] =
             core::array::from_fn(|_| (coordinate(), coordinate()).into());
         let mut fixed_edges = Vec::new();
         for index in 0..points.len() {
@@ -204,16 +204,16 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn coordinate_limit_is_explicit() {
-    let outside = FixedScalar::from_bits(DEVICE_RAW_LIMIT + 1);
-    let edge = Edge::from_line((FixedScalar::ZERO, FixedScalar::ZERO).into(),
-        (outside, FixedScalar::ONE).into()).unwrap();
+    let outside = Scalar::from_bits(DEVICE_RAW_LIMIT + 1);
+    let edge = Edge::from_line((Scalar::ZERO, Scalar::ZERO).into(),
+        (outside, Scalar::ONE).into()).unwrap();
     assert_eq!(Line::new(edge), Err(Error::CoordinateOutOfRange));
 }
 
 #[test] fn manually_constructed_invalid_edges_are_rejected() {
     let edge = Edge {
-        upper: (FixedScalar::ZERO, FixedScalar::ONE).into(),
-        lower: (FixedScalar::ONE, FixedScalar::ZERO).into(), winding: 1,
+        upper: (Scalar::ZERO, Scalar::ONE).into(),
+        lower: (Scalar::ONE, Scalar::ZERO).into(), winding: 1,
     };
     assert_eq!(Line::new(edge), Err(Error::InvalidEdge));
 }

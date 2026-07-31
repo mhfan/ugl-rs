@@ -13,20 +13,10 @@ use alloc::vec::Vec;
 /// Coordinate type used by the reference renderer.
 pub type Scalar = f32;
 
-/// Q24.8 device coordinate used by the fixed-point reference backend.
-///
-/// Raster products and areas must use widened intermediates rather than this
-/// 32-bit storage type.
-#[cfg(feature = "fixed")] pub type FixedScalar = fixed::types::I24F8;
-/// Raw Q24.8 coordinate magnitude supported by the bounded fixed render path.
-#[cfg(feature = "fixed")] pub const FIXED_DEVICE_RAW_LIMIT: i32 = 1 << 29;
-#[cfg(feature = "fixed")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FixedTransformError { Overflow }
-
 pub trait ScalarConstants { const ZERO: Self; const ONE: Self; }
 impl ScalarConstants for f32 { const ZERO: Self = 0.0; const ONE: Self = 1.0; }
 
-#[cfg(feature = "fixed")] impl ScalarConstants for FixedScalar {
+#[cfg(feature = "fixed")] impl ScalarConstants for crate::fixed::Scalar {
     const ZERO: Self = Self::ZERO;
     const  ONE: Self = Self::ONE;
 }
@@ -121,16 +111,17 @@ impl Affine<f32> {
     }
 }
 
-#[cfg(feature = "fixed")] impl Affine<FixedScalar> {
+#[cfg(feature = "fixed")] impl Affine<crate::fixed::Scalar> {
     /// Transforms a Q24.8 point with widened multiply-add and checked conversion.
     ///
     /// The result is rounded to the nearest Q24.8 value, with exact half units
     /// rounded away from zero. Renderer-specific device limits are checked by
     /// the consuming backend.
-    pub fn try_transform_point(&self, point: Point<FixedScalar>) ->
-        Result<Point<FixedScalar>, FixedTransformError> {
-        let transform = |first: FixedScalar, x: FixedScalar,
-            second: FixedScalar, y: FixedScalar, translation: FixedScalar| {
+    pub fn try_transform_point(&self, point: Point<crate::fixed::Scalar>) ->
+        Result<Point<crate::fixed::Scalar>, crate::fixed::TransformError> {
+        let transform = |first: crate::fixed::Scalar, x: crate::fixed::Scalar,
+            second: crate::fixed::Scalar, y: crate::fixed::Scalar,
+            translation: crate::fixed::Scalar| {
             const FRACTION_BITS: u32 = 8;
             const SCALE: i128 = 1 << FRACTION_BITS;
             let value = first.to_bits() as i128 * x.to_bits() as i128
@@ -139,8 +130,8 @@ impl Affine<f32> {
             let rounded = if value < 0 {
                 (value - SCALE / 2) / SCALE
             } else { (value + SCALE / 2) / SCALE };
-            i32::try_from(rounded).map(FixedScalar::from_bits)
-                .map_err(|_| FixedTransformError::Overflow)
+            i32::try_from(rounded).map(crate::fixed::Scalar::from_bits)
+                .map_err(|_| crate::fixed::TransformError::Overflow)
         };
         Ok((transform(self.a, point.x, self.c, point.y, self.e)?,
             transform(self.b, point.x, self.d, point.y, self.f)?).into())
@@ -276,6 +267,8 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
 }
 
 #[cfg(test)] mod tests { use super::*;
+    #[cfg(feature = "fixed")]
+    use crate::fixed::{Scalar as DeviceScalar, TransformError};
     #[test] fn affine_uses_documented_column_vector_convention() {
         let transform = Affine::new(2.0, 0.5, -1.0, 3.0, 4.0, -2.0);
         assert_eq!(transform.transform_point((3.0, 2.0).into()), (8.0, 5.5).into());
@@ -335,28 +328,28 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
 
     #[cfg(feature = "fixed")]
     #[test] fn fixed_geometry_reuses_generic_point_path_and_affine_types() {
-        let (one, half) = (FixedScalar::from_num(1), FixedScalar::from_num(0.5));
-        let transform = Affine::<FixedScalar>::translate(half, one);
+        let (one, half) = (DeviceScalar::from_num(1), DeviceScalar::from_num(0.5));
+        let transform = Affine::<DeviceScalar>::translate(half, one);
         assert_eq!(transform.try_transform_point((one, half).into()).unwrap(),
-            (FixedScalar::from_num(1.5), FixedScalar::from_num(1.5)).into());
+            (DeviceScalar::from_num(1.5), DeviceScalar::from_num(1.5)).into());
 
-        let mut builder = PathBuilder::<FixedScalar>::new();
-        builder.move_to((FixedScalar::ZERO, FixedScalar::ZERO))
+        let mut builder = PathBuilder::<DeviceScalar>::new();
+        builder.move_to((DeviceScalar::ZERO, DeviceScalar::ZERO))
             .line_to((one, half));
         assert_eq!(builder.build().len(), 2);
     }
 
     #[cfg(feature = "fixed")]
     #[test] fn fixed_affine_widens_rounds_symmetrically_and_checks_output() {
-        let raw = FixedScalar::from_bits;
+        let raw = DeviceScalar::from_bits;
         let half_scale = Affine::new(raw(128), raw(0), raw(0), raw(128), raw(0), raw(0));
         assert_eq!(half_scale.try_transform_point((raw(1), raw(-1)).into()).unwrap(),
             (raw(1), raw(-1)).into());
 
-        let maximum = FixedScalar::MAX;
-        let overflow = Affine::new(maximum, FixedScalar::ZERO, FixedScalar::ZERO,
+        let maximum = DeviceScalar::MAX;
+        let overflow = Affine::new(maximum, DeviceScalar::ZERO, DeviceScalar::ZERO,
             maximum, maximum, maximum);
         assert_eq!(overflow.try_transform_point((maximum, maximum).into()),
-            Err(FixedTransformError::Overflow));
+            Err(TransformError::Overflow));
     }
 }
