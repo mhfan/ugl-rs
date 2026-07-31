@@ -2,22 +2,37 @@
 
 use core::convert::Infallible;
 use crate::{
-    canvas::{EdgeSliceSink, FixedPaintCompositor, PaintCompositor, PixmapMut, RenderError,
-        map_dash_error, map_fixed_flatten_error, map_fixed_render_error,
-        map_fixed_stroke_expand_error, map_fixed_stroke_flatten_error,
-        validate_coverage_dimensions},
+    canvas::{EdgeCapacity, EdgeSliceSink, PaintCompositor, PixmapMut, RenderError,
+        map_dash_error, validate_coverage_dimensions},
     color::SRGBA, dash::{DashContour, DashWorkspace, FixedDashPattern,
         dash_polyline_fixed}, edge::{Edge, build_fill_edges_fixed},
-    fixed::{flatten::FixedFlattenOptions,
-        raster::{FixedCoverageStrips, FixedLine, FixedRasterWorkspace, prepare_lines,
-            rasterize_lines}, stroke::{FixedStrokeOptions,
+    fixed::{flatten::{FixedFlattenError, FixedFlattenOptions},
+        raster::{FixedCoverageStrips, FixedLine, FixedRasterError, FixedRasterWorkspace,
+            FixedRenderError, prepare_lines, rasterize_lines},
+        sampler::FixedPaintSampler,
+        stroke::{FixedStrokeExpandError, FixedStrokeOptions,
             stroke_polyline_fixed}, tile::{FixedCoverageTiles, FixedDirectTileWorkspace,
             FixedTileKind, rasterize_lines_to_tiles}},
     geometry::{Affine, FixedScalar, Path, Point, Rect},
-    raster::{CoverageMask, CoverageSink, FillRule, MaskClipSink, RectClipSink},
+    raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink,
+        RectClipSink},
     sampler::{PaintSampler, SolidPaint}, stroke::{StrokePathWorkspace,
-        flatten_stroke_path_fixed},
+        StrokeWorkspaceError, flatten_stroke_path_fixed},
 };
+
+impl PixmapMut<'_> {
+    fn blend_fixed_sampled_span<S: FixedPaintSampler>(
+        &mut self, x: u32, y: u32, len: u32, sampler: &S, coverage: u8) {
+        if let Some(color) = sampler.solid_color_fixed() {
+            self.blend_solid_span(x, y, len, color.into_legacy(), coverage);
+            return;
+        }
+        for pixel_x in x..x + len {
+            let color = sampler.sample_fixed(pixel_x, y);
+            self.blend_solid_span(pixel_x, y, 1, color.into_legacy(), coverage);
+        }
+    }
+}
 
 pub struct FixedGeometryWorkspace<'a> {
     pub edges: &'a mut [Edge<FixedScalar>],
@@ -454,5 +469,89 @@ fn finish_infallible(result: Result<(), Infallible>) ->
     match result {
         Ok(()) => Ok(()),
         Err(error) => match error {},
+    }
+}
+
+/// Rasterizes a Q24.8 path clip into caller-owned 8-bit coverage without an FPU.
+///
+/// The valid mask area is cleared after path flattening and line preparation
+/// succeed. Callers must discard the mask if this function returns an error.
+pub fn rasterize_path_clip_fixed(
+    path: &Path<FixedScalar>, options: FixedRenderOptions,
+    mask: &mut CoverageMaskMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
+    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
+    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
+    build_fill_edges_fixed(path, options.transform, options.flatten, &mut sink)
+        .map_err(map_fixed_flatten_error)?;
+    let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
+        .map_err(RenderError::FixedRaster)?;
+    mask.clear();
+    rasterize_lines(&geometry.lines[..line_count], mask.width(), mask.height(),
+        options.fill_rule, raster_workspace, mask).map_err(map_fixed_render_error)
+}
+
+
+pub(crate) fn map_fixed_stroke_expand_error(
+    error: FixedStrokeExpandError<EdgeCapacity>) -> RenderError {
+    match error {
+        FixedStrokeExpandError::CoordinateOutOfRange =>
+            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
+        FixedStrokeExpandError::Sink(error) =>
+            RenderError::EdgeCapacity { needed_at_least: error.needed_at_least },
+    }
+}
+
+pub(crate) fn map_fixed_flatten_error(
+    error: FixedFlattenError<EdgeCapacity>) -> RenderError {
+    match error {
+        FixedFlattenError::NonPositiveTolerance => RenderError::InvalidTolerance,
+        FixedFlattenError::InvalidDepth => RenderError::InvalidDepth,
+        FixedFlattenError::CoordinateOutOfRange =>
+            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
+        FixedFlattenError::DepthLimit => RenderError::FlattenDepthLimit,
+        FixedFlattenError::InvalidPath(error) => RenderError::InvalidPath(error),
+        FixedFlattenError::Sink(error) =>
+            RenderError::EdgeCapacity { needed_at_least: error.needed_at_least },
+    }
+}
+
+pub(crate) fn map_fixed_stroke_flatten_error(
+    error: FixedFlattenError<StrokeWorkspaceError>) -> RenderError {
+    match error {
+        FixedFlattenError::NonPositiveTolerance => RenderError::InvalidTolerance,
+        FixedFlattenError::InvalidDepth => RenderError::InvalidDepth,
+        FixedFlattenError::CoordinateOutOfRange =>
+            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
+        FixedFlattenError::DepthLimit => RenderError::FlattenDepthLimit,
+        FixedFlattenError::InvalidPath(error) => RenderError::InvalidPath(error),
+        FixedFlattenError::Sink(StrokeWorkspaceError::PointCapacity { needed_at_least }) =>
+            RenderError::StrokePointCapacity { needed_at_least },
+        FixedFlattenError::Sink(StrokeWorkspaceError::ContourCapacity { needed_at_least }) =>
+            RenderError::StrokeContourCapacity { needed_at_least },
+        FixedFlattenError::Sink(StrokeWorkspaceError::IndexOverflow) =>
+            RenderError::StrokeIndexOverflow,
+    }
+}
+
+
+pub(crate) struct FixedPaintCompositor<'a, 'b, S> {
+    pub(crate) target: &'a mut PixmapMut<'b>, pub(crate) sampler: &'a S,
+}
+
+impl<S: crate::sampler::FixedPaintSampler> CoverageSink
+    for FixedPaintCompositor<'_, '_, S> {
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        self.target.blend_fixed_sampled_span(x, y, len, self.sampler, coverage);
+        Ok(())
+    }   type Error = Infallible;
+}
+
+
+pub(crate) fn map_fixed_render_error(
+    error: FixedRenderError<Infallible>) -> RenderError {
+    match error {
+        FixedRenderError::Raster(error) => RenderError::FixedRaster(error),
+        FixedRenderError::Sink(error) => match error {},
     }
 }

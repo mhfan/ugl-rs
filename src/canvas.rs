@@ -14,15 +14,7 @@ use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
     stroke::{flatten_stroke_path, stroke_polyline, StrokeContour, StrokeExpandError,
         StrokeOptions, StrokePathWorkspace, StrokeWorkspaceError},
 };
-#[cfg(feature = "fixed")] use crate::raster_fixed::{
-    FixedRasterError, FixedRasterWorkspace, FixedRenderError, prepare_lines, rasterize_lines,
-};
-#[cfg(feature = "fixed")] use crate::{
-    edge::build_fill_edges_fixed,
-    flatten_fixed::FixedFlattenError,
-    geometry::FixedScalar,
-    stroke_fixed::FixedStrokeExpandError,
-};
+#[cfg(feature = "fixed")] use crate::raster_fixed::FixedRasterError;
 #[cfg(feature = "fixed")] pub use crate::fixed::canvas::*;
 
 const BYTES_PER_PIXEL: u32 = 4;
@@ -116,19 +108,6 @@ impl<'a> PixmapMut<'a> {
         }
     }
 
-    #[cfg(feature = "fixed")]
-    fn blend_fixed_sampled_span<S: crate::sampler::FixedPaintSampler>(
-        &mut self, x: u32, y: u32, len: u32, sampler: &S, coverage: u8) {
-        if let Some(color) = sampler.solid_color_fixed() {
-            self.blend_solid_span(x, y, len, color.into_legacy(), coverage);
-            return;
-        }
-        for pixel_x in x..x + len {
-            let color = sampler.sample_fixed(pixel_x, y);
-            self.blend_solid_span(pixel_x, y, 1, color.into_legacy(), coverage);
-        }
-    }
-
     #[cfg(feature = "fixed")] pub(crate) fn blend_solid_tile(&mut self, x: u32, y: u32,
         width: u32, height: u32, color: PremulRGBA<u8>) {
         let terms = solid_blend_terms(color, u8::MAX);
@@ -139,6 +118,7 @@ impl<'a> PixmapMut<'a> {
             blend_solid_bytes(&mut self.data[start..end], terms);
         }
     }
+
 }
 
 fn solid_blend_terms(color: PremulRGBA<u8>, coverage: u8) -> ([u8; 3], u8, u8) {
@@ -425,24 +405,6 @@ pub fn rasterize_path_clip_analytic(path: &Path, transform: Affine,
         }, mask)
 }
 
-/// Rasterizes a Q24.8 path clip into caller-owned 8-bit coverage without an FPU.
-///
-/// The valid mask area is cleared after path flattening and line preparation
-/// succeed. Callers must discard the mask if this function returns an error.
-#[cfg(feature = "fixed")] pub fn rasterize_path_clip_fixed(
-    path: &Path<FixedScalar>, options: FixedRenderOptions,
-    mask: &mut CoverageMaskMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
-    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
-    build_fill_edges_fixed(path, options.transform, options.flatten, &mut sink)
-        .map_err(map_fixed_flatten_error)?;
-    let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
-        .map_err(RenderError::FixedRaster)?;
-    mask.clear();
-    rasterize_lines(&geometry.lines[..line_count], mask.width(), mask.height(),
-        options.fill_rule, raster_workspace, mask).map_err(map_fixed_render_error)
-}
-
 /// Renders analytic solid coverage multiplied by a borrowed path clip mask.
 pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
     mask: CoverageMask<'_>, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
@@ -581,7 +543,7 @@ fn map_analytic_bin_error(error: AnalyticBinError) -> RenderError {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct EdgeCapacity { needed_at_least: usize }
+pub(crate) struct EdgeCapacity { pub(crate) needed_at_least: usize }
 
 pub(crate) struct EdgeSliceSink<'a, T = crate::geometry::Scalar> {
     pub(crate) edges: &'a mut [Edge<T>], pub(crate) len: usize,
@@ -595,66 +557,8 @@ impl<T> EdgeSink<T> for EdgeSliceSink<'_, T> {
     }   type Error = EdgeCapacity;
 }
 
-#[cfg(feature = "fixed")]
-pub(crate) fn map_fixed_stroke_expand_error(
-    error: FixedStrokeExpandError<EdgeCapacity>) -> RenderError {
-    match error {
-        FixedStrokeExpandError::CoordinateOutOfRange =>
-            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
-        FixedStrokeExpandError::Sink(error) =>
-            RenderError::EdgeCapacity { needed_at_least: error.needed_at_least },
-    }
-}
-
-#[cfg(feature = "fixed")]
-pub(crate) fn map_fixed_flatten_error(
-    error: FixedFlattenError<EdgeCapacity>) -> RenderError {
-    match error {
-        FixedFlattenError::NonPositiveTolerance => RenderError::InvalidTolerance,
-        FixedFlattenError::InvalidDepth => RenderError::InvalidDepth,
-        FixedFlattenError::CoordinateOutOfRange =>
-            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
-        FixedFlattenError::DepthLimit => RenderError::FlattenDepthLimit,
-        FixedFlattenError::InvalidPath(error) => RenderError::InvalidPath(error),
-        FixedFlattenError::Sink(error) =>
-            RenderError::EdgeCapacity { needed_at_least: error.needed_at_least },
-    }
-}
-
-#[cfg(feature = "fixed")]
-pub(crate) fn map_fixed_stroke_flatten_error(
-    error: FixedFlattenError<StrokeWorkspaceError>) -> RenderError {
-    match error {
-        FixedFlattenError::NonPositiveTolerance => RenderError::InvalidTolerance,
-        FixedFlattenError::InvalidDepth => RenderError::InvalidDepth,
-        FixedFlattenError::CoordinateOutOfRange =>
-            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
-        FixedFlattenError::DepthLimit => RenderError::FlattenDepthLimit,
-        FixedFlattenError::InvalidPath(error) => RenderError::InvalidPath(error),
-        FixedFlattenError::Sink(StrokeWorkspaceError::PointCapacity { needed_at_least }) =>
-            RenderError::StrokePointCapacity { needed_at_least },
-        FixedFlattenError::Sink(StrokeWorkspaceError::ContourCapacity { needed_at_least }) =>
-            RenderError::StrokeContourCapacity { needed_at_least },
-        FixedFlattenError::Sink(StrokeWorkspaceError::IndexOverflow) =>
-            RenderError::StrokeIndexOverflow,
-    }
-}
-
 pub(crate) struct PaintCompositor<'a, 'b, S> {
     pub(crate) target: &'a mut PixmapMut<'b>, pub(crate) sampler: &'a S,
-}
-
-#[cfg(feature = "fixed")] pub(crate) struct FixedPaintCompositor<'a, 'b, S> {
-    pub(crate) target: &'a mut PixmapMut<'b>, pub(crate) sampler: &'a S,
-}
-
-#[cfg(feature = "fixed")] impl<S: crate::sampler::FixedPaintSampler> CoverageSink
-    for FixedPaintCompositor<'_, '_, S> {
-    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
-        Result<(), Self::Error> {
-        self.target.blend_fixed_sampled_span(x, y, len, self.sampler, coverage);
-        Ok(())
-    }   type Error = Infallible;
 }
 
 impl<S: PaintSampler> CoverageSink for PaintCompositor<'_, '_, S> {
@@ -729,13 +633,7 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
     }
 }
 
-#[cfg(feature = "fixed")]
-pub(crate) fn map_fixed_render_error(
-    error: FixedRenderError<Infallible>) -> RenderError {
-    match error {
-        FixedRenderError::Raster(error) => RenderError::FixedRaster(error),
-        FixedRenderError::Sink(error) => match error {},
-    }
-}
+#[cfg(all(test, feature = "fixed"))]
+#[path = "fixed/canvas_tests.rs"] mod fixed_canvas_tests;
 
 #[cfg(test)] #[path = "canvas_tests.rs"] mod tests;
