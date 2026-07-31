@@ -471,9 +471,8 @@ fn stroke_curve_scene() -> Path {
     path.move_to((8.0, 128.0));
     for index in 0..8 {
         let x = 8.0 + index as f32 * 30.0;
-        let high = if index & 1 == 0 { 24.0 } else { 232.0 };
-        let low  = if index & 1 == 0 { 232.0 } else { 24.0 };
-        path.cubic_to((x + 10.0, high), (x + 20.0, low), (x + 30.0, 128.0));
+        let y = if index & 1 == 0 { 112.0 } else { 144.0 };
+        path.cubic_to((x + 10.0, y), (x + 20.0, y), (x + 30.0, 128.0));
     }   path.build()
 }
 
@@ -576,6 +575,72 @@ fn benchmark_stroke(c: &mut Criterion) {
         }));
     }
     expand_group.finish();
+
+    let (path, options) = (stroke_curve_scene(), StrokePathOptions {
+        stroke: base, ..Default::default()
+    });
+    let (point_count, contour_count, edge_count) = stroke_requirements(&path, options);
+    let scratch = format!("{point_count}p_{contour_count}c_{edge_count}e");
+    let mut stages = c.benchmark_group("stroke_stages_f32");
+    stages.throughput(Throughput::Elements(edge_count as _));
+
+    let (mut flatten_points, mut flatten_contours) = (
+        vec![Point::default(); point_count], vec![StrokeContour::default(); contour_count]);
+    stages.bench_function(BenchmarkId::new("flatten", &scratch), |b| b.iter(|| {
+        let mut workspace = StrokePathWorkspace {
+            points: &mut flatten_points, contours: &mut flatten_contours,
+        };
+        let flattened = flatten_stroke_path(&path, Affine::identity(), options.flatten,
+            &mut workspace).unwrap();
+        black_box((flattened.point_count(), flattened.contour_count()));
+    }));
+
+    let (mut outline_points, mut outline_contours) = (
+        vec![Point::default(); point_count], vec![StrokeContour::default(); contour_count]);
+    let mut outline_workspace = StrokePathWorkspace {
+        points: &mut outline_points, contours: &mut outline_contours,
+    };
+    let flattened = flatten_stroke_path(&path, Affine::identity(), options.flatten,
+        &mut outline_workspace).unwrap();
+    stages.bench_function(BenchmarkId::new("outline", &scratch), |b| b.iter(|| {
+        let mut emitted = 0;
+        for (points, closed) in flattened.contours() {
+            stroke_polyline(points, closed, options.stroke, &mut |_| {
+                emitted += 1; Ok::<_, core::convert::Infallible>(())
+            }).unwrap();
+        }
+        black_box(emitted);
+    }));
+
+    let mut edges = Vec::with_capacity(edge_count);
+    for (points, closed) in flattened.contours() {
+        stroke_polyline(points, closed, options.stroke, &mut |edge| {
+            edges.push(edge); Ok::<_, core::convert::Infallible>(())
+        }).unwrap();
+    }
+    let requirements = bin_requirements(&edges, HEIGHT).unwrap();
+    let (mut offsets, mut indices) = (
+        vec![0; requirements.offsets], vec![0; requirements.indices]);
+    stages.bench_function(BenchmarkId::new("row_binning", &scratch), |b| b.iter(|| {
+        black_box(build_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
+            row_offsets: &mut offsets, edge_indices: &mut indices,
+        }).unwrap());
+    }));
+
+    let bins = build_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
+        row_offsets: &mut offsets, edge_indices: &mut indices,
+    }).unwrap();
+    let (mut active, mut row) = (
+        vec![AnalyticIntersection::default(); edge_count], vec![0.0; WIDTH as usize]);
+    stages.bench_function(BenchmarkId::new("coverage", &scratch), |b| b.iter(|| {
+        let mut sink = RunCounter::default();
+        rasterize_edges_binned(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+            &mut AnalyticWorkspace {
+                intersections: &mut active, row_coverage: &mut row,
+            }, &mut sink).unwrap();
+        black_box((sink.runs, sink.pixels));
+    }));
+    stages.finish();
 
     let dash_points: Vec<_> = (0..64).map(|index|
         (index as f32 * 3.0 + 8.0,
