@@ -142,13 +142,16 @@ smallest floating-point core, or add `fixed` explicitly for a no_std fixed
 build. Analytic rounding selects the backend independently: `std` uses native
 platform floor/ceil, Arm hard-float (`eabihf`) targets automatically use an
 FPU-friendly no_std implementation, and other no_std FPU targets can enable
-`native-float`. Remaining soft-float builds retain deterministic `libm`
-operations. All floating math is routed through one internal backend:
+`native-float`. Remaining soft-float builds retain `libm` operations. The
+dependency's `arch` dispatch is enabled, so `libm` may select a tested target
+implementation where one exists and otherwise retains its portable software
+implementation. All floating math is routed through one internal backend:
 `floor`, `ceil`, `sqrt`, remainder, power, and trigonometric calls no longer
 select `libm` independently in rendering modules. MCU FPUs generally do not
-implement transcendental functions, so no_std sin/cos/atan2/acos/pow—and
-currently portable sqrt—still use `libm`; a target-specific native backend
-must demonstrate correct code generation before replacing them.
+implement transcendental functions, so no_std sin/cos/atan2/acos/pow—and sqrt
+on targets without a matching `libm` architecture implementation—still use
+portable software; a target-specific native backend must demonstrate correct
+code generation before replacing them.
 
 The fixed raster APIs can feed any existing `PaintSampler` through streaming,
 retained-strip, or retained-tile coverage, with rectangle or borrowed path-mask
@@ -310,7 +313,8 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
-version metadata. The three-backend baseline used ugl-rs `b800491`, Blend2D
+version metadata. The current three-backend baseline was measured on 2026-07-31
+after ugl-rs `3024946`, using Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
 rustc 1.97.1 on macOS 15.6 arm64. Nine 2,000-frame samples after 200 warm-up
@@ -318,9 +322,9 @@ frames produced:
 
 | Scene | f32 median | fixed median | Blend2D median | Blend2D vs f32 | fixed vs f32 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 64 fractional rectangles, fill | 118.15 µs | 228.71 µs | 32.84 µs | 3.60× faster | 1.94× slower |
-| 8 gentle cubic arches, fill | 23.51 µs | 30.21 µs | 8.40 µs | 2.80× faster | 1.28× slower |
-| 8 gentle cubic arches, width-6 stroke | 298.41 µs | 288.60 µs | 13.62 µs | 21.92× faster | 0.97× |
+| 64 fractional rectangles, fill | 117.62 µs | 231.55 µs | 33.87 µs | 3.47× faster | 1.97× slower |
+| 8 gentle cubic arches, fill | 23.30 µs | 30.26 µs | 7.44 µs | 3.13× faster | 1.30× slower |
+| 8 gentle cubic arches, width-6 stroke | 233.70 µs | 285.32 µs | 14.11 µs | 16.56× faster | 1.22× slower |
 
 | Scene | f32 pixels changed from Blend2D | fixed pixels changed from f32 | fixed mean/max error from f32 |
 | --- | ---: | ---: | ---: |
@@ -362,8 +366,8 @@ measurement produced these central estimates:
 | centerline curve flatten | 1.72 µs |
 | stroke outline expansion | 1.77 µs |
 | sparse row bin construction | 6.88 µs |
-| analytic coverage integration and run emission | 320.32 µs initial; 262.64 µs no_std; 212.66 µs std |
-| complete clear + stroke + encoded composite | 366.58 µs |
+| analytic coverage integration and run emission | 320.32 µs initial; 262.64 µs no_std; 221.18 µs current std |
+| complete clear + stroke + encoded composite | 233.70 µs current matched harness |
 
 The independently measured stages are not strictly additive, but they locate
 the dominant cost: flatten, outline, and binning total only about 10.4 µs,
@@ -384,9 +388,9 @@ Release profiling then found software `libm` floor/ceil expansion inside both
 event discovery and span integration. Desktop `std` builds use native platform
 rounding; hard-float MCUs select a no_std arithmetic implementation by ABI,
 without coupling FPU policy to standard-library availability. On the same
-stroke scene, native desktop rounding measured 212.66 µs, another
-19.0% below the fused no_std result and 23.6% below a fresh saved software
-baseline. A whole-row difference accumulator was also rejected: short stroke
+stroke scene, native desktop rounding first measured 212.66 µs; the current
+30-sample rerun measured 221.18 µs and Criterion detected no change from its
+saved baseline. A whole-row difference accumulator was also rejected: short stroke
 interiors did not amortize its extra boundary writes and prefix scan.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280

@@ -21,7 +21,7 @@ std = []
 
 [dependencies]
 fixed = { version = "1.29", optional = true, default-features = false }
-libm = { version = "0.2", default-features = false }
+libm = "0.2"
 #nalgebra-glm = "0.20"
 
 [dev-dependencies]

@@ -382,14 +382,17 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   `std`. Floating-point capability is independent: `std` uses platform
   floor/ceil, Arm `eabihf` targets select a hardware-friendly no_std
   implementation automatically, other no_std FPU targets opt into
-  `native-float`, and soft-float targets use `libm`. Release profiling measured
-  the desktop native path about 19% faster after event-scan fusion.
+  `native-float`, and soft-float targets use `libm`. The dependency's `arch`
+  dispatch may select a tested target implementation where available and
+  otherwise falls back to portable software. Release profiling measured the
+  desktop native path about 19% faster after event-scan fusion.
 - Every f32 math operation is selected by the private `float` backend rather
   than renderer modules calling `libm` directly. Basic FPU availability does
   not imply sin/cos/atan2/acos/pow hardware; no_std transcendental operations
-  remain software unless a target backend proves equivalent semantics and
-  code generation. Platform-specific acceleration must not change the ABI or
-  silently enable incompatible rustc target features.
+  generally remain software unless `libm` or another target backend provides
+  equivalent semantics and proven code generation. Platform-specific
+  acceleration must not change the ABI or silently enable incompatible rustc
+  target features.
 - The matched 8-cubic stroke expands to 65 centerline points and 480 edges.
   Stage benchmarks put flatten, outline expansion, and row binning near 10 µs
   combined versus roughly 320 µs for coverage and 367 µs end to end. Prepared

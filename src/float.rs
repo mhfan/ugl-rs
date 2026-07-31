@@ -3,7 +3,9 @@
 //! A hardware FPU does not imply hardware transcendental functions. Hosted
 //! builds use the platform implementations; no_std builds use direct or
 //! hardware-friendly operations where the target guarantees them and retain
-//! `libm` for transcendental functions.
+//! `libm` for transcendental functions. Its architecture dispatch remains
+//! enabled, but only affects operations and targets for which `libm` provides
+//! a specialized implementation.
 
 #[cfg(feature = "std")]
 pub(crate) fn floor(value: f32) -> f32 { value.floor() }
