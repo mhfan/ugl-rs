@@ -103,7 +103,7 @@
 }
 
 pub type CompOp = BlendMode;
-pub use crate::color::{PRGB32, RGBA};
+pub use crate::color::{PremulRGBA, RGBA};
 
 /* impl RGBA<u8> {
     /// Composite: ao x Co = αs x Fa x Cs + αb x Fb x Cb, ao = αs x Fa + αb x Fb;
@@ -141,7 +141,7 @@ pub use crate::color::{PRGB32, RGBA};
     assert_eq!(draw.plus(back).to_array(), [0.5, 0.6, 0.8, 1.0]);
     assert_eq!(draw.clear().to_array(),    [0.0, 0.0, 0.0, 0.0]);
 ``` */
-impl PRGB32<f32> {
+impl PremulRGBA<f32> {
     /// (Alpha) Porter-Duff Compositing Operators:
     ///
     /// Composite: co = Fa x cs + Fb x cb, ao = Fa x αs + Fb x αb.

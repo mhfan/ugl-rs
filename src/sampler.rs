@@ -15,22 +15,22 @@
       a texture (image)
  */
 
-use crate::{color::{PRGB32, RGBA}, geometry::{Affine, Point}};
+use crate::{color::{PremulRGBA, RGBA}, geometry::{Affine, Point}};
 
 /// Produces premultiplied source colors at device-space positions.
 ///
 /// Implementations should be small values borrowed by the compositor. Calls are
 /// statically dispatched; no trait object or allocation is required.
 pub trait PaintSampler {
-    fn sample(&self, x: f32, y: f32) -> PRGB32<u8>;
+    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8>;
 
     /// Reports a position-independent color to enable span and tile fast paths.
-    fn solid_color(&self) -> Option<PRGB32<u8>> { None }
+    fn solid_color(&self) -> Option<PremulRGBA<u8>> { None }
 }
 
 impl<S: PaintSampler + ?Sized> PaintSampler for &S {
-    fn sample(&self, x: f32, y: f32) -> PRGB32<u8> { (**self).sample(x, y) }
-    fn solid_color(&self) -> Option<PRGB32<u8>> { (**self).solid_color() }
+    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> { (**self).sample(x, y) }
+    fn solid_color(&self) -> Option<PremulRGBA<u8>> { (**self).solid_color() }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum PaintTransformError {
@@ -54,45 +54,45 @@ impl<S> TransformedPaint<S> {
 }
 
 impl<S: PaintSampler> PaintSampler for TransformedPaint<S> {
-    fn sample(&self, x: f32, y: f32) -> PRGB32<u8> {
+    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
         let point = self.device_to_paint.transform_point((x, y).into());
         self.sampler.sample(point.x, point.y)
     }
 
-    fn solid_color(&self) -> Option<PRGB32<u8>> { self.sampler.solid_color() }
+    fn solid_color(&self) -> Option<PremulRGBA<u8>> { self.sampler.solid_color() }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)] pub struct SolidPaint { color: PRGB32<u8> }
+#[derive(Clone, Copy, Debug, PartialEq)] pub struct SolidPaint { color: PremulRGBA<u8> }
 
 impl SolidPaint {
     pub fn new(color: RGBA<u8>) -> Self { Self { color: color.premul() } }
-    pub fn premultiplied(color: PRGB32<u8>) -> Self { Self { color } }
-    pub fn color(&self) -> PRGB32<u8> { self.color }
+    pub fn premultiplied(color: PremulRGBA<u8>) -> Self { Self { color } }
+    pub fn color(&self) -> PremulRGBA<u8> { self.color }
 }
 
 impl From<RGBA<u8>> for SolidPaint { fn from(color: RGBA<u8>) -> Self { Self::new(color) } }
 
-impl From<PRGB32<u8>> for SolidPaint {
-    fn from(color: PRGB32<u8>) -> Self { Self::premultiplied(color) }
+impl From<PremulRGBA<u8>> for SolidPaint {
+    fn from(color: PremulRGBA<u8>) -> Self { Self::premultiplied(color) }
 }
 
 impl PaintSampler for SolidPaint {
-    fn sample(&self, _x: f32, _y: f32) -> PRGB32<u8> { self.color }
-    fn solid_color(&self) -> Option<PRGB32<u8>> { Some(self.color) }
+    fn sample(&self, _x: f32, _y: f32) -> PremulRGBA<u8> { self.color }
+    fn solid_color(&self) -> Option<PremulRGBA<u8>> { Some(self.color) }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GradientStop { offset: f32, color: PRGB32<u8> }
+pub struct GradientStop { offset: f32, color: PremulRGBA<u8> }
 
 impl GradientStop {
     pub fn new(offset: f32, color: RGBA<u8>) -> Self {
         Self { offset, color: color.premul() }
     }
 
-    pub fn premultiplied(offset: f32, color: PRGB32<u8>) -> Self { Self { offset, color } }
+    pub fn premultiplied(offset: f32, color: PremulRGBA<u8>) -> Self { Self { offset, color } }
 
     pub fn offset(&self) -> f32 { self.offset }
-    pub fn color(&self) -> PRGB32<u8> { self.color }
+    pub fn color(&self) -> PremulRGBA<u8> { self.color }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum GradientError {
@@ -120,7 +120,7 @@ impl<'a> GradientStops<'a> {
 
     pub fn as_slice(&self) -> &'a [GradientStop] { self.stops }
 
-    fn sample(&self, t: f32) -> PRGB32<u8> {
+    fn sample(&self, t: f32) -> PremulRGBA<u8> {
         let upper = self.stops.partition_point(|stop| stop.offset <= t);
         if  upper == 0 { return self.stops[0].color; }
         if  upper == self.stops.len() { return self.stops[upper - 1].color; }
@@ -178,7 +178,7 @@ impl<'a> LinearGradient<'a> {
 }
 
 impl PaintSampler for LinearGradient<'_> {
-    fn sample(&self, x: f32, y: f32) -> PRGB32<u8> {
+    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
         let t = ((x - self.from.x) * self.delta.x  +
                  (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
         self.stops.sample(self.spread.map(t))
@@ -255,8 +255,8 @@ impl<'a> RadialGradient<'a> {
 }
 
 impl PaintSampler for RadialGradient<'_> {
-    fn sample(&self, x: f32, y: f32) -> PRGB32<u8> {
-        self.parameter(x, y).map_or_else(PRGB32::zeroed,
+    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
+        self.parameter(x, y).map_or_else(PremulRGBA::zeroed,
             |t| self.stops.sample(self.spread.map(t)))
     }
 }
@@ -279,7 +279,7 @@ impl<'a> ConicGradient<'a> {
 }
 
 impl PaintSampler for ConicGradient<'_> {
-    fn sample(&self, x: f32, y: f32) -> PRGB32<u8> {
+    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
         let turn =  libm::atan2f(y - self.center.y, x - self.center.x) / TAU;
         self.stops.sample(SpreadMode::Repeat.map(turn - self.start_turn))
     }
@@ -361,7 +361,7 @@ impl PaintSampler for ConicGradient<'_> {
         let tangent = RadialGradient::two_circle((0.0, 0.0), 0.0, (1.0, 0.0), 1.0,
             stops, SpreadMode::Pad).unwrap();
         assert_eq!(tangent.sample(0.5, 0.0), (191, 0, 64, 255).into());
-        assert_eq!(tangent.sample(0.0, 1.0), PRGB32::zeroed());
+        assert_eq!(tangent.sample(0.0, 1.0), PremulRGBA::zeroed());
     }
 
     #[test] fn conic_gradient_wraps_a_full_turn_from_its_start_angle() {

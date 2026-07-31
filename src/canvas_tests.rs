@@ -1,6 +1,6 @@
 
 use super::*;
-use crate::{analytic::AnalyticIntersection, color::RGBA, edge::Edge,
+use crate::{analytic::AnalyticIntersection, color::{PremulRGBA, RGBA}, edge::Edge,
     geometry::{Affine, PathBuilder}, raster::Intersection,
     sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient, SpreadMode},
     stroke::{LineCap, LineJoin},
@@ -73,10 +73,10 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
              row_coverage: &mut row_coverage,
         },
     ).unwrap();
-    assert_eq!(target.pixel(0, 0), Some(PRGB32::zeroed()));
+    assert_eq!(target.pixel(0, 0), Some(PremulRGBA::zeroed()));
     assert_eq!(target.pixel(1, 1), Some((128, 0, 0, 128).into()));
     assert_eq!(target.pixel(2, 2), Some((128, 0, 0, 128).into()));
-    assert_eq!(target.pixel(3, 3), Some(PRGB32::zeroed()));
+    assert_eq!(target.pixel(3, 3), Some(PremulRGBA::zeroed()));
 }
 
 #[test] fn edge_capacity_failure_reports_required_lower_bound() {
@@ -108,7 +108,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 #[test] fn analytic_sampled_paint_uses_device_pixel_centers_and_coverage() {
     struct CoordinatePaint;
     impl PaintSampler for CoordinatePaint {
-        fn sample(&self, x: f32, y: f32) -> PRGB32<u8> {
+        fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
             ((x * 40.0) as u8, (y * 40.0) as u8, 0, u8::MAX).into()
         }
     }
@@ -337,7 +337,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         (Some((96, 96, 96, 96).into()), Some((191, 191, 191, 191).into()),
          Some((96, 96, 96, 96).into()))
     );
-    assert_eq!(target.pixel(1, 1), Some(PRGB32::zeroed()));
+    assert_eq!(target.pixel(1, 1), Some(PremulRGBA::zeroed()));
 }
 
 #[test] fn analytic_path_clip_uses_reusable_caller_owned_coverage() {

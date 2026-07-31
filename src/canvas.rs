@@ -1,7 +1,7 @@
 //! Borrowed pixel targets and the first complete reference rendering path.
 
 use core::convert::Infallible;
-use crate::{color::{PRGB32, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
+use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticBinError, AnalyticBinWorkspace, AnalyticIntersection,
         AnalyticWorkspace, build_analytic_row_bins, rasterize_edges_analytic_binned},
     flatten::{FlattenError, FlattenOptions}, sampler::{PaintSampler, SolidPaint},
@@ -59,7 +59,7 @@ impl<'a> PixmapMut<'a> {
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
 
-    pub fn pixel(&self, x: u32, y: u32) -> Option<PRGB32<u8>> {
+    pub fn pixel(&self, x: u32, y: u32) -> Option<PremulRGBA<u8>> {
         if x >= self.width || y >= self.height { return None; }
         let offset = y as usize * self.stride as usize +
                      x as usize * BYTES_PER_PIXEL as usize;
@@ -68,7 +68,7 @@ impl<'a> PixmapMut<'a> {
     }
 
     fn blend_solid_span(&mut self, x: u32, y: u32, len: u32,
-        color: PRGB32<u8>, coverage: u8) {
+        color: PremulRGBA<u8>, coverage: u8) {
         let terms = solid_blend_terms(color, coverage);
         let start = y as usize * self.stride as usize
             + x as usize * BYTES_PER_PIXEL as usize;
@@ -89,7 +89,7 @@ impl<'a> PixmapMut<'a> {
     }
 
     #[cfg(feature = "fixed")] fn blend_solid_tile(&mut self, x: u32, y: u32,
-        width: u32, height: u32, color: PRGB32<u8>) {
+        width: u32, height: u32, color: PremulRGBA<u8>) {
         let terms = solid_blend_terms(color, u8::MAX);
         for row in y..y + height {
             let start = row as usize * self.stride as usize
@@ -100,7 +100,7 @@ impl<'a> PixmapMut<'a> {
     }
 }
 
-fn solid_blend_terms(color: PRGB32<u8>, coverage: u8) -> ([u8; 3], u8, u8) {
+fn solid_blend_terms(color: PremulRGBA<u8>, coverage: u8) -> ([u8; 3], u8, u8) {
     let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
     let [r, g, b, a] = color.to_array();
     let alpha = mul_div_255(a, coverage);

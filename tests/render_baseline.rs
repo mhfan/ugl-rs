@@ -1,5 +1,5 @@
 
-use ugl_rs::{analytic::AnalyticIntersection, color::{PRGB32, RGBA}, edge::Edge,
+use ugl_rs::{analytic::AnalyticIntersection, color::{PremulRGBA, RGBA}, edge::Edge,
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,
         render_stroke_solid_analytic,
@@ -11,7 +11,7 @@ use ugl_rs::{analytic::AnalyticIntersection, color::{PRGB32, RGBA}, edge::Edge,
 const  WIDTH: u32 = 4;
 const HEIGHT: u32 = 4;
 
-fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PRGB32<u8>; 16] {
+fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
@@ -30,7 +30,7 @@ fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PRGB32<u8>; 16
 }
 
 fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
-    [PRGB32<u8>; 16] {
+    [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
@@ -49,7 +49,7 @@ fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
 }
 
 fn render_analytic_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
-    [PRGB32<u8>; 16] {
+    [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut contours, mut edges) = ([StrokeContour::default(); 2], [Edge::default(); 64]);
@@ -68,7 +68,7 @@ fn render_analytic_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
         target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
 }
 
-fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
+fn render_analytic_stroke(builder: PathBuilder) -> [PremulRGBA<u8>; 16] {
     render_analytic_stroke_with(builder, StrokeOptions::default())
 }
 
@@ -77,8 +77,8 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
     path.move_to((1.0, 1.0)).line_to((3.0, 1.0))
         .line_to((3.0, 3.0)).line_to((1.0, 3.0));
 
-    let transparent = PRGB32::zeroed();
-    let solid: PRGB32<u8> = (13, 125, 25, 160).into();
+    let transparent = PremulRGBA::zeroed();
+    let solid: PremulRGBA<u8> = (13, 125, 25, 160).into();
     assert_eq!(render_analytic(path, FillRule::NonZero), [
         transparent, transparent, transparent, transparent,
         transparent, solid,       solid,       transparent,
@@ -91,9 +91,9 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
     let mut path = PathBuilder::new();
     path.move_to((0.0, 0.0)).line_to((2.0, 0.0)).line_to((0.0, 2.0));
 
-    let transparent = PRGB32::zeroed();
-    let solid: PRGB32<u8> = (13, 125, 25, 160).into();
-    let half: PRGB32<u8> = (7, 63, 13, 80).into();
+    let transparent = PremulRGBA::zeroed();
+    let solid: PremulRGBA<u8> = (13, 125, 25, 160).into();
+    let half: PremulRGBA<u8> = (7, 63, 13, 80).into();
     assert_eq!(render_analytic(path, FillRule::NonZero), [
         solid,       half,        transparent, transparent,
         half,        transparent, transparent, transparent,
@@ -110,7 +110,7 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
                  GradientStop::new(1.0, RGBA::blue())];
     let gradient = LinearGradient::new((0.0, 0.0), (4.0, 0.0),
         GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
-    let row: [PRGB32<u8>; 4] = [
+    let row: [PremulRGBA<u8>; 4] = [
         (223, 0, 32, 255).into(), (159, 0, 96, 255).into(),
         (96, 0, 159, 255).into(), (32, 0, 223, 255).into(),
     ];
@@ -121,9 +121,9 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PRGB32<u8>; 16] {
 #[test] fn fractional_butt_stroke_rgba_golden() {
     let mut path = PathBuilder::new();
     path.move_to((0.5, 1.5)).line_to((3.5, 1.5));
-    let transparent = PRGB32::zeroed();
-    let solid: PRGB32<u8> = (13, 125, 25, 160).into();
-    let half: PRGB32<u8> = (7, 63, 13, 80).into();
+    let transparent = PremulRGBA::zeroed();
+    let solid: PremulRGBA<u8> = (13, 125, 25, 160).into();
+    let half: PremulRGBA<u8> = (7, 63, 13, 80).into();
     assert_eq!(render_analytic_stroke(path), [
         transparent, transparent, transparent, transparent,
         half,        solid,       solid,       half,

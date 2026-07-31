@@ -41,9 +41,6 @@ pub struct LinearPremulRGBA<T: ColorChannel = f32>(PremulRGBA<T>);
 #[derive(Clone, Copy, Debug, PartialEq)] #[repr(transparent)]
 pub struct PremulRGBA<T: ColorChannel>(RGBA<T>);
 
-/// Backwards-compatible name for premultiplied RGBA values.
-pub type PRGB32<T> = PremulRGBA<T>;
-
 /// Premultiplied encoded sRGB bytes for the legacy compatibility path.
 #[derive(Clone, Copy, Debug, PartialEq)] #[repr(transparent)]
 pub struct EncodedPremulSRGBA8(PremulRGBA<u8>);
@@ -204,14 +201,14 @@ impl RGBA<u8> {
         (self.a as u32) << 24 | (self.r as u32) << 16 |
         (self.g as u32) << 8 | self.b as u32
     }
-    pub fn premul(self) -> PRGB32<u8> {
+    pub fn premul(self) -> PremulRGBA<u8> {
         let (half, alpha) = ((u8::MAX / 2) as u16, self.a as u16);
         let premul = |channel| ((channel as u16 * alpha + half) /  u8::MAX as u16) as _;
         (premul(self.r), premul(self.g), premul(self.b), self.a).into()
     }
 }
 
-impl PRGB32<u8> {
+impl PremulRGBA<u8> {
     /// Converts to straight alpha. This is lossy for translucent integer colors.
     pub fn unpremul(self) -> RGBA<u8> {
         let [r, g, b, a] = self.to_array();
@@ -230,14 +227,14 @@ impl RGBA<u16> {
         (self.a as u64) << 48 | (self.r as u64) << 32 |
         (self.g as u64) << 16 | self.b as u64
     }
-    pub fn premul(self) -> PRGB32<u16> {
+    pub fn premul(self) -> PremulRGBA<u16> {
         let (half, alpha) = ((u16::MAX / 2) as u32, self.a as u32);
         let premul = |channel| ((channel as u32 * alpha + half) / u16::MAX as u32) as _;
         (premul(self.r), premul(self.g), premul(self.b), self.a).into()
     }
 }
 
-impl PRGB32<u16> {
+impl PremulRGBA<u16> {
     /// Converts to straight alpha. This is lossy for translucent integer colors.
     pub fn unpremul(self) -> RGBA<u16> {
         let [r, g, b, a] = self.to_array();
@@ -251,7 +248,7 @@ impl PRGB32<u16> {
 }
 
 impl RGBA<f32> {
-    pub fn premul(self) -> PRGB32<f32> {
+    pub fn premul(self) -> PremulRGBA<f32> {
         (self.r * self.a, self.g * self.a, self.b * self.a, self.a).into()
     }
 
@@ -383,7 +380,7 @@ impl From<Rgba8Premul> for PremulRGBA<u8> {
     }
 }
 
-impl PRGB32<f32> {
+impl PremulRGBA<f32> {
     /// Converts to straight alpha, normalizing transparent colors to transparent black.
     pub fn unpremul(self) -> RGBA<f32> {
         let [r, g, b, a] = self.to_array();
@@ -393,15 +390,15 @@ impl PRGB32<f32> {
     }
 }
 
-impl From<RGBA<u8>>  for PRGB32<u8> {
+impl From<RGBA<u8>>  for PremulRGBA<u8> {
     fn from(color: RGBA<u8>)  -> Self { color.premul() }
 }
 
-impl From<RGBA<u16>> for PRGB32<u16> {
+impl From<RGBA<u16>> for PremulRGBA<u16> {
     fn from(color: RGBA<u16>) -> Self { color.premul() }
 }
 
-impl From<RGBA<f32>> for PRGB32<f32> {
+impl From<RGBA<f32>> for PremulRGBA<f32> {
     fn from(color: RGBA<f32>) -> Self { color.premul() }
 }
 
@@ -427,8 +424,8 @@ impl From<RGBA<f32>> for PRGB32<f32> {
     #[test] fn premultiplication_preserves_opaque_channels() {
         assert_eq!(RGBA::<u8> ::white().premul().to_array(), RGBA::<u8> ::white().to_array());
         assert_eq!(RGBA::<u16>::white().premul().to_array(), RGBA::<u16>::white().to_array());
-        assert_eq!(RGBA::<u8>::new(255, 127, 1, 0).premul(), PRGB32::zeroed());
-        assert_eq!(RGBA::<u16>::new(65535, 32767, 1, 0).premul(), PRGB32::zeroed());
+        assert_eq!(RGBA::<u8>::new(255, 127, 1, 0).premul(), PremulRGBA::zeroed());
+        assert_eq!(RGBA::<u16>::new(65535, 32767, 1, 0).premul(), PremulRGBA::zeroed());
     }
 
     #[test] fn unpremultiplication_is_explicit_lossy_and_normalizes_transparent_rgb() {
@@ -448,7 +445,7 @@ impl From<RGBA<f32>> for PRGB32<f32> {
         }
         assert_eq!(restored16.a, color16.a);
 
-        let transparent: PRGB32<u8> = (200, 100, 50, 0).into();
+        let transparent: PremulRGBA<u8> = (200, 100, 50, 0).into();
         assert_eq!(transparent.unpremul(), RGBA::zeroed());
         assert_eq!(RGBA::<f32>::new(0.4, 0.2, 0.1, 0.5).premul().unpremul(),
                           RGBA::new(0.4, 0.2, 0.1, 0.5));
