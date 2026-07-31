@@ -505,20 +505,86 @@ respect to image area and therefore does not scan caller-owned destination
 contents. Compositing over existing bytes requires the caller to uphold the
 premultiplied invariant.
 
-One cross-cutting API review remains:
+## Context facade and backend organization
 
-- Design a stateful `Canvas`/`Context` facade over the low-level rendering
-  functions. It should own or borrow target state, current transform, paint,
-  clip stack, fill/stroke options, and reusable workspaces where appropriate,
-  while retaining the allocation-free low-level APIs. First classify and
-  consolidate duplicated render entry points; do not merely move the existing
-  API matrix into methods or hide capacity errors and fixed/floating backend
-  selection.
-- During that API review, evaluate grouping backend-specific implementation
-  under `src/fixed/`. The decision must consider feature-gate clarity, module
-  cohesion, compile-time dependencies, discoverability, and stable public
-  paths. Keep genuinely shared geometry, color, coverage, and compositor
-  contracts outside the backend directory; do not duplicate abstractions just
-  to create a visually isolated tree. If files move, preserve intentional
-  public paths through re-exports or treat changes explicitly as pre-1.0 API
-  cleanup.
+`PixmapMut` and `LinearPixmapMut` are borrowed render targets; they should not
+also become state machines. The ergonomic drawing facade is therefore named
+`Context`. It borrows a target and caller-owned workspace, owns small drawing
+state, and delegates to the existing allocation-free functions. Those
+low-level functions remain public expert APIs for retained coverage, custom
+sinks, exact capacity planning, and applications that keep state elsewhere.
+
+The facade uses two concrete, deliberately parallel entry points:
+
+- `Context` selects the analytic f32 geometry/raster path and the encoded
+  compatibility compositor.
+- `FixedContext` selects Q24.8 geometry/rasterization and fixed paint sampling.
+  Compatibility `PaintSampler` entry points remain available explicitly but
+  must not be mistaken for a no-FPU path.
+
+A public backend trait is intentionally avoided. Associated scalar, flatten,
+stroke, sampler, workspace, and error types would expose implementation
+machinery and make ordinary calls harder to infer. Instead, both contexts reuse
+a generic private/shared state record parameterized by coordinate, flatten,
+and stroke option types. Their method names and state transitions stay
+isomorphic where semantics match; concrete methods remain where the numeric or
+paint contract genuinely differs. An internal sealed execution trait may be
+introduced only after two implementations demonstrate a useful common body.
+
+The first stable method vocabulary is small:
+
+- `set_transform`, `set_fill_rule`, `set_flatten`, `set_stroke`, and
+  `set_color` update current state and return `&mut Self` for compact setup.
+- `fill` and `stroke` use the current solid paint.
+- `fill_with` and `stroke_with` accept a statically dispatched sampler without
+  storing trait objects or allocating.
+- clipping is context state, represented as no clip, one rectangle, or one
+  borrowed coverage mask. A later caller-owned clip stack uses explicit
+  `save`/`restore`; the first facade must not allocate an implicit stack.
+- dashed drawing remains an explicit method because a dash pattern borrows
+  caller data and requires additional bounded scratch. It is not hidden inside
+  an enum that expands every context.
+
+All methods preserve existing error and mutation contracts. Geometry/capacity
+failure before rasterization leaves the target unchanged. Once span emission
+begins, sink/raster errors follow the documented low-level behavior. Context
+construction performs no allocation and does not infer or resize workspace.
+Workspace requirement helpers should be added before any convenience allocator.
+
+### Fixed source layout
+
+Backend-specific implementation moves under `src/fixed/` in a separate
+mechanical stage:
+
+```text
+src/fixed/
+    flatten.rs
+    raster.rs
+    stroke.rs
+    tile.rs
+    tests.rs
+```
+
+Shared `geometry`, `edge`, `coverage`, `color`, `sampler` traits, and compositor
+adapters remain outside that directory. Existing public paths
+(`raster_fixed`, `stroke_fixed`, `flatten_fixed`, and `tile_fixed`) are
+preserved initially by thin re-export modules, so source organization does not
+silently become an unrelated API break. Once the facade is established, a
+pre-1.0 cleanup may expose a coherent `fixed` module and deprecate the old
+paths deliberately.
+
+### Engineering gates for the facade
+
+- Add API-level golden tests that render the same scenes through the facade and
+  low-level functions; exact output must match.
+- Add f32/fixed differential tests for shared fill/stroke state and clipping.
+- Keep static dispatch and inspect benchmark deltas; facade calls should inline
+  to the existing pipeline with no allocation and no measurable steady-state
+  overhead.
+- Fuzz state transitions, malformed paths, capacity errors, and save/restore
+  underflow separately from raster geometry fuzzing.
+- Document which fixed methods are completely no-FPU. Do not let an encoded
+  compatibility sampler or f32 rectangle clip weaken that claim implicitly.
+- Treat workspace structs and exhaustive error enums as pre-1.0 API until
+  sizing helpers, MSRV CI, 32-bit builds, real MCU builds, and code-size
+  measurements are in release gates.
