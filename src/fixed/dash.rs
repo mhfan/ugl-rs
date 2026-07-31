@@ -9,6 +9,17 @@ use crate::{dash::{DashCounter, DashError, DashOutput, DashRequirements, DashWor
     Empty, NonPositiveLength, CycleOverflow, SlotCountOverflow,
 }
 
+/// Validated fixed-point dash lengths and normalized phase.
+///
+/// ```
+/// use ugl_rs::fixed::{Scalar, dash::{Pattern, PatternError}};
+///
+/// let lengths = [Scalar::from_num(2), Scalar::from_num(1), Scalar::from_num(3)];
+/// let pattern = Pattern::new(&lengths, Scalar::from_num(-1)).unwrap();
+/// assert_eq!(pattern.cycle(), Scalar::from_num(12));
+/// assert_eq!(pattern.phase(), Scalar::from_num(11));
+/// assert_eq!(Pattern::new(&[], Scalar::ZERO).unwrap_err(), PatternError::Empty);
+/// ```
 #[derive(Clone, Copy, Debug)] pub struct Pattern<'a> {
     lengths: &'a [Scalar], phase: i32, cycle: i32, slots: usize,
 }
@@ -158,6 +169,7 @@ use crate::dash::{DashContour, DashError, DashPattern as ReferencePattern,
     dash_requirements};
 use alloc::vec::Vec;
 use crate::fixed::{DEVICE_RAW_LIMIT, Scalar};
+use crate::test_support::Random;
 
 fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->
     Result<Vec<Vec<Point>>, DashError> {
@@ -241,27 +253,24 @@ fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->
 
 
     #[test] fn randomized_f32_and_fixed_dash_outputs_remain_bounded() {
-        let mut state = 0x4d59_5df4_d0f3_3173_u64;
-        let mut random = || {
-            state ^= state << 13; state ^= state >> 7; state ^= state << 17; state
-        };
+        let mut random = Random::new(0x4d59_5df4_d0f3_3173);
         for case in 0..256 {
             let mut float_points: Vec<Point> = Vec::new();
             for _ in 0..8 {
-                let x = (random() % 129) as i32 - 64;
-                let y = (random() % 129) as i32 - 64;
+                let x = (random.next_u32() % 129) as i32 - 64;
+                let y = (random.next_u32() % 129) as i32 - 64;
                 float_points.push((x as f32, y as f32).into());
             }
             let fixed_points: Vec<_> = float_points.iter().map(|point|
                 (Scalar::from_num(point.x), Scalar::from_num(point.y)).into())
                 .collect();
             let lengths = [
-                (random() % 8 + 1) as f32,
-                (random() % 8 + 1) as f32,
-                (random() % 8 + 1) as f32,
+                (random.next_u32() % 8 + 1) as f32,
+                (random.next_u32() % 8 + 1) as f32,
+                (random.next_u32() % 8 + 1) as f32,
             ];
             let fixed_lengths = lengths.map(Scalar::from_num);
-            let phase = (random() % 33) as i32 - 16;
+            let phase = (random.next_u32() % 33) as i32 - 16;
             let closed = case & 1 != 0;
             let (mut float_output, mut float_contours) =
                 ([Point::default(); 2048], [DashContour::default(); 1024]);

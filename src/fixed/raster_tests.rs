@@ -3,6 +3,8 @@ use super::*;
 use alloc::{vec, vec::Vec};
 use core::convert::Infallible;
 use crate::analytic::{AnalyticIntersection, AnalyticWorkspace, rasterize_edges_analytic};
+use crate::test_support::{
+    RECTANGLE_COVERAGE_CASES, Random, assert_coverage_near, polygon_edges};
 
 fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }
 
@@ -50,16 +52,15 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn rasterizer_renders_aligned_and_fractional_rectangles() {
-    let rectangle = |left, right| [
-        Edge { upper: (fixed(left), fixed(0.0)).into(),
-                lower: (fixed(left), fixed(1.0)).into(), winding: 1,
-        },
-        Edge { upper: (fixed(right), fixed(0.0)).into(),
-                lower: (fixed(right), fixed(1.0)).into(), winding: -1,
-        },
-    ];
-    assert_eq!(render(&rectangle(1.0, 3.0), 4, 1, FillRule::NonZero), [0, 255, 255, 0]);
-    assert_eq!(render(&rectangle(0.5, 1.5), 2, 1, FillRule::NonZero), [128, 128]);
+    for case in RECTANGLE_COVERAGE_CASES {
+        let rectangle = [
+            Edge { upper: (Scalar::from_bits(case.left_raw), Scalar::ZERO).into(),
+                lower: (Scalar::from_bits(case.left_raw), Scalar::ONE).into(), winding: 1 },
+            Edge { upper: (Scalar::from_bits(case.right_raw), Scalar::ZERO).into(),
+                lower: (Scalar::from_bits(case.right_raw), Scalar::ONE).into(), winding: -1 },
+        ];
+        assert_eq!(render(&rectangle, case.width, 1, FillRule::NonZero), case.expected);
+    }
 }
 
 #[test] fn rasterizer_supports_both_fill_rules_end_to_end() {
@@ -73,40 +74,23 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn triangles_track_the_f32_analytic_reference() {
-    let mut state = 0x8f31_7a2d_u32;
-    let mut random_raw = || {
-        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        (state % (7 * SUBPIXEL_SCALE)) as i32 - SUBPIXEL_SCALE as i32
-    };
+    let mut random = Random::new(0x8f31_7a2d);
     for case in 0..512 {
-        let points = [
-            (Scalar::from_bits(random_raw()),
-                Scalar::from_bits(random_raw())).into(),
-            (Scalar::from_bits(random_raw()),
-                Scalar::from_bits(random_raw())).into(),
-            (Scalar::from_bits(random_raw()),
-                Scalar::from_bits(random_raw())).into(),
-        ];
-        let mut fixed_edges = Vec::new();
-        for index in 0..3 {
-            if let Some(edge) = Edge::from_line(points[index], points[(index + 1) % 3]) {
-                fixed_edges.push(edge);
-            }
-        }
+        let points: [Point<Scalar>; 3] = core::array::from_fn(|_| (
+            Scalar::from_bits((random.next_u32() % (7 * SUBPIXEL_SCALE)) as i32 -
+                SUBPIXEL_SCALE as i32),
+            Scalar::from_bits((random.next_u32() % (7 * SUBPIXEL_SCALE)) as i32 -
+                SUBPIXEL_SCALE as i32)).into());
+        let fixed_edges = polygon_edges(&points);
         let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
             upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
             lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
             winding: edge.winding,
         }).collect();
-        let (fixed_pixels, float_pixels) = (
-            render(&fixed_edges, 6, 6, FillRule::NonZero),
-            render_analytic(&float_edges, 6, 6, FillRule::NonZero),
-        );
-        for (pixel, (fixed, reference)) in
-            fixed_pixels.iter().zip(&float_pixels).enumerate() {
-            assert!(fixed.abs_diff(*reference) <= 2,
-                "case {case}, pixel {pixel}: fixed={fixed}, f32={reference}");
-        }
+        assert_coverage_near(
+            &render(&fixed_edges, 6, 6, FillRule::NonZero),
+            &render_analytic(&float_edges, 6, 6, FillRule::NonZero),
+            2, format_args!("triangle case {case}"));
     }
 }
 
@@ -117,27 +101,17 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     for (case, points) in scenes.into_iter().enumerate() {
         let points = points.map(|(x, y)|
             (Scalar::from_bits(x), Scalar::from_bits(y)).into());
-        let mut fixed_edges = Vec::new();
-        for index in 0..points.len() {
-            if let Some(edge) = Edge::from_line(points[index],
-                points[(index + 1) % points.len()]) {
-                fixed_edges.push(edge);
-            }
-        }
+        let fixed_edges = polygon_edges(&points);
         let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
             upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
             lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
             winding: edge.winding,
         }).collect();
         for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
-            let fixed_pixels = render(&fixed_edges, 3, 3, fill_rule);
-            let float_pixels = render_analytic(&float_edges, 3, 3, fill_rule);
-            for (pixel, (fixed, reference)) in
-                fixed_pixels.iter().zip(&float_pixels).enumerate() {
-                assert!(fixed.abs_diff(*reference) <= 2,
-                    "case {case}, pixel {pixel}, {fill_rule:?}: \
-                        fixed={fixed}, f32={reference}");
-            }
+            assert_coverage_near(
+                &render(&fixed_edges, 3, 3, fill_rule),
+                &render_analytic(&float_edges, 3, 3, fill_rule),
+                2, format_args!("self-intersection case {case}, {fill_rule:?}"));
         }
     }
 }
@@ -150,35 +124,24 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn randomized_quadrilaterals_track_the_f32_reference() {
-    let mut state = 0xd431_72a9_u32;
-    let mut coordinate = || {
-        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        Scalar::from_bits((state % 2048) as i32 - 256)
-    };
+    let mut random = Random::new(0xd431_72a9);
     for case in 0..256 {
         let points: [Point<Scalar>; 4] =
-            core::array::from_fn(|_| (coordinate(), coordinate()).into());
-        let mut fixed_edges = Vec::new();
-        for index in 0..points.len() {
-            if let Some(edge) = Edge::from_line(points[index],
-                points[(index + 1) % points.len()]) {
-                fixed_edges.push(edge);
-            }
-        }
+            core::array::from_fn(|_| (
+                Scalar::from_bits((random.next_u32() % 2048) as i32 - 256),
+                Scalar::from_bits((random.next_u32() % 2048) as i32 - 256)).into());
+        let fixed_edges = polygon_edges(&points);
         let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
             upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
             lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
             winding: edge.winding,
         }).collect();
         for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
-            let fixed_pixels = render(&fixed_edges, 6, 6, fill_rule);
-            let float_pixels = render_analytic(&float_edges, 6, 6, fill_rule);
-            for (pixel, (fixed, reference)) in
-                fixed_pixels.iter().zip(&float_pixels).enumerate() {
-                assert!(fixed.abs_diff(*reference) <= 2,
-                    "case {case}, pixel {pixel}, {fill_rule:?}, points={points:?}: \
-                        fixed={fixed}, f32={reference}");
-            }
+            assert_coverage_near(
+                &render(&fixed_edges, 6, 6, fill_rule),
+                &render_analytic(&float_edges, 6, 6, fill_rule),
+                2, format_args!(
+                    "quadrilateral case {case}, {fill_rule:?}, points={points:?}"));
         }
     }
 }

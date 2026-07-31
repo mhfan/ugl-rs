@@ -22,3 +22,5 @@ pub mod context;
 pub mod edge;
 
 #[cfg(feature = "fixed")] pub mod fixed;
+
+#[cfg(test)] mod test_support;

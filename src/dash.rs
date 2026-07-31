@@ -8,6 +8,19 @@ use crate::geometry::{Point, Scalar};
 }
 
 /// Validated alternating on/off lengths and starting phase.
+///
+/// Odd-length arrays are repeated to preserve alternating on/off parity, and
+/// negative phases are normalized into the resulting cycle:
+///
+/// ```
+/// use ugl_rs::dash::{DashPattern, DashPatternError};
+///
+/// let pattern = DashPattern::new(&[2.0, 1.0, 3.0], -1.0).unwrap();
+/// assert_eq!((pattern.cycle(), pattern.phase()), (12.0, 11.0));
+/// assert_eq!(DashPattern::new(&[], 0.0).unwrap_err(), DashPatternError::Empty);
+/// assert_eq!(DashPattern::new(&[1.0, 0.0], 0.0).unwrap_err(),
+///     DashPatternError::NonPositiveLength);
+/// ```
 #[derive(Clone, Copy, Debug)] pub struct DashPattern<'a> {
     lengths: &'a [f32], phase: f32, cycle: f32, slots: usize,
 }
@@ -363,15 +376,6 @@ impl<T: Copy + PartialEq> DashOutput<Point<T>> for DashWriter<'_, T> {
         let mut workspace = DashWorkspace { points: &mut output, contours: &mut contours };
         let dashed = dash_polyline(points, closed, pattern, &mut workspace)?;
         Ok(dashed.contours().map(|(points, _)| points.to_vec()).collect())
-    }
-
-    #[test] fn validates_pattern_and_normalizes_phase() {
-        assert_eq!(DashPattern::new(&[], 0.0).unwrap_err(), DashPatternError::Empty);
-        assert_eq!(DashPattern::new(&[1.0, 0.0], 0.0).unwrap_err(),
-            DashPatternError::NonPositiveLength);
-        let pattern = DashPattern::new(&[2.0, 1.0, 3.0], -1.0).unwrap();
-        assert_eq!(pattern.cycle(), 12.0);
-        assert_eq!(pattern.phase(), 11.0);
     }
 
     #[test] fn open_polyline_preserves_vertices_inside_on_intervals() {

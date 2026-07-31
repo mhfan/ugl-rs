@@ -29,6 +29,15 @@ impl<T> Point<T> { pub const fn new(x: T, y: T) -> Self { Self { x, y } } }
 impl<T> From<(T, T)> for Point<T> { fn from((x, y): (T, T)) -> Self { Self::new(x, y) } }
 
 /// Axis-aligned rectangle with ordered, finite-or-orderable boundaries.
+///
+/// ```
+/// use ugl_rs::geometry::Rect;
+///
+/// let rect = Rect::from_ltrb(1.0, 2.0, 3.0, 4.0).unwrap();
+/// assert_eq!((rect.min(), rect.max()), ((1.0, 2.0).into(), (3.0, 4.0).into()));
+/// assert!(Rect::from_ltrb(3.0, 2.0, 1.0, 4.0).is_none());
+/// assert!(Rect::from_ltrb(1.0, f32::NAN, 3.0, 4.0).is_none());
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Rect<T = Scalar> { min: Point<T>, max: Point<T> }
@@ -62,6 +71,18 @@ impl<T> Rect<T> where T: Copy + PartialOrd {
 /// A 2D affine transform using column-vector convention.
 ///
 /// `x' = a*x + c*y + e`, `y' = b*x + d*y + f`.
+///
+/// ```
+/// use ugl_rs::geometry::Affine;
+///
+/// let transform = Affine::new(2.0, 0.5, -1.0, 3.0, 4.0, -2.0);
+/// assert_eq!(transform.transform_point((3.0, 2.0).into()), (8.0, 5.5).into());
+/// assert_eq!(transform.transform_vector((3.0, 2.0).into()), (4.0, 7.5).into());
+/// let restored = transform.inverse().unwrap()
+///     .transform_point(transform.transform_point((3.0, 2.0).into()));
+/// assert!((restored.x - 3.0).abs() < 1e-6 && (restored.y - 2.0).abs() < 1e-6);
+/// assert!(Affine::new(1.0, 2.0, 2.0, 4.0, 0.0, 0.0).inverse().is_none());
+/// ```
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct Affine<T = Scalar> {
     pub a: T, pub b: T, pub c: T, pub d: T, pub e: T, pub f: T,
@@ -181,6 +202,37 @@ impl core::fmt::Display for PathError {
     }
 }
 
+/// Builds paths while ensuring every drawing command has an active subpath.
+///
+/// A drawing command on an empty builder starts at its destination, and
+/// repeated [`close`](Self::close) calls are idempotent:
+///
+/// ```
+/// use ugl_rs::geometry::{PathBuilder, PathSegment};
+///
+/// let mut path = PathBuilder::<f32>::new();
+/// path.close().line_to((1.0, 2.0));
+/// assert_eq!(path.build().segments(),
+///     &[PathSegment::MoveTo((1.0, 2.0).into())]);
+///
+/// let mut path = PathBuilder::<f32>::new();
+/// path.move_to((0.0, 0.0)).line_to((1.0, 0.0)).close().close();
+/// assert_eq!(path.build().segments(), &[
+///     PathSegment::MoveTo((0.0, 0.0).into()),
+///     PathSegment::LineTo((1.0, 0.0).into()),
+///     PathSegment::Close,
+/// ]);
+///
+/// let mut path = PathBuilder::<f32>::new();
+/// path.quad_to((1.0, 1.0), (2.0, 2.0));
+/// assert_eq!(path.build().segments(),
+///     &[PathSegment::MoveTo((2.0, 2.0).into())]);
+///
+/// let mut path = PathBuilder::<f32>::new();
+/// path.cubic_to((1.0, 1.0), (2.0, 2.0), (3.0, 3.0));
+/// assert_eq!(path.build().segments(),
+///     &[PathSegment::MoveTo((3.0, 3.0).into())]);
+/// ```
 #[derive(Clone, Debug, Default)] pub struct PathBuilder<T = Scalar> {
     segments: Vec<PathSegment<T>>, has_current_subpath: bool,
 }
@@ -269,47 +321,6 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
 #[cfg(test)] mod tests { use super::*;
     #[cfg(feature = "fixed")]
     use crate::fixed::{Scalar as DeviceScalar, TransformError};
-    #[test] fn affine_uses_documented_column_vector_convention() {
-        let transform = Affine::new(2.0, 0.5, -1.0, 3.0, 4.0, -2.0);
-        assert_eq!(transform.transform_point((3.0, 2.0).into()), (8.0, 5.5).into());
-        assert_eq!(transform.transform_vector((3.0, 2.0).into()), (4.0, 7.5).into());
-        let restored = transform.inverse().unwrap()
-            .transform_point(transform.transform_point((3.0, 2.0).into()));
-        assert!((restored.x - 3.0).abs() < 1e-6 && (restored.y - 2.0).abs() < 1e-6);
-        assert!(Affine::new(1.0, 2.0, 2.0, 4.0, 0.0, 0.0).inverse().is_none());
-    }
-
-    #[test] fn rectangles_reject_unordered_and_non_finite_boundaries() {
-        assert_eq!(Rect::from_ltrb(1.0, 2.0, 3.0, 4.0).map(|rect|
-            (rect.min(), rect.max())), Some(((1.0, 2.0).into(), (3.0, 4.0).into())));
-        assert_eq!(Rect::from_ltrb(3.0, 2.0, 1.0, 4.0), None);
-        assert_eq!(Rect::from_ltrb(1.0, f32::NAN, 3.0, 4.0), None);
-    }
-
-    #[test] fn path_builder_starts_missing_subpaths_and_closes_idempotently() {
-        let mut builder = PathBuilder::<f32>::new();
-        builder.close().line_to((1.0, 2.0));
-        assert_eq!(builder.build().segments(),
-            &[PathSegment::MoveTo((1.0, 2.0).into())]);
-
-        let mut builder = PathBuilder::<f32>::new();
-        builder.move_to((0.0, 0.0)).line_to((1.0, 0.0));
-        builder.close().close();
-        assert_eq!(builder.build().segments(), &[
-            PathSegment::MoveTo((0.0, 0.0).into()),
-            PathSegment::LineTo((1.0, 0.0).into()),
-            PathSegment::Close,
-        ]);
-
-        let mut quad = PathBuilder::<f32>::new();
-        quad.quad_to((1.0, 1.0), (2.0, 2.0));
-        assert_eq!(quad.build().segments(), &[PathSegment::MoveTo((2.0, 2.0).into())]);
-
-        let mut cubic = PathBuilder::<f32>::new();
-        cubic.cubic_to((1.0, 1.0), (2.0, 2.0), (3.0, 3.0));
-        assert_eq!(cubic.build().segments(), &[PathSegment::MoveTo((3.0, 3.0).into())]);
-    }
-
     #[test] fn path_can_borrow_static_or_fixed_capacity_segments() {
         let segments = [
             PathSegment::MoveTo((0_i32, 0_i32).into()),

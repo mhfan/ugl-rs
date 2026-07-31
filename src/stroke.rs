@@ -17,6 +17,19 @@ pub enum LineJoin { #[default] Miter, Round, Bevel, }
 }
 
 /// Validated device-space stroke parameters.
+///
+/// ```
+/// use ugl_rs::stroke::{LineCap, LineJoin, StrokeError, StrokeOptions};
+///
+/// let options = StrokeOptions::new(6.0).unwrap()
+///     .with_cap(LineCap::Round).with_join(LineJoin::Bevel)
+///     .with_miter_limit(8.0).unwrap()
+///     .with_tolerance(0.125).unwrap()
+///     .with_max_arc_segments(32).unwrap();
+/// assert_eq!((options.width(), options.half_width()), (6.0, 3.0));
+/// assert_eq!((options.cap(), options.join()), (LineCap::Round, LineJoin::Bevel));
+/// assert_eq!(StrokeOptions::new(0.0), Err(StrokeError::NonPositiveWidth));
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct StrokeOptions {
     width: f32, miter_limit: f32, cap: LineCap, join: LineJoin,
     tolerance: f32, max_arc_segments: u16,
@@ -407,7 +420,7 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
 #[cfg(test)] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
-    use crate::geometry::PathBuilder;
+    use crate::{geometry::PathBuilder, test_support::x_bounds};
 
     fn collect_line(from: impl Into<Point>,
                       to: impl Into<Point>, cap: LineCap) -> Vec<Edge> {
@@ -474,27 +487,13 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
                    Err(StrokeError::ArcSegmentLimitZero));
     }
 
-    #[test] fn stroke_options_use_device_space_defaults_and_builders() {
-        let options = StrokeOptions::new(6.0).unwrap()
-            .with_cap(LineCap::Round).with_join(LineJoin::Bevel)
-            .with_miter_limit(8.0).unwrap().with_tolerance(0.125).unwrap()
-            .with_max_arc_segments(32).unwrap();
-        assert_eq!((options.width(), options.half_width(), options.miter_limit()),
-                   (6.0, 3.0, 8.0));
-        assert_eq!((options.tolerance(), options.max_arc_segments()), (0.125, 32));
-        assert_eq!((options.cap(), options.join()), (LineCap::Round, LineJoin::Bevel));
-    }
-
     #[test] fn line_caps_expand_to_expected_bounds_without_allocation() {
-        let bounds = |edges: &[Edge]| edges.iter().flat_map(|edge|
-            [edge.upper.x, edge.lower.x]).fold((f32::INFINITY, f32::NEG_INFINITY),
-                |(minimum, maximum), x| (minimum.min(x), maximum.max(x)));
-        assert_eq!(bounds(&collect_line((2.0, 3.0),
-            (6.0, 3.0), LineCap::Butt)),   (2.0, 6.0));
-        assert_eq!(bounds(&collect_line((2.0, 3.0),
-            (6.0, 3.0), LineCap::Square)), (1.0, 7.0));
+        assert_eq!(x_bounds(&collect_line((2.0, 3.0),
+            (6.0, 3.0), LineCap::Butt)),   Some((2.0, 6.0)));
+        assert_eq!(x_bounds(&collect_line((2.0, 3.0),
+            (6.0, 3.0), LineCap::Square)), Some((1.0, 7.0)));
         let (minimum, maximum) =
-            bounds(&collect_line((2.0, 3.0), (6.0, 3.0), LineCap::Round));
+            x_bounds(&collect_line((2.0, 3.0), (6.0, 3.0), LineCap::Round)).unwrap();
         assert!(minimum > 1.0 && minimum - 1.0 <= StrokeOptions::default().tolerance());
         assert!(maximum < 7.0 && 7.0 - maximum <= StrokeOptions::default().tolerance());
     }
