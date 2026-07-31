@@ -234,6 +234,11 @@ and SIMD layouts do not enter the common `Edge` representation.
   spans do not amortize packing or deinterleaving. Revisit SIMD with long
   batches or a structure-of-arrays tile working buffer, not as a per-pixel
   substitution.
+- The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
+  The canonical rectangle scene has one-pixel boundary runs around 16–21-pixel
+  interiors; full-coverage runs contain about 83% of covered pixels. Future
+  batching should leave boundary runs scalar and measure layout conversion
+  only on full interior runs.
 
 ## Strokes
 

@@ -5,7 +5,8 @@ use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWork
         analytic_bin_requirements, build_analytic_row_bins, rasterize_edges_analytic_binned},
     color::{EncodedPremulSRGBA8, LinearPremulRGBA, Srgb8Encoder,
         SRGB8_ENCODE_LUT_SIZE, SRGBA, RGBA},
-    edge::Edge, raster::{FillRule, Intersection},
+    edge::{Edge, build_fill_edges}, flatten::FlattenOptions,
+    raster::{CoverageSink, FillRule, Intersection},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, RenderOptions, RenderWorkspace,
         render_solid, render_solid_analytic, render_stroke_solid_analytic,
@@ -19,6 +20,10 @@ use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWork
         flatten_stroke_path, stroke_polyline},
 };
 #[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
+#[derive(Default)] struct SpanStatistics {
+    runs: u32, pixels: u32, full_runs: u32, full_pixels: u32,
+    maximum_len: u32, length_buckets: [u32; 6],
+}
 struct PointLinearSampler<'a, S>(&'a S);
 struct CompositeLinearSampler<'a, S>(&'a S);
 
@@ -38,11 +43,29 @@ impl<S: LinearPaintSampler> LinearPaintSampler for CompositeLinearSampler<'_, S>
     }
 }
 
-impl ugl_rs::raster::CoverageSink for RunCounter {
+impl CoverageSink for RunCounter {
     type Error = core::convert::Infallible;
     fn span(&mut self, _x: u32, _y: u32, len: u32, _coverage: u8) ->
         Result<(), Self::Error> {
         self.runs += 1;  self.pixels += len;  Ok(())
+    }
+}
+
+impl CoverageSink for SpanStatistics {
+    type Error = core::convert::Infallible;
+    fn span(&mut self, _x: u32, _y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        self.runs += 1;  self.pixels += len;
+        if coverage == u8::MAX {
+            self.full_runs += 1;
+            self.full_pixels += len;
+        }
+        self.maximum_len = self.maximum_len.max(len);
+        self.length_buckets[match len {
+            0..=1 => 0, 2..=3 => 1, 4..=7 => 2,
+            8..=15 => 3, 16..=31 => 4, _ => 5,
+        }] += 1;
+        Ok(())
     }
 }
 
@@ -61,8 +84,41 @@ fn rectangle_scene() -> Path {
     }   path.build()
 }
 
+fn report_span_statistics(path: &Path) {
+    if std::env::var_os("UGL_SPAN_STATS").is_none() { return; }
+    let mut edges = Vec::with_capacity(EDGE_CAPACITY);
+    build_fill_edges(path, Affine::identity(), FlattenOptions::default(),
+        &mut |edge| {
+            edges.push(edge);
+            Ok::<_, core::convert::Infallible>(())
+        }).unwrap();
+    let requirements = analytic_bin_requirements(&edges, HEIGHT).unwrap();
+    let (mut offsets, mut indices) =
+        (vec![0; requirements.offsets], vec![0; requirements.indices]);
+    let bins = build_analytic_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
+        row_offsets: &mut offsets, edge_indices: &mut indices,
+    }).unwrap();
+    let (mut active, mut row, mut stats) = (
+        vec![AnalyticIntersection::default(); edges.len()],
+        vec![0.0; WIDTH as usize], SpanStatistics::default(),
+    );
+    rasterize_edges_analytic_binned(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+        &mut AnalyticWorkspace {
+            intersections: &mut active, row_coverage: &mut row,
+        }, &mut stats).unwrap();
+    let mean = stats.pixels as f64 / stats.runs as f64;
+    eprintln!("span statistics: runs={}, pixels={}, mean_len={mean:.2}, max_len={}, \
+        full_runs={} ({:.1}%), full_pixels={} ({:.1}%), \
+        len[1,2-3,4-7,8-15,16-31,32+]={:?}",
+        stats.runs, stats.pixels, stats.maximum_len,
+        stats.full_runs, stats.full_runs as f64 * 100.0 / stats.runs as f64,
+        stats.full_pixels, stats.full_pixels as f64 * 100.0 / stats.pixels as f64,
+        stats.length_buckets);
+}
+
 fn benchmark_f32(c: &mut Criterion) {
     let path = rectangle_scene();
+    report_span_statistics(&path);
     let mut group = c.benchmark_group("raster_rgba8888");
     let mut pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));

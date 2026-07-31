@@ -81,6 +81,13 @@ Run the scalar rasterizer comparison with:
 cargo bench --bench raster --all-features
 ```
 
+Set `UGL_SPAN_STATS=1` to print the canonical scene's non-timed analytic span
+distribution. A filter which selects no benchmark avoids running Criterion:
+
+```text
+UGL_SPAN_STATS=1 cargo bench --bench raster --all-features -- '^$'
+```
+
 Run only the paint-sampler comparison with:
 
 ```text
@@ -175,6 +182,12 @@ scalar kernel (about 116.6 µs for channel-vector packing and 124.5 µs for four
 interleaved pixels), so neither was retained. SIMD is deferred until spans are
 long enough to amortize layout conversion or a tile-local structure-of-arrays
 working buffer exists.
+
+The canonical scene currently emits 4,416 runs covering 33,856 pixels. Mean
+run length is 7.67 pixels: 2,944 runs are one-pixel antialiasing boundaries and
+1,472 are 16–31 pixels long (maximum 21). Although only 30.4% of runs have full
+coverage, they contain 83.4% of covered pixels. This supports specialized
+full-coverage kernels, but not converting every short boundary run to SoA.
 
 These are scalar reference costs, not optimized paint targets. In particular,
 the general radial sampler performs stable two-circle root solving per pixel;
