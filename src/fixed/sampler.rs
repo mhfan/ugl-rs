@@ -4,7 +4,7 @@ use crate::{color::PremulSRGBA8, geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar,
     sampler::{GradientError, SolidPaint, SpreadMode}};
 use super::math::{cordic_turn, integer_sqrt_u64, scaled_integer_sqrt};
 
-pub use super::math::FixedAngle;
+pub use super::math::Angle;
 
 /// Produces encoded premultiplied sRGB at integer device-pixel coordinates.
 ///
@@ -12,38 +12,38 @@ pub use super::math::FixedAngle;
 /// floating-point arithmetic. This is separate from `PaintSampler` so a fixed
 /// raster pipeline never silently calls an `f32` sampler.
 pub trait FixedPaintSampler {
-    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8;
-    fn solid_color_fixed(&self) -> Option<PremulSRGBA8> { None }
+    fn sample(&self, x: u32, y: u32) -> PremulSRGBA8;
+    fn solid_color(&self) -> Option<PremulSRGBA8> { None }
 }
 
 impl<S: FixedPaintSampler + ?Sized> FixedPaintSampler for &S {
-    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8 {
-        (**self).sample_fixed(x, y)
+    fn sample(&self, x: u32, y: u32) -> PremulSRGBA8 {
+        (**self).sample(x, y)
     }
-    fn solid_color_fixed(&self) -> Option<PremulSRGBA8> {
-        (**self).solid_color_fixed()
+    fn solid_color(&self) -> Option<PremulSRGBA8> {
+        (**self).solid_color()
     }
 }
 
 impl FixedPaintSampler for SolidPaint {
-    fn sample_fixed(&self, _x: u32, _y: u32) -> PremulSRGBA8 { self.color() }
-    fn solid_color_fixed(&self) -> Option<PremulSRGBA8> { Some(self.color()) }
+    fn sample(&self, _x: u32, _y: u32) -> PremulSRGBA8 { self.color() }
+    fn solid_color(&self) -> Option<PremulSRGBA8> { Some(self.color()) }
 }
 
 /// Allocation-free, no-FPU linear gradient over a caller-provided encoded ramp.
 ///
 /// Geometry is Q24.8. Projection and ramp selection use exact widened integer
 /// arithmetic; the selected ramp entry is nearest to the mapped parameter.
-#[derive(Clone, Copy, Debug)] pub struct FixedLinearGradient<'a> {
+#[derive(Clone, Copy, Debug)] pub struct LinearGradient<'a> {
     from: [i32; 2], delta: [i64; 2], length_squared: i128,
     ramp: &'a [PremulSRGBA8], spread: SpreadMode,
 }
 
-impl<'a> FixedLinearGradient<'a> {
+impl<'a> LinearGradient<'a> {
     pub fn new(from: impl Into<Point<FixedScalar>>, to: impl Into<Point<FixedScalar>>,
         ramp: &'a [PremulSRGBA8], spread: SpreadMode) ->
         Result<Self, GradientError> {
-        validate_fixed_ramp(ramp)?;
+        validate_ramp(ramp)?;
         let (from, to) = (from.into(), to.into());
         let from = [from.x.to_bits(), from.y.to_bits()];
         let delta = [
@@ -68,12 +68,12 @@ impl<'a> FixedLinearGradient<'a> {
         ];
         let parameter = point[0] * self.delta[0] as i128 +
                         point[1] * self.delta[1] as i128;
-        fixed_ramp_index(parameter, self.length_squared, self.ramp.len(), self.spread)
+        ramp_index(parameter, self.length_squared, self.ramp.len(), self.spread)
     }
 }
 
-impl FixedPaintSampler for FixedLinearGradient<'_> {
-    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8 {
+impl FixedPaintSampler for LinearGradient<'_> {
+    fn sample(&self, x: u32, y: u32) -> PremulSRGBA8 {
         self.ramp[self.ramp_index(x, y)]
     }
 }
@@ -82,13 +82,13 @@ impl FixedPaintSampler for FixedLinearGradient<'_> {
 ///
 /// Geometry uses Q24.8 within [`FIXED_DEVICE_RAW_LIMIT`]. Root solving,
 /// spread, and ramp mapping use widened integer arithmetic.
-#[derive(Clone, Copy, Debug)] pub struct FixedRadialGradient<'a> {
+#[derive(Clone, Copy, Debug)] pub struct RadialGradient<'a> {
     start: [i32; 2], center_delta: [i64; 2],
     start_radius: i64, radius_delta: i64, quadratic: i128,
     ramp: &'a [PremulSRGBA8], spread: SpreadMode,
 }
 
-impl<'a> FixedRadialGradient<'a> {
+impl<'a> RadialGradient<'a> {
     /// Creates a concentric gradient from radius zero to `radius`.
     pub fn new(center: impl Into<Point<FixedScalar>>, radius: FixedScalar,
         ramp: &'a [PremulSRGBA8], spread: SpreadMode) ->
@@ -111,7 +111,7 @@ impl<'a> FixedRadialGradient<'a> {
         end: impl Into<Point<FixedScalar>>, end_radius: FixedScalar,
         ramp: &'a [PremulSRGBA8], spread: SpreadMode) ->
         Result<Self, GradientError> {
-        validate_fixed_ramp(ramp)?;
+        validate_ramp(ramp)?;
         if start_radius < FixedScalar::ZERO || end_radius < FixedScalar::ZERO {
             return Err(GradientError::NegativeRadius);
         }
@@ -160,7 +160,7 @@ impl<'a> FixedRadialGradient<'a> {
             parameter = -parameter;
             denominator = -denominator;
         }
-        Some(fixed_ramp_index_i64(
+        Some(ramp_index_i64(
             parameter, denominator, self.ramp.len(), self.spread))
     }
 
@@ -205,15 +205,15 @@ impl<'a> FixedRadialGradient<'a> {
     }
 }
 
-impl FixedPaintSampler for FixedRadialGradient<'_> {
-    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8 {
+impl FixedPaintSampler for RadialGradient<'_> {
+    fn sample(&self, x: u32, y: u32) -> PremulSRGBA8 {
         if self.center_delta == [0, 0] {
             return self.concentric_ramp_index(x, y)
                 .map_or_else(PremulSRGBA8::zeroed, |index| self.ramp[index]);
         }
         self.parameter(x, y).map_or_else(PremulSRGBA8::zeroed,
             |(parameter, denominator)| self.ramp[
-                fixed_ramp_index(parameter, denominator, self.ramp.len(), self.spread)])
+                ramp_index(parameter, denominator, self.ramp.len(), self.spread)])
     }
 }
 
@@ -226,18 +226,18 @@ fn normalize_ratio(mut numerator: i128, mut denominator: i128) -> Option<(i128, 
     Some((numerator, denominator))
 }
 
-fn validate_fixed_ramp(ramp: &[PremulSRGBA8]) -> Result<(), GradientError> {
+fn validate_ramp(ramp: &[PremulSRGBA8]) -> Result<(), GradientError> {
     if ramp.len() < 2 { return Err(GradientError::RampTooSmall); }
     if ramp.len() > u32::MAX as usize { return Err(GradientError::RampTooLarge); }
     Ok(())
 }
 
-fn fixed_ramp_index(parameter: i128, denominator: i128, ramp_len: usize,
+fn ramp_index(parameter: i128, denominator: i128, ramp_len: usize,
     spread: SpreadMode) -> usize {
     debug_assert!(denominator > 0);
     if let (Ok(parameter), Ok(denominator)) =
         (i64::try_from(parameter), i64::try_from(denominator)) {
-        return fixed_ramp_index_i64(parameter, denominator, ramp_len, spread);
+        return ramp_index_i64(parameter, denominator, ramp_len, spread);
     }
     let mapped = match spread {
         SpreadMode::Pad => parameter.clamp(0, denominator),
@@ -251,8 +251,8 @@ fn fixed_ramp_index(parameter: i128, denominator: i128, ramp_len: usize,
     ((mapped * scale + denominator / 2) / denominator) as _
 }
 
-/// Narrow equivalent of `fixed_ramp_index` for the concentric radial hot path.
-fn fixed_ramp_index_i64(parameter: i64, denominator: i64, ramp_len: usize,
+/// Narrow equivalent of `ramp_index` for the concentric radial hot path.
+fn ramp_index_i64(parameter: i64, denominator: i64, ramp_len: usize,
     spread: SpreadMode) -> usize {
     debug_assert!(denominator > 0);
     let mapped = match spread {
@@ -268,15 +268,15 @@ fn fixed_ramp_index_i64(parameter: i64, denominator: i64, ramp_len: usize,
 }
 
 /// Allocation-free, no-FPU conic gradient using a 16-step integer CORDIC.
-#[derive(Clone, Copy, Debug)] pub struct FixedConicGradient<'a> {
-    center: [i32; 2], start_angle: FixedAngle,
+#[derive(Clone, Copy, Debug)] pub struct ConicGradient<'a> {
+    center: [i32; 2], start_angle: Angle,
     ramp: &'a [PremulSRGBA8],
 }
 
-impl<'a> FixedConicGradient<'a> {
-    pub fn new(center: impl Into<Point<FixedScalar>>, start_angle: FixedAngle,
+impl<'a> ConicGradient<'a> {
+    pub fn new(center: impl Into<Point<FixedScalar>>, start_angle: Angle,
         ramp: &'a [PremulSRGBA8]) -> Result<Self, GradientError> {
-        validate_fixed_ramp(ramp)?;
+        validate_ramp(ramp)?;
         let center = center.into();
         let center = [center.x.to_bits(), center.y.to_bits()];
         if center.iter().any(|value|
@@ -287,7 +287,7 @@ impl<'a> FixedConicGradient<'a> {
     }
 
     pub fn ramp(&self) -> &'a [PremulSRGBA8] { self.ramp }
-    pub fn start_angle(&self) -> FixedAngle { self.start_angle }
+    pub fn start_angle(&self) -> Angle { self.start_angle }
 
     fn ramp_index(&self, x: u32, y: u32) -> Option<usize> {
         const HALF_PIXEL_RAW: i64 = 1 << 7;
@@ -306,8 +306,8 @@ impl<'a> FixedConicGradient<'a> {
     }
 }
 
-impl FixedPaintSampler for FixedConicGradient<'_> {
-    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8 {
+impl FixedPaintSampler for ConicGradient<'_> {
+    fn sample(&self, x: u32, y: u32) -> PremulSRGBA8 {
         self.ramp_index(x, y).map_or_else(PremulSRGBA8::zeroed,
             |index| self.ramp[index])
     }
@@ -317,8 +317,9 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
     use super::*;
     use super::super::math::{cordic_turn, integer_sqrt};
     use crate::{color::SRGBA, sampler::{
-        ConicGradient, GradientStop, GradientStops, LinearGradient, PaintSampler,
-        RadialGradient,
+        ConicGradient as ReferenceConicGradient, GradientStop, GradientStops,
+        LinearGradient as ReferenceLinearGradient, PaintSampler,
+        RadialGradient as ReferenceRadialGradient,
     }};
 
     const TAU: f32 = core::f32::consts::PI * 2.0;
@@ -337,11 +338,12 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
         let (from, to) = ((FixedScalar::from_num(2), FixedScalar::from_num(0)),
                           (FixedScalar::from_num(10), FixedScalar::from_num(0)));
         for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {
-            let fixed = FixedLinearGradient::new(from, to, ramp, spread).unwrap();
+            let fixed = LinearGradient::new(from, to, ramp, spread).unwrap();
             let reference =
-                LinearGradient::new((2.0, 0.0), (10.0, 0.0), stops, spread).unwrap();
+                ReferenceLinearGradient::new(
+                    (2.0, 0.0), (10.0, 0.0), stops, spread).unwrap();
             for x in 0..32 {
-                assert_eq!(fixed.sample_fixed(x, 3),
+                assert_eq!(fixed.sample(x, 3),
                     reference.sample(x as f32 + 0.5, 3.5), "spread={spread:?}, x={x}");
             }
         }
@@ -350,20 +352,20 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
 
     #[test] fn fixed_linear_gradient_validates_geometry_and_widens_extremes() {
         let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
-        assert_eq!(FixedLinearGradient::new(
+        assert_eq!(LinearGradient::new(
             (FixedScalar::from_num(0), FixedScalar::from_num(0)),
             (FixedScalar::from_num(1), FixedScalar::from_num(0)),
             &ramp[..1], SpreadMode::Pad).unwrap_err(), GradientError::RampTooSmall);
-        assert_eq!(FixedLinearGradient::new(
+        assert_eq!(LinearGradient::new(
             (FixedScalar::from_num(1), FixedScalar::from_num(2)),
             (FixedScalar::from_num(1), FixedScalar::from_num(2)),
             &ramp, SpreadMode::Pad).unwrap_err(), GradientError::DegenerateGeometry);
 
-        let extreme = FixedLinearGradient::new(
+        let extreme = LinearGradient::new(
             (FixedScalar::from_bits(i32::MIN), FixedScalar::from_bits(i32::MIN)),
             (FixedScalar::from_bits(i32::MAX), FixedScalar::from_bits(i32::MAX)),
             &ramp, SpreadMode::Reflect).unwrap();
-        assert!(ramp.contains(&extreme.sample_fixed(u32::MAX, u32::MAX)));
+        assert!(ramp.contains(&extreme.sample(u32::MAX, u32::MAX)));
     }
 
 
@@ -374,12 +376,13 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
         let ramp = stops.encoded_ramp().unwrap();
         let center = (FixedScalar::from_num(8), FixedScalar::from_num(8));
         for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {
-            let fixed = FixedRadialGradient::new(
+            let fixed = RadialGradient::new(
                 center, FixedScalar::from_num(8), ramp, spread).unwrap();
-            let reference = RadialGradient::new((8.0, 8.0), 8.0, stops, spread).unwrap();
+            let reference =
+                ReferenceRadialGradient::new((8.0, 8.0), 8.0, stops, spread).unwrap();
             for y in 0..16 {
                 for x in 0..16 {
-                    let (actual, expected) = (fixed.sample_fixed(x, y),
+                    let (actual, expected) = (fixed.sample(x, y),
                         reference.sample(x as f32 + 0.5, y as f32 + 0.5));
                     let actual = ramp.iter().position(|color| *color == actual).unwrap();
                     let expected = ramp.iter().position(|color| *color == expected).unwrap();
@@ -390,12 +393,12 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
             }
         }
 
-        let fixed = FixedRadialGradient::with_radii(center,
+        let fixed = RadialGradient::with_radii(center,
             FixedScalar::from_num(8), FixedScalar::ZERO, ramp, SpreadMode::Pad).unwrap();
-        let reference = RadialGradient::two_circle(
+        let reference = ReferenceRadialGradient::two_circle(
             (8.0, 8.0), 8.0, (8.0, 8.0), 0.0, stops, SpreadMode::Pad).unwrap();
         for x in 0..16 {
-            let (actual, expected) = (fixed.sample_fixed(x, 8),
+            let (actual, expected) = (fixed.sample(x, 8),
                 reference.sample(x as f32 + 0.5, 8.5));
             let actual = ramp.iter().position(|color| *color == actual).unwrap();
             let expected = ramp.iter().position(|color| *color == expected).unwrap();
@@ -407,10 +410,10 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
     #[test] fn fixed_concentric_radial_validates_radii_and_integer_sqrt() {
         let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
         let center = (FixedScalar::ZERO, FixedScalar::ZERO);
-        assert_eq!(FixedRadialGradient::new(center,
+        assert_eq!(RadialGradient::new(center,
             FixedScalar::from_num(-1), &ramp, SpreadMode::Pad).unwrap_err(),
             GradientError::NegativeRadius);
-        assert_eq!(FixedRadialGradient::with_radii(center,
+        assert_eq!(RadialGradient::with_radii(center,
             FixedScalar::from_num(2), FixedScalar::from_num(2),
             &ramp, SpreadMode::Pad).unwrap_err(), GradientError::DegenerateGeometry);
 
@@ -433,9 +436,10 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
 
 
     #[test] fn fixed_two_circle_radial_matches_quadratic_and_linear_references() {
-        fn assert_close(fixed: &FixedRadialGradient<'_>, reference: &RadialGradient<'_>,
+        fn assert_close(fixed: &RadialGradient<'_>,
+            reference: &ReferenceRadialGradient<'_>,
             ramp: &[PremulSRGBA8], x: u32, y: u32) {
-            let (actual, expected) = (fixed.sample_fixed(x, y),
+            let (actual, expected) = (fixed.sample(x, y),
                 reference.sample(x as f32 + 0.5, y as f32 + 0.5));
             match (ramp.iter().position(|color| *color == actual),
                    ramp.iter().position(|color| *color == expected)) {
@@ -452,30 +456,30 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
         let ramp = stops.encoded_ramp().unwrap();
         let fixed = FixedScalar::from_num;
         for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {
-            let radial = FixedRadialGradient::two_circle(
+            let radial = RadialGradient::two_circle(
                 (fixed(1), fixed(0)), fixed(0), (fixed(0), fixed(0)), fixed(4),
                 ramp, spread).unwrap();
-            let reference = RadialGradient::two_circle(
+            let reference = ReferenceRadialGradient::two_circle(
                 (1.0, 0.0), 0.0, (0.0, 0.0), 4.0, stops, spread).unwrap();
             for y in 0..8 {
                 for x in 0..8 { assert_close(&radial, &reference, ramp, x, y); }
             }
         }
 
-        let tangent = FixedRadialGradient::two_circle(
+        let tangent = RadialGradient::two_circle(
             (fixed(0), fixed(0)), fixed(0), (fixed(1), fixed(0)), fixed(1),
             ramp, SpreadMode::Pad).unwrap();
-        let tangent_reference = RadialGradient::two_circle(
+        let tangent_reference = ReferenceRadialGradient::two_circle(
             (0.0, 0.0), 0.0, (1.0, 0.0), 1.0, stops, SpreadMode::Pad).unwrap();
         for y in 0..4 {
             for x in 0..4 { assert_close(&tangent, &tangent_reference, ramp, x, y); }
         }
 
-        let near_tangent = FixedRadialGradient::two_circle(
+        let near_tangent = RadialGradient::two_circle(
             (fixed(4), fixed(4)), fixed(1),
             (FixedScalar::from_bits(4 * 256 + 257), fixed(4)), fixed(2),
             ramp, SpreadMode::Reflect).unwrap();
-        let near_tangent_reference = RadialGradient::two_circle(
+        let near_tangent_reference = ReferenceRadialGradient::two_circle(
             (4.0, 4.0), 1.0, (5.0 + 1.0 / 256.0, 4.0), 2.0,
             stops, SpreadMode::Reflect).unwrap();
         for y in 0..12 {
@@ -489,22 +493,22 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
     #[test] fn fixed_two_circle_radial_enforces_the_fixed_device_domain() {
         let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
         let fixed = FixedScalar::from_num;
-        assert_eq!(FixedRadialGradient::new(
+        assert_eq!(RadialGradient::new(
             (FixedScalar::from_bits(FIXED_DEVICE_RAW_LIMIT + 1), fixed(0)), fixed(1),
             &ramp, SpreadMode::Pad).unwrap_err(), GradientError::CoordinateOutOfRange);
-        let radial = FixedRadialGradient::new(
+        let radial = RadialGradient::new(
             (fixed(0), fixed(0)), fixed(1), &ramp, SpreadMode::Pad).unwrap();
         let first_outside_pixel = FIXED_DEVICE_RAW_LIMIT as u32 / 256;
-        assert_eq!(radial.sample_fixed(first_outside_pixel, 0),
+        assert_eq!(radial.sample(first_outside_pixel, 0),
             PremulSRGBA8::zeroed());
     }
 
 
     #[test] fn fixed_conic_cordic_tracks_exact_angles_and_encoded_ramp() {
-        assert_eq!(cordic_turn( 1,  0), FixedAngle::ZERO.to_bits());
-        assert_eq!(cordic_turn( 0,  1), FixedAngle::QUARTER_TURN.to_bits());
-        assert_eq!(cordic_turn(-1,  0), FixedAngle::HALF_TURN.to_bits());
-        assert_eq!(cordic_turn( 0, -1), FixedAngle::THREE_QUARTER_TURN.to_bits());
+        assert_eq!(cordic_turn( 1,  0), Angle::ZERO.to_bits());
+        assert_eq!(cordic_turn( 0,  1), Angle::QUARTER_TURN.to_bits());
+        assert_eq!(cordic_turn(-1,  0), Angle::HALF_TURN.to_bits());
+        assert_eq!(cordic_turn( 0, -1), Angle::THREE_QUARTER_TURN.to_bits());
         let mut maximum_error = 0.0_f32;
         for y in -64_i64..=64 {
             for x in -64_i64..=64 {
@@ -524,15 +528,16 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
         let ramp = stops.encoded_ramp().unwrap();
         let fixed = FixedScalar::from_num;
         for (angle, start_angle) in [
-            (FixedAngle::ZERO, 0.0),
-            (FixedAngle::QUARTER_TURN, TAU / 4.0),
+            (Angle::ZERO, 0.0),
+            (Angle::QUARTER_TURN, TAU / 4.0),
         ] {
-            let conic = FixedConicGradient::new(
+            let conic = ConicGradient::new(
                 (fixed(16), fixed(16)), angle, ramp).unwrap();
-            let reference = ConicGradient::new((16.0, 16.0), start_angle, stops).unwrap();
+            let reference =
+                ReferenceConicGradient::new((16.0, 16.0), start_angle, stops).unwrap();
             for y in 0..32 {
                 for x in 0..32 {
-                    let (actual, expected) = (conic.sample_fixed(x, y),
+                    let (actual, expected) = (conic.sample(x, y),
                         reference.sample(x as f32 + 0.5, y as f32 + 0.5));
                     let actual = ramp.iter().position(|color| *color == actual).unwrap();
                     let expected = ramp.iter().position(|color| *color == expected).unwrap();
@@ -547,16 +552,16 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
     #[test] fn fixed_conic_validates_ramp_and_device_domain() {
         let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
         let fixed = FixedScalar::from_num;
-        assert_eq!(FixedAngle::from_turn_fraction(1, 4), Some(FixedAngle::QUARTER_TURN));
-        assert_eq!(FixedAngle::from_turn_fraction(1, 0), None);
-        assert_eq!(FixedConicGradient::new((fixed(0), fixed(0)),
-            FixedAngle::ZERO, &ramp[..1]).unwrap_err(), GradientError::RampTooSmall);
-        assert_eq!(FixedConicGradient::new(
+        assert_eq!(Angle::from_turn_fraction(1, 4), Some(Angle::QUARTER_TURN));
+        assert_eq!(Angle::from_turn_fraction(1, 0), None);
+        assert_eq!(ConicGradient::new((fixed(0), fixed(0)),
+            Angle::ZERO, &ramp[..1]).unwrap_err(), GradientError::RampTooSmall);
+        assert_eq!(ConicGradient::new(
             (FixedScalar::from_bits(FIXED_DEVICE_RAW_LIMIT + 1), fixed(0)),
-            FixedAngle::ZERO, &ramp).unwrap_err(), GradientError::CoordinateOutOfRange);
-        let conic = FixedConicGradient::new(
-            (fixed(0), fixed(0)), FixedAngle::ZERO, &ramp).unwrap();
-        assert_eq!(conic.sample_fixed(FIXED_DEVICE_RAW_LIMIT as u32 / 256, 0),
+            Angle::ZERO, &ramp).unwrap_err(), GradientError::CoordinateOutOfRange);
+        let conic = ConicGradient::new(
+            (fixed(0), fixed(0)), Angle::ZERO, &ramp).unwrap();
+        assert_eq!(conic.sample(FIXED_DEVICE_RAW_LIMIT as u32 / 256, 0),
             PremulSRGBA8::zeroed());
     }
 }

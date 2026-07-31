@@ -181,8 +181,6 @@ fn dash_segment<W: DashOutput<Point>>(from: Point, to: Point, pattern: DashPatte
     Ok(())
 }
 
-#[cfg(feature = "fixed")] pub use crate::fixed::dash::*;
-
 pub(crate) fn validate_capacity(required: DashRequirements, points: usize, contours: usize) ->
     Result<(), DashError> {
     if points < required.points {

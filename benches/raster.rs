@@ -612,11 +612,11 @@ fn sample_checksum(sampler: &impl PaintSampler) -> u64 {
 }
 
 #[cfg(feature = "fixed")]
-fn sample_fixed_checksum(sampler: &impl ugl_rs::sampler::FixedPaintSampler) -> u64 {
+fn sample_fixed_checksum(sampler: &impl ugl_rs::fixed::sampler::FixedPaintSampler) -> u64 {
     let mut checksum = 0_u64;
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
-            let color = sampler.sample_fixed(x, y);
+            let color = sampler.sample(x, y);
             checksum = color.to_array().into_iter().fold(checksum,
                 |checksum, channel| checksum.wrapping_mul(257).wrapping_add(channel as _));
         }
@@ -700,28 +700,28 @@ fn benchmark_paint(c: &mut Criterion) {
 }
 
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {
-    use ugl_rs::{geometry::FixedScalar,
-        canvas::{composite_solid_fixed_tiles, render_solid_fixed, render_solid_fixed_tiled},
-        dash::{FixedDashPattern, dash_polyline_fixed},
-        flatten_fixed::{FixedFlattenOptions, flatten_path_fixed},
-        raster_fixed::{FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace,
-            FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
-            FIXED_STRIP_HEIGHT, prepare_lines, rasterize_lines, rasterize_lines_to_strips,
-        },
-        tile_fixed::{FixedCoverageTile, FixedCoverageTilePiece, FixedCoverageTileRun,
-            FixedCoverageTileWorkspace, FixedDirectTilePiece, FixedDirectTileWorkspace,
-            encode_fixed_coverage_tiles, fixed_tile_requirements, rasterize_lines_to_tiles,
-        },
-        sampler::{FixedAngle, FixedConicGradient, FixedLinearGradient, FixedRadialGradient},
+    use ugl_rs::{fixed::{
+        canvas::{composite_solid_tiles, render_solid, render_solid_tiled},
+        dash::{Pattern as DashPattern, dash_polyline},
+        flatten::{Options as FlattenOptions, flatten_path},
+        raster::{CoverageRun, CoverageStrip, CoverageWorkspace,
+            Line, Workspace, Segment, Trapezoid, STRIP_HEIGHT,
+            prepare_lines, rasterize_lines, rasterize_lines_to_strips},
+        sampler::{Angle, ConicGradient, LinearGradient, RadialGradient},
+        stroke::{Options as StrokeOptions, flatten_path as flatten_stroke_path,
+            stroke_polyline},
+        tile::{CoverageTile, CoverageTilePiece, CoverageTileRun,
+            CoverageTileWorkspace, DirectTilePiece, DirectTileWorkspace,
+            encode_coverage_tiles, requirements as tile_requirements,
+            rasterize_lines_to_tiles},
+        }, geometry::FixedScalar,
         stroke::{StrokeContour, StrokePathWorkspace},
-        stroke_fixed::flatten_stroke_path_fixed,
-        stroke_fixed::{FixedStrokeOptions, stroke_polyline_fixed},
     };
 
     let stroke_points: Vec<_> = (0..64).map(|index|
         (FixedScalar::from_num(index * 3 + 8),
          FixedScalar::from_num(if index & 1 == 0 { 96 } else { 112 })).into()).collect();
-    let stroke_options = FixedStrokeOptions::new(FixedScalar::from_num(3)).unwrap()
+    let stroke_options = StrokeOptions::new(FixedScalar::from_num(3)).unwrap()
         .with_cap(LineCap::Square).with_join(LineJoin::Miter);
     let round_stroke_options = stroke_options
         .with_cap(LineCap::Round).with_join(LineJoin::Round);
@@ -730,14 +730,14 @@ fn benchmark_paint(c: &mut Criterion) {
     stroke_group.throughput(Throughput::Elements(stroke_points.len() as _));
     stroke_group.bench_function("square_miter_64", |b| b.iter(|| {
         stroke_edges.clear();
-        stroke_polyline_fixed(&stroke_points, false, stroke_options, &mut |edge| {
+        stroke_polyline(&stroke_points, false, stroke_options, &mut |edge| {
             stroke_edges.push(edge); Ok::<_, core::convert::Infallible>(())
         }).unwrap();
         black_box(&stroke_edges);
     }));
     stroke_group.bench_function("round_64", |b| b.iter(|| {
         stroke_edges.clear();
-        stroke_polyline_fixed(&stroke_points, false, round_stroke_options, &mut |edge| {
+        stroke_polyline(&stroke_points, false, round_stroke_options, &mut |edge| {
             stroke_edges.push(edge); Ok::<_, core::convert::Infallible>(())
         }).unwrap();
         black_box(&stroke_edges);
@@ -746,7 +746,7 @@ fn benchmark_paint(c: &mut Criterion) {
 
     let fixed_dash_lengths = [FixedScalar::from_num(6), FixedScalar::from_num(3),
         FixedScalar::from_num(1.5), FixedScalar::from_num(3)];
-    let fixed_dash = FixedDashPattern::new(
+    let fixed_dash = DashPattern::new(
         &fixed_dash_lengths, FixedScalar::from_num(2)).unwrap();
     let (mut fixed_dash_points, mut fixed_dash_contours) = (
         vec![(FixedScalar::ZERO, FixedScalar::ZERO).into(); 512],
@@ -759,10 +759,10 @@ fn benchmark_paint(c: &mut Criterion) {
         let mut workspace = DashWorkspace {
             points: &mut fixed_dash_points, contours: &mut fixed_dash_contours,
         };
-        let dashed = dash_polyline_fixed(&stroke_points, false, fixed_dash,
+        let dashed = dash_polyline(&stroke_points, false, fixed_dash,
             &mut workspace).unwrap();
         for (points, closed) in dashed.contours() {
-            stroke_polyline_fixed(points, closed, stroke_options, &mut |edge| {
+            stroke_polyline(points, closed, stroke_options, &mut |edge| {
                 stroke_edges.push(edge); Ok::<_, core::convert::Infallible>(())
             }).unwrap();
         }
@@ -790,10 +790,10 @@ fn benchmark_paint(c: &mut Criterion) {
         let mut workspace = StrokePathWorkspace {
             points: &mut stroke_path_points, contours: &mut stroke_path_contours,
         };
-        let flattened = flatten_stroke_path_fixed(&curve_path, Affine::identity(),
-            FixedFlattenOptions::default(), &mut workspace).unwrap();
+        let flattened = flatten_stroke_path(&curve_path, Affine::identity(),
+            FlattenOptions::default(), &mut workspace).unwrap();
         for (points, closed) in flattened.contours() {
-            stroke_polyline_fixed(points, closed, stroke_options, &mut |edge| {
+            stroke_polyline(points, closed, stroke_options, &mut |edge| {
                 stroke_edges.push(edge); Ok::<_, core::convert::Infallible>(())
             }).unwrap();
         }
@@ -805,8 +805,8 @@ fn benchmark_paint(c: &mut Criterion) {
     flatten_group.throughput(Throughput::Elements(8));
     flatten_group.bench_function("cubic_8", |b| b.iter(|| {
         let mut line_count = 0_u32;
-        flatten_path_fixed(&curve_path, Affine::identity(),
-            FixedFlattenOptions::default(), &mut |_, _| {
+        flatten_path(&curve_path, Affine::identity(),
+            FlattenOptions::default(), &mut |_, _| {
             line_count += 1; Ok::<_, core::convert::Infallible>(())
         }).unwrap();
         black_box(line_count);
@@ -820,17 +820,17 @@ fn benchmark_paint(c: &mut Criterion) {
     let stops = GradientStops::with_ramp(&stop_values, &mut ramp).unwrap();
     let ramp = stops.encoded_ramp().unwrap();
     let fixed = FixedScalar::from_num;
-    let linear = FixedLinearGradient::new(
+    let linear = LinearGradient::new(
         (fixed(0), fixed(0)), (fixed(WIDTH), fixed(HEIGHT)),
         ramp, SpreadMode::Pad).unwrap();
-    let radial = FixedRadialGradient::new(
+    let radial = RadialGradient::new(
         (fixed(WIDTH / 2), fixed(HEIGHT / 2)), fixed(180),
         ramp, SpreadMode::Pad).unwrap();
-    let focal = FixedRadialGradient::two_circle(
+    let focal = RadialGradient::two_circle(
         (fixed(96), fixed(112)), fixed(8), (fixed(128), fixed(128)), fixed(180),
         ramp, SpreadMode::Pad).unwrap();
-    let conic = FixedConicGradient::new(
-        (fixed(128), fixed(128)), FixedAngle::from_bits(0x0f12_3456), ramp).unwrap();
+    let conic = ConicGradient::new(
+        (fixed(128), fixed(128)), Angle::from_bits(0x0f12_3456), ramp).unwrap();
     let mut paint_group = c.benchmark_group("paint_sample_fixed");
     paint_group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
     paint_group.bench_function("linear",
@@ -875,40 +875,40 @@ fn benchmark_paint(c: &mut Criterion) {
                 Edge { upper: (right, top).into(), lower: (right, bottom).into(), winding: 1 },
             ]);
         }
-        let mut lines = vec![FixedLine::default(); source_edges.len()];
+        let mut lines = vec![Line::default(); source_edges.len()];
         let line_count = prepare_lines(&source_edges, &mut lines).unwrap();
-        let requirements =
-            ugl_rs::raster_fixed::fixed_strip_requirements(&lines[..line_count], HEIGHT).unwrap();
-        let tile_requirements = fixed_tile_requirements(WIDTH, HEIGHT).unwrap();
+        let strip_requirements =
+            ugl_rs::fixed::raster::strip_requirements(&lines[..line_count], HEIGHT).unwrap();
+        let tile_requirements = tile_requirements(WIDTH, HEIGHT).unwrap();
         let (mut segments, mut trapezoids, mut row_area, mut pixels,
             mut strip_offsets, mut strip_indices, mut coverage_strips, mut coverage_runs,
             mut coverage_tiles, mut coverage_tile_runs, mut coverage_tile_pieces,
             mut direct_tile_pieces, mut tile_heads, mut tile_tails, mut touched_tiles) = (
-            vec![FixedSegment::default(); line_count],
-            vec![FixedTrapezoid::default(); line_count.div_ceil(2)],
+            vec![Segment::default(); line_count],
+            vec![Trapezoid::default(); line_count.div_ceil(2)],
             vec![0; WIDTH as usize], vec![0; WIDTH as usize * HEIGHT as usize * 4],
-            vec![0; requirements.offsets], vec![0; requirements.indices],
-            vec![FixedCoverageStrip::default();
-                HEIGHT.div_ceil(FIXED_STRIP_HEIGHT) as usize],
-            vec![FixedCoverageRun::default(); WIDTH as usize * HEIGHT as usize],
-            vec![FixedCoverageTile::default(); tile_requirements.tiles],
-            vec![FixedCoverageTileRun::default(); tile_requirements.runs],
-            vec![FixedCoverageTilePiece::default(); WIDTH as usize * HEIGHT as usize],
-            vec![FixedDirectTilePiece::default(); tile_requirements.pieces],
+            vec![0; strip_requirements.offsets], vec![0; strip_requirements.indices],
+            vec![CoverageStrip::default();
+                HEIGHT.div_ceil(STRIP_HEIGHT) as usize],
+            vec![CoverageRun::default(); WIDTH as usize * HEIGHT as usize],
+            vec![CoverageTile::default(); tile_requirements.tiles],
+            vec![CoverageTileRun::default(); tile_requirements.runs],
+            vec![CoverageTilePiece::default(); WIDTH as usize * HEIGHT as usize],
+            vec![DirectTilePiece::default(); tile_requirements.pieces],
             vec![0; tile_requirements.columns],
             vec![0; tile_requirements.columns],
             vec![0; tile_requirements.columns],
         );
         let (mut cached_tiles, mut cached_runs) = (
-            vec![FixedCoverageTile::default(); coverage_tiles.len()],
-            vec![FixedCoverageTileRun::default(); coverage_tile_runs.len()],
+            vec![CoverageTile::default(); coverage_tiles.len()],
+            vec![CoverageTileRun::default(); coverage_tile_runs.len()],
         );
         let cached = rasterize_lines_to_tiles(&lines[..line_count], WIDTH, HEIGHT,
-            FillRule::NonZero, &mut FixedRasterWorkspace {
+            FillRule::NonZero, &mut Workspace {
                 segments: &mut segments, trapezoids: &mut trapezoids,
                 row_area: &mut row_area,
                 strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-            }, FixedDirectTileWorkspace {
+            }, DirectTileWorkspace {
                 tiles: &mut cached_tiles, runs: &mut cached_runs,
                 pieces: &mut direct_tile_pieces,
                 column_heads: &mut tile_heads, column_tails: &mut tile_tails,
@@ -917,8 +917,8 @@ fn benchmark_paint(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("fixed", name), |b| b.iter(|| {
             pixels.fill(0);
             let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
-            render_solid_fixed(&lines[..line_count], RGBA::new(40, 120, 220, 192),
-                FillRule::NonZero, &mut target, &mut FixedRasterWorkspace {
+            render_solid(&lines[..line_count], RGBA::new(40, 120, 220, 192),
+                FillRule::NonZero, &mut target, &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
                     strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
@@ -929,12 +929,12 @@ fn benchmark_paint(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("fixed_tiled", name), |b| b.iter(|| {
             pixels.fill(0);
             let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
-            render_solid_fixed_tiled(&lines[..line_count], RGBA::new(40, 120, 220, 192),
-                FillRule::NonZero, &mut target, &mut FixedRasterWorkspace {
+            render_solid_tiled(&lines[..line_count], RGBA::new(40, 120, 220, 192),
+                FillRule::NonZero, &mut target, &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
                     strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-                }, FixedDirectTileWorkspace {
+                }, DirectTileWorkspace {
                     tiles: &mut coverage_tiles, runs: &mut coverage_tile_runs,
                     pieces: &mut direct_tile_pieces,
                     column_heads: &mut tile_heads, column_tails: &mut tile_tails,
@@ -945,14 +945,14 @@ fn benchmark_paint(c: &mut Criterion) {
         }));
         group.bench_function(BenchmarkId::new("fixed_tiled_cached", name), |b| b.iter(|| {
             pixels.fill(0);
-            composite_solid_fixed_tiles(cached, RGBA::new(40, 120, 220, 192),
+            composite_solid_tiles(cached, RGBA::new(40, 120, 220, 192),
                 &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap()).unwrap();
             black_box(&pixels);
         }));
         group.bench_function(BenchmarkId::new("fixed_stream", name), |b| b.iter(|| {
             let mut sink = RunCounter::default();
             rasterize_lines(&lines[..line_count], WIDTH, HEIGHT, FillRule::NonZero,
-                &mut FixedRasterWorkspace {
+                &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
                     strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
@@ -962,11 +962,11 @@ fn benchmark_paint(c: &mut Criterion) {
         }));
         group.bench_function(BenchmarkId::new("fixed_strip_encode", name), |b| b.iter(|| {
             let retained = rasterize_lines_to_strips(&lines[..line_count], WIDTH, HEIGHT,
-                FillRule::NonZero, &mut FixedRasterWorkspace {
+                FillRule::NonZero, &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
                     strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-                }, FixedCoverageWorkspace {
+                }, CoverageWorkspace {
                     strips: &mut coverage_strips, runs: &mut coverage_runs,
                 },
             ).unwrap();
@@ -975,11 +975,11 @@ fn benchmark_paint(c: &mut Criterion) {
         }));
         group.bench_function(BenchmarkId::new("fixed_strip_replay", name), |b| b.iter(|| {
             let retained = rasterize_lines_to_strips(&lines[..line_count], WIDTH, HEIGHT,
-                FillRule::NonZero, &mut FixedRasterWorkspace {
+                FillRule::NonZero, &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
                     strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-                }, FixedCoverageWorkspace {
+                }, CoverageWorkspace {
                     strips: &mut coverage_strips, runs: &mut coverage_runs,
                 },
             ).unwrap();
@@ -988,15 +988,15 @@ fn benchmark_paint(c: &mut Criterion) {
         }));
         group.bench_function(BenchmarkId::new("fixed_tile_encode", name), |b| b.iter(|| {
             let retained = rasterize_lines_to_strips(&lines[..line_count], WIDTH, HEIGHT,
-                FillRule::NonZero, &mut FixedRasterWorkspace {
+                FillRule::NonZero, &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
                     strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-                }, FixedCoverageWorkspace {
+                }, CoverageWorkspace {
                     strips: &mut coverage_strips, runs: &mut coverage_runs,
                 },
             ).unwrap();
-            let tiled = encode_fixed_coverage_tiles(retained, FixedCoverageTileWorkspace {
+            let tiled = encode_coverage_tiles(retained, CoverageTileWorkspace {
                 tiles: &mut coverage_tiles, runs: &mut coverage_tile_runs,
                 pieces: &mut coverage_tile_pieces,
             }).unwrap();
@@ -1005,15 +1005,15 @@ fn benchmark_paint(c: &mut Criterion) {
         }));
         group.bench_function(BenchmarkId::new("fixed_tile_replay", name), |b| b.iter(|| {
             let retained = rasterize_lines_to_strips(&lines[..line_count], WIDTH, HEIGHT,
-                FillRule::NonZero, &mut FixedRasterWorkspace {
+                FillRule::NonZero, &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
                     strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-                }, FixedCoverageWorkspace {
+                }, CoverageWorkspace {
                     strips: &mut coverage_strips, runs: &mut coverage_runs,
                 },
             ).unwrap();
-            let tiled = encode_fixed_coverage_tiles(retained, FixedCoverageTileWorkspace {
+            let tiled = encode_coverage_tiles(retained, CoverageTileWorkspace {
                 tiles: &mut coverage_tiles, runs: &mut coverage_tile_runs,
                 pieces: &mut coverage_tile_pieces,
             }).unwrap();
@@ -1022,11 +1022,11 @@ fn benchmark_paint(c: &mut Criterion) {
         }));
         group.bench_function(BenchmarkId::new("fixed_tile_direct", name), |b| b.iter(|| {
             let tiled = rasterize_lines_to_tiles(&lines[..line_count], WIDTH, HEIGHT,
-                FillRule::NonZero, &mut FixedRasterWorkspace {
+                FillRule::NonZero, &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
                     strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-                }, FixedDirectTileWorkspace {
+                }, DirectTileWorkspace {
                     tiles: &mut coverage_tiles, runs: &mut coverage_tile_runs,
                     pieces: &mut direct_tile_pieces,
                     column_heads: &mut tile_heads, column_tails: &mut tile_tails,
@@ -1039,11 +1039,11 @@ fn benchmark_paint(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("fixed_tile_direct_replay", name),
             |b| b.iter(|| {
             let tiled = rasterize_lines_to_tiles(&lines[..line_count], WIDTH, HEIGHT,
-                FillRule::NonZero, &mut FixedRasterWorkspace {
+                FillRule::NonZero, &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
                     row_area: &mut row_area,
                     strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-                }, FixedDirectTileWorkspace {
+                }, DirectTileWorkspace {
                     tiles: &mut coverage_tiles, runs: &mut coverage_tile_runs,
                     pieces: &mut direct_tile_pieces,
                     column_heads: &mut tile_heads, column_tails: &mut tile_tails,

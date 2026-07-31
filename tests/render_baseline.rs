@@ -267,9 +267,9 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
 
 #[cfg(feature = "fixed")]
 #[test] fn fixed_triangles_track_the_analytic_pipeline() {
-    use ugl_rs::{canvas::render_solid_fixed, geometry::{FixedScalar, Point},
-        raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
-            prepare_lines, fixed_strip_requirements},
+    use ugl_rs::{fixed::{canvas::render_solid, raster::{
+            Line, Workspace, Segment, Trapezoid, prepare_lines, strip_requirements,
+        }}, geometry::{FixedScalar, Point},
     };
 
     fn fixed_edge(from: Point<FixedScalar>, to: Point<FixedScalar>) ->
@@ -294,17 +294,17 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
         let edges: Vec<_> = (0..3).filter_map(|index|
             fixed_edge(fixed_points[index], fixed_points[(index + 1) % 3])).collect();
         let (mut lines, mut segments, mut trapezoids, mut row_area) = (
-            [FixedLine::default(); 3], [FixedSegment::default(); 3],
-            [FixedTrapezoid::default(); 2], [0; WIDTH as usize],
+            [Line::default(); 3], [Segment::default(); 3],
+            [Trapezoid::default(); 2], [0; WIDTH as usize],
         );
         let line_count = prepare_lines(&edges, &mut lines).unwrap();
-        let requirements = fixed_strip_requirements(&lines[..line_count], HEIGHT).unwrap();
+        let requirements = strip_requirements(&lines[..line_count], HEIGHT).unwrap();
         let mut strip_offsets = vec![0; requirements.offsets];
         let mut strip_indices = vec![0; requirements.indices];
         let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
         let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
-        render_solid_fixed(&lines[..line_count], RGBA::new(20, 200, 40, 160),
-            FillRule::NonZero, &mut target, &mut FixedRasterWorkspace {
+        render_solid(&lines[..line_count], RGBA::new(20, 200, 40, 160),
+            FillRule::NonZero, &mut target, &mut Workspace {
                 segments: &mut segments, trapezoids: &mut trapezoids,
                 row_area: &mut row_area, strip_offsets: &mut strip_offsets,
                 strip_indices: &mut strip_indices,

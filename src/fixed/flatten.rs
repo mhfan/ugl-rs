@@ -6,18 +6,18 @@ use crate::{edge::{EdgeSink, FillEdgeBuilder}, flatten::LineSink,
 
 const STACK_CAPACITY: usize = 32;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub struct FixedFlattenOptions {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub struct Options {
     pub tolerance: FixedScalar,
     pub max_depth: u8,
 }
 
-impl Default for FixedFlattenOptions {
+impl Default for Options {
     fn default() -> Self {
         Self { tolerance: FixedScalar::from_bits(64), max_depth: 16 }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)] pub enum FixedFlattenError<E> {
+#[derive(Clone, Copy, Debug, PartialEq)] pub enum Error<E> {
     NonPositiveTolerance, InvalidDepth, CoordinateOutOfRange,
     DepthLimit, InvalidPath(PathError), Sink(E),
 }
@@ -32,9 +32,9 @@ impl Default for FixedFlattenOptions {
 }
 
 /// Transforms and flattens a fixed path into caller-consumed device-space lines.
-pub fn flatten_path_fixed<S: LineSink<FixedScalar>>(path: &Path<FixedScalar>,
-    transform: Affine<FixedScalar>, options: FixedFlattenOptions, sink: &mut S) ->
-    Result<(), FixedFlattenError<S::Error>> {
+pub fn flatten_path<S: LineSink<FixedScalar>>(path: &Path<FixedScalar>,
+    transform: Affine<FixedScalar>, options: Options, sink: &mut S) ->
+    Result<(), Error<S::Error>> {
     validate_options(options)?;
     let (mut current, mut subpath_start) = (None, None);
     for segment in path.segments() {
@@ -42,16 +42,16 @@ pub fn flatten_path_fixed<S: LineSink<FixedScalar>>(path: &Path<FixedScalar>,
             PathSegment::MoveTo(to) => {
                 let to = transform_point(to, transform)?;
                 if current.is_some() {
-                    sink.end_subpath().map_err(FixedFlattenError::Sink)?;
+                    sink.end_subpath().map_err(Error::Sink)?;
                 }
-                sink.begin_subpath(to).map_err(FixedFlattenError::Sink)?;
+                sink.begin_subpath(to).map_err(Error::Sink)?;
                 subpath_start = Some(to);
                 current = Some(to);
             }
             PathSegment::LineTo(to) => {
                 let to = transform_point(to, transform)?;
                 let from = current.ok_or(
-                    FixedFlattenError::InvalidPath(PathError::MissingMoveTo))?;
+                    Error::InvalidPath(PathError::MissingMoveTo))?;
                 emit_line(from, to, sink)?;
                 current = Some(to);
             }
@@ -59,7 +59,7 @@ pub fn flatten_path_fixed<S: LineSink<FixedScalar>>(path: &Path<FixedScalar>,
                 let (ctrl, to) = (transform_point(ctrl, transform)?,
                     transform_point(to, transform)?);
                 let curve = Quad { p0: current.ok_or(
-                    FixedFlattenError::InvalidPath(PathError::MissingMoveTo))?, p1: ctrl, p2: to };
+                    Error::InvalidPath(PathError::MissingMoveTo))?, p1: ctrl, p2: to };
                 flatten_quad(curve, options, sink)?;
                 current = Some(to);
             }
@@ -67,66 +67,66 @@ pub fn flatten_path_fixed<S: LineSink<FixedScalar>>(path: &Path<FixedScalar>,
                 let (ctrl1, ctrl2, to) = (transform_point(ctrl1, transform)?,
                     transform_point(ctrl2, transform)?, transform_point(to, transform)?);
                 let curve = Cubic { p0: current.ok_or(
-                    FixedFlattenError::InvalidPath(PathError::MissingMoveTo))?,
+                    Error::InvalidPath(PathError::MissingMoveTo))?,
                     p1: ctrl1, p2: ctrl2, p3: to };
                 flatten_cubic(curve, options, sink)?;
                 current = Some(to);
             }
             PathSegment::Close => {
                 let (from, to) = (current.ok_or(
-                    FixedFlattenError::InvalidPath(PathError::MissingMoveTo))?,
+                    Error::InvalidPath(PathError::MissingMoveTo))?,
                     subpath_start.ok_or(
-                        FixedFlattenError::InvalidPath(PathError::MissingMoveTo))?);
+                        Error::InvalidPath(PathError::MissingMoveTo))?);
                 emit_line(from, to, sink)?;
-                sink.close_subpath().map_err(FixedFlattenError::Sink)?;
+                sink.close_subpath().map_err(Error::Sink)?;
                 current = Some(to);
             }
         }
     }
-    if current.is_some() { sink.end_subpath().map_err(FixedFlattenError::Sink)?; }
+    if current.is_some() { sink.end_subpath().map_err(Error::Sink)?; }
     Ok(())
 }
 
 /// Flattens a device-space fixed path and emits normalized fill edges.
-pub fn build_fill_edges_fixed<S>(path: &Path<FixedScalar>, transform: Affine<FixedScalar>,
-    options: FixedFlattenOptions, sink: &mut S) -> Result<(), FixedFlattenError<S::Error>>
+pub fn build_fill_edges<S>(path: &Path<FixedScalar>, transform: Affine<FixedScalar>,
+    options: Options, sink: &mut S) -> Result<(), Error<S::Error>>
     where S: EdgeSink<FixedScalar> {
-    flatten_path_fixed(path, transform, options, &mut FillEdgeBuilder::new(sink))
+    flatten_path(path, transform, options, &mut FillEdgeBuilder::new(sink))
 }
 
 fn transform_point<E>(point: Point<FixedScalar>, transform: Affine<FixedScalar>) ->
-    Result<Point<FixedScalar>, FixedFlattenError<E>> {
+    Result<Point<FixedScalar>, Error<E>> {
     let point = transform.try_transform_point(point)
-        .map_err(|_| FixedFlattenError::CoordinateOutOfRange)?;
+        .map_err(|_| Error::CoordinateOutOfRange)?;
     validate_point(point)?;
     Ok(point)
 }
 
-fn validate_options<E>(options: FixedFlattenOptions) -> Result<(), FixedFlattenError<E>> {
+fn validate_options<E>(options: Options) -> Result<(), Error<E>> {
     if options.tolerance <= FixedScalar::ZERO {
-        return Err(FixedFlattenError::NonPositiveTolerance);
+        return Err(Error::NonPositiveTolerance);
     }
     if options.max_depth as usize >= STACK_CAPACITY {
-        return Err(FixedFlattenError::InvalidDepth);
+        return Err(Error::InvalidDepth);
     }
     Ok(())
 }
 
-fn validate_point<E>(point: Point<FixedScalar>) -> Result<(), FixedFlattenError<E>> {
+fn validate_point<E>(point: Point<FixedScalar>) -> Result<(), Error<E>> {
     if [point.x.to_bits(), point.y.to_bits()].iter()
         .any(|value| value.unsigned_abs() > FIXED_DEVICE_RAW_LIMIT as u32) {
-        Err(FixedFlattenError::CoordinateOutOfRange)
+        Err(Error::CoordinateOutOfRange)
     } else { Ok(()) }
 }
 
 fn emit_line<S: LineSink<FixedScalar>>(from: Point<FixedScalar>, to: Point<FixedScalar>,
-    sink: &mut S) -> Result<(), FixedFlattenError<S::Error>> {
-    if from != to { sink.line(from, to).map_err(FixedFlattenError::Sink)?; }
+    sink: &mut S) -> Result<(), Error<S::Error>> {
+    if from != to { sink.line(from, to).map_err(Error::Sink)?; }
     Ok(())
 }
 
-fn flatten_quad<S: LineSink<FixedScalar>>(curve: Quad, options: FixedFlattenOptions,
-    sink: &mut S) -> Result<(), FixedFlattenError<S::Error>> {
+fn flatten_quad<S: LineSink<FixedScalar>>(curve: Quad, options: Options,
+    sink: &mut S) -> Result<(), Error<S::Error>> {
     let (mut stack, mut len) = ([(Quad::default(), 0_u8); STACK_CAPACITY], 1);
     stack[0] = (curve, 0);
     while len != 0 {
@@ -135,7 +135,7 @@ fn flatten_quad<S: LineSink<FixedScalar>>(curve: Quad, options: FixedFlattenOpti
         if control_is_flat(curve.p0, curve.p2, curve.p1, options.tolerance) {
             emit_line(curve.p0, curve.p2, sink)?;
         } else {
-            if depth == options.max_depth { return Err(FixedFlattenError::DepthLimit); }
+            if depth == options.max_depth { return Err(Error::DepthLimit); }
             let (left, right) = split_quad(curve);
             stack[len] = (right, depth + 1);
             stack[len + 1] = (left, depth + 1);
@@ -145,8 +145,8 @@ fn flatten_quad<S: LineSink<FixedScalar>>(curve: Quad, options: FixedFlattenOpti
     Ok(())
 }
 
-fn flatten_cubic<S: LineSink<FixedScalar>>(curve: Cubic, options: FixedFlattenOptions,
-    sink: &mut S) -> Result<(), FixedFlattenError<S::Error>> {
+fn flatten_cubic<S: LineSink<FixedScalar>>(curve: Cubic, options: Options,
+    sink: &mut S) -> Result<(), Error<S::Error>> {
     let (mut stack, mut len) = ([(Cubic::default(), 0_u8); STACK_CAPACITY], 1);
     stack[0] = (curve, 0);
     while len != 0 {
@@ -156,7 +156,7 @@ fn flatten_cubic<S: LineSink<FixedScalar>>(curve: Cubic, options: FixedFlattenOp
            control_is_flat(curve.p0, curve.p3, curve.p2, options.tolerance) {
             emit_line(curve.p0, curve.p3, sink)?;
         } else {
-            if depth == options.max_depth { return Err(FixedFlattenError::DepthLimit); }
+            if depth == options.max_depth { return Err(Error::DepthLimit); }
             let (left, right) = split_cubic(curve);
             stack[len] = (right, depth + 1);
             stack[len + 1] = (left, depth + 1);
@@ -218,14 +218,14 @@ fn midpoint(a: Point<FixedScalar>, b: Point<FixedScalar>) -> Point<FixedScalar> 
     use core::convert::Infallible;
     use crate::geometry::PathBuilder;
 
-    type FixedLine = (Point<FixedScalar>, Point<FixedScalar>);
+    type Line = (Point<FixedScalar>, Point<FixedScalar>);
 
     fn fixed(value: i32) -> FixedScalar { FixedScalar::from_num(value) }
 
-    fn collect(path: &Path<FixedScalar>, options: FixedFlattenOptions) ->
-        Result<Vec<FixedLine>, FixedFlattenError<Infallible>> {
+    fn collect(path: &Path<FixedScalar>, options: Options) ->
+        Result<Vec<Line>, Error<Infallible>> {
         let mut lines = Vec::new();
-        flatten_path_fixed(path, Affine::identity(), options,
+        flatten_path(path, Affine::identity(), options,
             &mut |from, to| { lines.push((from, to)); Ok::<_, Infallible>(()) })?;
         Ok(lines)
     }
@@ -247,8 +247,8 @@ fn midpoint(a: Point<FixedScalar>, b: Point<FixedScalar>) -> Point<FixedScalar> 
         let mut builder = PathBuilder::new();
         builder.move_to((zero, zero)).quad_to((one, two), (two, zero));
         let mut edges = Vec::new();
-        build_fill_edges_fixed(&builder.build(), Affine::identity(),
-            FixedFlattenOptions::default(),
+        build_fill_edges(&builder.build(), Affine::identity(),
+            Options::default(),
             &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
         assert!(!edges.is_empty());
         assert_eq!(edges.iter().map(|edge| edge.winding as i32).sum::<i32>(), 0);
@@ -260,7 +260,7 @@ fn midpoint(a: Point<FixedScalar>, b: Point<FixedScalar>) -> Point<FixedScalar> 
             .quad_to((fixed(2), fixed(2)), (fixed(4), fixed(4)))
             .cubic_to((fixed(5), fixed(5)), (fixed(6), fixed(6)),
                 (fixed(8), fixed(8)));
-        let lines = collect(&builder.build(), FixedFlattenOptions::default()).unwrap();
+        let lines = collect(&builder.build(), Options::default()).unwrap();
         assert_eq!(lines, [
             ((fixed(0), fixed(0)).into(), (fixed(4), fixed(4)).into()),
             ((fixed(4), fixed(4)).into(), (fixed(8), fixed(8)).into()),
@@ -272,7 +272,7 @@ fn midpoint(a: Point<FixedScalar>, b: Point<FixedScalar>) -> Point<FixedScalar> 
         let (start, end) = ((fixed(0), fixed(0)).into(), (fixed(10), fixed(0)).into());
         builder.move_to(start).cubic_to(
             (fixed(0), fixed(10)), (fixed(10), fixed(10)), end);
-        let lines = collect(&builder.build(), FixedFlattenOptions::default()).unwrap();
+        let lines = collect(&builder.build(), Options::default()).unwrap();
         assert!(lines.len() > 1);
         assert_eq!(lines.first().unwrap().0, start);
         assert_eq!(lines.last().unwrap().1, end);
@@ -286,7 +286,7 @@ fn midpoint(a: Point<FixedScalar>, b: Point<FixedScalar>) -> Point<FixedScalar> 
         let path = builder.build();
         let collect_with = |transform| {
             let mut lines = Vec::new();
-            flatten_path_fixed(&path, transform, FixedFlattenOptions::default(),
+            flatten_path(&path, transform, Options::default(),
                 &mut |from, to| {
                     lines.push((from, to)); Ok::<_, Infallible>(())
                 }).unwrap();
@@ -312,28 +312,28 @@ fn midpoint(a: Point<FixedScalar>, b: Point<FixedScalar>) -> Point<FixedScalar> 
     #[test] fn rejects_invalid_options_and_device_coordinates() {
         let path = PathBuilder::<FixedScalar>::new().build();
         let mut sink = |_, _| Ok::<_, Infallible>(());
-        assert_eq!(flatten_path_fixed(&path, Affine::identity(), FixedFlattenOptions {
+        assert_eq!(flatten_path(&path, Affine::identity(), Options {
             tolerance: FixedScalar::ZERO, max_depth: 16,
-        }, &mut sink), Err(FixedFlattenError::NonPositiveTolerance));
-        assert_eq!(flatten_path_fixed(&path, Affine::identity(), FixedFlattenOptions {
+        }, &mut sink), Err(Error::NonPositiveTolerance));
+        assert_eq!(flatten_path(&path, Affine::identity(), Options {
             tolerance: FixedScalar::ONE, max_depth: STACK_CAPACITY as _,
-        }, &mut sink), Err(FixedFlattenError::InvalidDepth));
+        }, &mut sink), Err(Error::InvalidDepth));
 
         let outside = FixedScalar::from_bits(FIXED_DEVICE_RAW_LIMIT + 1);
         let mut builder = PathBuilder::new();
         builder.move_to((outside, FixedScalar::ZERO));
-        assert_eq!(flatten_path_fixed(&builder.build(), Affine::identity(),
-            FixedFlattenOptions::default(),
-            &mut sink), Err(FixedFlattenError::CoordinateOutOfRange));
+        assert_eq!(flatten_path(&builder.build(), Affine::identity(),
+            Options::default(),
+            &mut sink), Err(Error::CoordinateOutOfRange));
 
         let mut builder = PathBuilder::new();
         builder.move_to((FixedScalar::MAX, FixedScalar::MAX));
         let maximum = FixedScalar::MAX;
         let overflow = Affine::new(maximum, FixedScalar::ZERO, FixedScalar::ZERO,
             maximum, maximum, maximum);
-        assert_eq!(flatten_path_fixed(&builder.build(), overflow,
-            FixedFlattenOptions::default(), &mut sink),
-            Err(FixedFlattenError::CoordinateOutOfRange));
+        assert_eq!(flatten_path(&builder.build(), overflow,
+            Options::default(), &mut sink),
+            Err(Error::CoordinateOutOfRange));
     }
 
     #[test] fn depth_and_sink_failures_propagate() {
@@ -341,12 +341,12 @@ fn midpoint(a: Point<FixedScalar>, b: Point<FixedScalar>) -> Point<FixedScalar> 
         builder.move_to((fixed(0), fixed(0)))
             .quad_to((fixed(1), fixed(10)), (fixed(2), fixed(0)));
         let path = builder.build();
-        assert_eq!(flatten_path_fixed(&path, Affine::identity(), FixedFlattenOptions {
+        assert_eq!(flatten_path(&path, Affine::identity(), Options {
             tolerance: FixedScalar::from_bits(1), max_depth: 0,
         }, &mut |_, _| Ok::<_, &'static str>(())),
-            Err(FixedFlattenError::DepthLimit));
-        assert_eq!(flatten_path_fixed(&path, Affine::identity(),
-            FixedFlattenOptions::default(),
-            &mut |_, _| Err("full")), Err(FixedFlattenError::Sink("full")));
+            Err(Error::DepthLimit));
+        assert_eq!(flatten_path(&path, Affine::identity(),
+            Options::default(),
+            &mut |_, _| Err("full")), Err(Error::Sink("full")));
     }
 }

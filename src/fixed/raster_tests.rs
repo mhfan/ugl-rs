@@ -8,17 +8,17 @@ fn fixed(value: f32) -> FixedScalar { FixedScalar::from_num(value) }
 
 fn render(edges: &[Edge<FixedScalar>], width: usize, height: usize,
     fill_rule: FillRule) -> Vec<u8> {
-    let mut lines = vec![FixedLine::default(); edges.len()];
+    let mut lines = vec![Line::default(); edges.len()];
     prepare_lines(edges, &mut lines).unwrap();
-    let requirements = fixed_strip_requirements(&lines, height as _).unwrap();
+    let requirements = strip_requirements(&lines, height as _).unwrap();
     let (mut segments, mut trapezoids, mut row_area, mut strip_offsets, mut strip_indices) = (
-        vec![FixedSegment::default(); lines.len()],
-        vec![FixedTrapezoid::default(); lines.len().div_ceil(2)],
+        vec![Segment::default(); lines.len()],
+        vec![Trapezoid::default(); lines.len().div_ceil(2)],
         vec![0; width], vec![0; requirements.offsets], vec![0; requirements.indices],
     );
     let mut pixels = vec![0; width * height];
     rasterize_lines(&lines, width as _, height as _, fill_rule,
-        &mut FixedRasterWorkspace { segments: &mut segments,
+        &mut Workspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
             strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
         }, &mut |x, y, coverage| {
@@ -45,7 +45,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 #[test] fn diagonal_intersection_is_exact_in_raw_subpixels() {
     let edge = Edge::from_line((fixed(0.0), fixed(0.0)).into(),
                                 (fixed(1.0), fixed(1.0)).into()).unwrap();
-    let intersection = FixedLine::new(edge).unwrap().intersection(fixed(0.5));
+    let intersection = Line::new(edge).unwrap().intersection(fixed(0.5));
     assert_eq!(intersection.floor_raw(), 128);
 }
 
@@ -143,10 +143,10 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn rational_crossing_events_round_only_at_the_area_boundary() {
-    let line = |from, to| FixedLine::new(Edge::from_line(from, to).unwrap()).unwrap();
+    let line = |from, to| Line::new(Edge::from_line(from, to).unwrap()).unwrap();
     let left  = line((fixed(0.0), fixed(0.0)).into(), (fixed(3.0), fixed(2.0)).into());
     let right = line((fixed(2.0), fixed(0.0)).into(), (fixed(0.0), fixed(2.0)).into());
-    assert_eq!(crossing_event(left, right), Some(FixedCrossing { y: 205, x: 307 }));
+    assert_eq!(crossing_event(left, right), Some(Crossing { y: 205, x: 307 }));
 }
 
 #[test] fn randomized_fixed_quadrilaterals_track_the_f32_reference() {
@@ -184,18 +184,18 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn rational_order_handles_negative_values_and_different_denominators() {
-    let  left = FixedIntersection { num: -3, den: 2, winding: 1 };
-    let right = FixedIntersection { num: -4, den: 3, winding: -1 };
+    let  left = Intersection { num: -3, den: 2, winding: 1 };
+    let right = Intersection { num: -4, den: 3, winding: -1 };
     assert_eq!(left.floor_raw(), -2);
     assert_eq!(left.cmp_x(&right), Ordering::Less);
 
-    let half = FixedIntersection { num: 1, den: 2, winding: 1 };
-    let same = FixedIntersection { num: 2, den: 4, winding: -1 };
+    let half = Intersection { num: 1, den: 2, winding: 1 };
+    let same = Intersection { num: 2, den: 4, winding: -1 };
     assert_eq!(half.cmp_x(&same), Ordering::Equal);
 }
 
 #[test] fn rational_rounding_is_symmetric_at_half_subpixels() {
-    let value = |num| FixedIntersection { num, den: 2, winding: 1 };
+    let value = |num| Intersection { num, den: 2, winding: 1 };
     assert_eq!(value( 1).round_raw(),  1);
     assert_eq!(value(-1).round_raw(), -1);
     assert_eq!(value( 3).round_raw(),  2);
@@ -207,7 +207,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     let outside = FixedScalar::from_bits(DEVICE_RAW_LIMIT + 1);
     let edge = Edge::from_line((FixedScalar::ZERO, FixedScalar::ZERO).into(),
         (outside, FixedScalar::ONE).into()).unwrap();
-    assert_eq!(FixedLine::new(edge), Err(FixedRasterError::CoordinateOutOfRange));
+    assert_eq!(Line::new(edge), Err(Error::CoordinateOutOfRange));
 }
 
 #[test] fn manually_constructed_invalid_edges_are_rejected() {
@@ -215,7 +215,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
         upper: (FixedScalar::ZERO, FixedScalar::ONE).into(),
         lower: (FixedScalar::ONE, FixedScalar::ZERO).into(), winding: 1,
     };
-    assert_eq!(FixedLine::new(edge), Err(FixedRasterError::InvalidEdge));
+    assert_eq!(Line::new(edge), Err(Error::InvalidEdge));
 }
 
 #[test] fn line_preparation_is_bounded_and_transactional() {
@@ -223,30 +223,30 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
         upper: (fixed(x), fixed(0.0)).into(),
         lower: (fixed(x), fixed(1.0)).into(), winding,
     };
-    let sentinel = FixedLine::new(edge(7.0, 1)).unwrap();
+    let sentinel = Line::new(edge(7.0, 1)).unwrap();
     let mut output = [sentinel; 2];
 
     assert_eq!(prepare_lines(&[edge(0.0, 1), edge(1.0, -1)], &mut output), Ok(2));
     assert_eq!(output[0].intersection(fixed(0.5)).floor_raw(), 0);
     output = [sentinel; 2];
     assert_eq!(prepare_lines(&[edge(0.0, 1), edge(1.0, 0)], &mut output),
-        Err(FixedRasterError::InvalidEdge));
+        Err(Error::InvalidEdge));
     assert_eq!(output, [sentinel; 2]);
     assert_eq!(prepare_lines(&[edge(0.0, 1), edge(1.0, -1)], &mut output[..1]),
-        Err(FixedRasterError::WorkspaceTooSmall {
-            kind: FixedWorkspace::Lines, required: 2,
+        Err(Error::WorkspaceTooSmall {
+            kind: WorkspaceKind::Lines, required: 2,
         }));
         assert_eq!(output, [sentinel; 2]);
 }
 
 #[test] fn strip_bins_are_compact_bounded_and_transactional() {
-    let line = |x, top, bottom| FixedLine::new(Edge {
+    let line = |x, top, bottom| Line::new(Edge {
         upper: (fixed(x), fixed(top)).into(),
         lower: (fixed(x), fixed(bottom)).into(), winding: 1,
     }).unwrap();
     let lines = [line(0.0, 0.0, 16.0), line(1.0, 15.5, 32.5), line(2.0, -10.0, -1.0)];
-    assert_eq!(fixed_strip_requirements(&lines, 64),
-        Ok(FixedStripRequirements { offsets: 5, indices: 4 }));
+    assert_eq!(strip_requirements(&lines, 64),
+        Ok(StripRequirements { offsets: 5, indices: 4 }));
 
     let (mut offsets, mut indices) = ([0; 5], [0; 4]);
     let bins = build_strip_bins(&lines, 64, &mut offsets, &mut indices).unwrap();
@@ -258,19 +258,19 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 
     let (mut offsets, mut indices) = ([7; 5], [9; 4]);
     assert_eq!(build_strip_bins(&lines, 64, &mut offsets[..4], &mut indices).unwrap_err(),
-        FixedRasterError::WorkspaceTooSmall {
-            kind: FixedWorkspace::StripOffsets, required: 5,
+        Error::WorkspaceTooSmall {
+            kind: WorkspaceKind::StripOffsets, required: 5,
         });
     assert_eq!((offsets, indices), ([7; 5], [9; 4]));
     assert_eq!(build_strip_bins(&lines, 64, &mut offsets, &mut indices[..3]).unwrap_err(),
-        FixedRasterError::WorkspaceTooSmall {
-            kind: FixedWorkspace::StripIndices, required: 4,
+        Error::WorkspaceTooSmall {
+            kind: WorkspaceKind::StripIndices, required: 4,
         });
     assert_eq!((offsets, indices), ([7; 5], [9; 4]));
 }
 
 #[test] fn retained_coverage_is_compact_sparse_and_replays_exactly() {
-    assert_eq!(core::mem::size_of::<FixedCoverageRun>(), 12);
+    assert_eq!(core::mem::size_of::<CoverageRun>(), 12);
     let edge = |x, top, bottom, winding| Edge {
         upper: (fixed(x), fixed(top)).into(),
         lower: (fixed(x), fixed(bottom)).into(), winding,
@@ -279,26 +279,26 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
         edge(0.5, 0.5, 20.25, 1), edge(2.5, 0.5, 20.25, -1),
         edge(1.0, 32.0, 33.0, 1), edge(3.0, 32.0, 33.0, -1),
     ];
-    let mut lines = [FixedLine::default(); 4];
+    let mut lines = [Line::default(); 4];
     prepare_lines(&edges, &mut lines).unwrap();
-    let requirements = fixed_strip_requirements(&lines, 40).unwrap();
+    let requirements = strip_requirements(&lines, 40).unwrap();
     let (mut segments, mut trapezoids, mut row_area, mut offsets, mut indices) = (
-        [FixedSegment::default(); 4], [FixedTrapezoid::default(); 2], [0; 4],
+        [Segment::default(); 4], [Trapezoid::default(); 2], [0; 4],
         vec![0; requirements.offsets], vec![0; requirements.indices],
     );
-    let mut raster_workspace = FixedRasterWorkspace {
+    let mut raster_workspace = Workspace {
         segments: &mut segments, trapezoids: &mut trapezoids, row_area: &mut row_area,
         strip_offsets: &mut offsets, strip_indices: &mut indices,
     };
-    let (mut strips, mut runs) = ([FixedCoverageStrip::default(); 3],
-                                  [FixedCoverageRun::default(); 64]);
+    let (mut strips, mut runs) = ([CoverageStrip::default(); 3],
+                                  [CoverageRun::default(); 64]);
     let retained = rasterize_lines_to_strips(&lines, 4, 40, FillRule::NonZero,
         &mut raster_workspace,
-        FixedCoverageWorkspace { strips: &mut strips, runs: &mut runs }).unwrap();
+        CoverageWorkspace { strips: &mut strips, runs: &mut runs }).unwrap();
 
     assert_eq!(retained.strips().iter().map(|strip| strip.y).collect::<Vec<_>>(),
         [0, 16, 32]);
-    assert!(retained.runs().iter().all(|run| run.row < FIXED_STRIP_HEIGHT as u8));
+    assert!(retained.runs().iter().all(|run| run.row < STRIP_HEIGHT as u8));
     let mut replayed = vec![0; 4 * 40];
     retained.replay(&mut |x, y, coverage| {
         replayed[y as usize * 4 + x as usize] = coverage;
@@ -314,30 +314,30 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
         Edge { upper: (fixed(1.0), fixed(0.0)).into(),
                lower: (fixed(1.0), fixed(1.0)).into(), winding: -1 },
     ];
-    let mut lines = [FixedLine::default(); 2];  prepare_lines(&edges, &mut lines).unwrap();
-    let requirements = fixed_strip_requirements(&lines, 1).unwrap();
+    let mut lines = [Line::default(); 2];  prepare_lines(&edges, &mut lines).unwrap();
+    let requirements = strip_requirements(&lines, 1).unwrap();
     let (mut segments, mut trapezoids, mut row_area, mut offsets, mut indices) = (
-        [FixedSegment::default(); 2], [FixedTrapezoid::default(); 1], [0; 1],
+        [Segment::default(); 2], [Trapezoid::default(); 1], [0; 1],
         vec![0; requirements.offsets], vec![0; requirements.indices],
     );
-    let mut raster_workspace = FixedRasterWorkspace {
+    let mut raster_workspace = Workspace {
         segments: &mut segments, trapezoids: &mut trapezoids, row_area: &mut row_area,
         strip_offsets: &mut offsets, strip_indices: &mut indices,
     };
-    let mut run = [FixedCoverageRun::default(); 1];
+    let mut run = [CoverageRun::default(); 1];
     assert_eq!(rasterize_lines_to_strips(&lines, 1, 1, FillRule::NonZero,
         &mut raster_workspace,
-        FixedCoverageWorkspace { strips: &mut [], runs: &mut run }).unwrap_err(),
-        FixedRasterError::WorkspaceTooSmall {
-            kind: FixedWorkspace::CoverageStrips, required: 1,
+        CoverageWorkspace { strips: &mut [], runs: &mut run }).unwrap_err(),
+        Error::WorkspaceTooSmall {
+            kind: WorkspaceKind::CoverageStrips, required: 1,
         });
 
-    let mut strip = [FixedCoverageStrip::default(); 1];
+    let mut strip = [CoverageStrip::default(); 1];
     assert_eq!(rasterize_lines_to_strips(&lines, 1, 1, FillRule::NonZero,
         &mut raster_workspace,
-        FixedCoverageWorkspace { strips: &mut strip, runs: &mut [] }).unwrap_err(),
-        FixedRasterError::WorkspaceTooSmall {
-            kind: FixedWorkspace::CoverageRuns, required: 1,
+        CoverageWorkspace { strips: &mut strip, runs: &mut [] }).unwrap_err(),
+        Error::WorkspaceTooSmall {
+            kind: WorkspaceKind::CoverageRuns, required: 1,
         });
 }
 
@@ -350,7 +350,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
         edge(0.0, 0.0, 2.0, 1), edge(2.0, 0.0, 2.0, -1),
         edge(0.5, 0.5, 1.5, 1), edge(1.5, 0.5, 1.5, -1),
     ];
-    let mut lines = [FixedLine::default(); 4];
+    let mut lines = [Line::default(); 4];
     prepare_lines(&edges, &mut lines).unwrap();
 
     let first = next_slab_boundary(&lines, fixed(0.0), fixed(2.0)).unwrap();
@@ -358,21 +358,21 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     let third = next_slab_boundary(&lines, second, fixed(2.0)).unwrap();
     assert_eq!((first, second, third), (fixed(0.5), fixed(1.5), fixed(2.0)));
 
-    let mut segments = [FixedSegment::default(); 4];
+    let mut segments = [Segment::default(); 4];
     let count = collect_segments(&lines, first, second, &mut segments).unwrap();
     assert_eq!(count, 4);
     assert!(segments[..count].iter().all(|segment|
         segment.top_y() == first && segment.bottom_y() == second));
-    let mut trapezoids = [FixedTrapezoid::default(); 2];
+    let mut trapezoids = [Trapezoid::default(); 2];
     assert_eq!(collect_trapezoids(&mut segments[..count], FillRule::EvenOdd,
         &mut trapezoids), Ok(2));
 }
 
 #[test] fn slab_clipping_preserves_exact_boundary_intersections() {
-    let line = FixedLine::new(Edge::from_line(
+    let line = Line::new(Edge::from_line(
         (fixed(-1.0), fixed(-1.0)).into(),
         (fixed(2.0),  fixed(2.0) ).into()).unwrap()).unwrap();
-    let mut segments = [FixedSegment::default(); 1];
+    let mut segments = [Segment::default(); 1];
 
     assert_eq!(collect_segments(&[line], fixed(0.0), fixed(1.0), &mut segments), Ok(1));
     assert_eq!((segments[0].top_y(), segments[0].bottom_y()), (fixed(0.0), fixed(1.0)));
@@ -383,32 +383,32 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn slab_errors_do_not_modify_output() {
-    let sentinel = FixedSegment { line_index: 0, top_y: 7, bottom_y: 9,
-            top_x: FixedIntersection::default(),
-        bottom_x: FixedIntersection::default(),
+    let sentinel = Segment { line_index: 0, top_y: 7, bottom_y: 9,
+            top_x: Intersection::default(),
+        bottom_x: Intersection::default(),
     };
-    let line = FixedLine::new(Edge::from_line(
+    let line = Line::new(Edge::from_line(
         (fixed(0.0), fixed(0.0)).into(),
         (fixed(1.0), fixed(1.0)).into()).unwrap()).unwrap();
     let mut output = [sentinel];
 
     assert_eq!(collect_segments(&[line], fixed(1.0), fixed(1.0), &mut output),
-        Err(FixedRasterError::InvalidSlab));
+        Err(Error::InvalidSlab));
     assert_eq!(output, [sentinel]);
     assert_eq!(collect_segments(&[line], fixed(0.0), fixed(1.0), &mut []),
-        Err(FixedRasterError::WorkspaceTooSmall {
-            kind: FixedWorkspace::Segments, required: 1,
+        Err(Error::WorkspaceTooSmall {
+            kind: WorkspaceKind::Segments, required: 1,
         }));
     assert_eq!(output, [sentinel]);
 }
 
 #[test] fn slab_segments_form_rectangular_and_triangular_trapezoids() {
-    let segment = |top_x, bottom_x, winding| FixedSegment {
+    let segment = |top_x, bottom_x, winding| Segment {
         line_index: 0, top_y: 0, bottom_y: 256,
-            top_x: FixedIntersection { num:    top_x, den: 1, winding },
-        bottom_x: FixedIntersection { num: bottom_x, den: 1, winding },
+            top_x: Intersection { num:    top_x, den: 1, winding },
+        bottom_x: Intersection { num: bottom_x, den: 1, winding },
     };
-    let mut output = [FixedTrapezoid::default(); 1];
+    let mut output = [Trapezoid::default(); 1];
     let mut rectangle = [segment(0, 0, 1), segment(256, 256, -1)];
     assert_eq!(collect_trapezoids(&mut rectangle, FillRule::NonZero, &mut output), Ok(1));
     assert_eq!((output[0].left.top_x.floor_raw(), output[0].right.top_x.floor_raw()),
@@ -421,15 +421,15 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn trapezoid_area_quantizes_full_and_half_pixels_exactly() {
-    let segment = |top_x, bottom_x, winding| FixedSegment {
+    let segment = |top_x, bottom_x, winding| Segment {
         line_index: 0, top_y: 0, bottom_y: 256,
-            top_x: FixedIntersection { num:    top_x, den: 1, winding },
-        bottom_x: FixedIntersection { num: bottom_x, den: 1, winding },
+            top_x: Intersection { num:    top_x, den: 1, winding },
+        bottom_x: Intersection { num: bottom_x, den: 1, winding },
     };
-    let rectangle = FixedTrapezoid {
+    let rectangle = Trapezoid {
         left: segment(0, 0, 1), right: segment(256, 256, -1),
     };
-    let triangle = FixedTrapezoid {
+    let triangle = Trapezoid {
         left: segment(128, 0, 1), right: segment(128, 256, -1),
     };
     assert_eq!(rectangle.area_twice_raw(), Ok(PIXEL_AREA_TWICE));
@@ -438,35 +438,35 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(quantize_area_coverage(triangle.area_twice_raw().unwrap()), 128);
     assert_eq!(quantize_area_coverage(PIXEL_AREA_TWICE * 2), 255);
 
-    let inverted = FixedTrapezoid { left: rectangle.right, right: rectangle.left };
-    assert_eq!(inverted.area_twice_raw(), Err(FixedRasterError::InvalidTrapezoid));
+    let inverted = Trapezoid { left: rectangle.right, right: rectangle.left };
+    assert_eq!(inverted.area_twice_raw(), Err(Error::InvalidTrapezoid));
 }
 
 #[test] fn trapezoid_extracts_only_guaranteed_full_pixel_runs() {
-    let segment = |top_y, bottom_y, top_x, bottom_x, winding| FixedSegment {
+    let segment = |top_y, bottom_y, top_x, bottom_x, winding| Segment {
         line_index: 0, top_y, bottom_y,
-            top_x: FixedIntersection { num:    top_x, den: 1, winding },
-        bottom_x: FixedIntersection { num: bottom_x, den: 1, winding },
+            top_x: Intersection { num:    top_x, den: 1, winding },
+        bottom_x: Intersection { num: bottom_x, den: 1, winding },
     };
-    let aligned = FixedTrapezoid {
+    let aligned = Trapezoid {
             left: segment(0, 256, 256, 256, 1),
         right: segment(0, 256, 1024, 1024, -1),
     };
     assert_eq!(aligned.full_pixel_range(8), Ok(1..4));
 
-    let slanted = FixedTrapezoid {
+    let slanted = Trapezoid {
             left: segment(0, 256, 128, 256, 1),
         right: segment(0, 256, 896, 768, -1),
     };
     assert_eq!(slanted.full_pixel_range(8), Ok(1..3));
 
-    let clipped = FixedTrapezoid {
+    let clipped = Trapezoid {
             left: segment(0, 256, -512, -256, 1),
         right: segment(0, 256, 512, 768, -1),
     };
     assert_eq!(clipped.full_pixel_range(2), Ok(0..2));
 
-    let partial_height = FixedTrapezoid {
+    let partial_height = Trapezoid {
             left: segment(0, 128, 0, 0, 1),
         right: segment(0, 128, 512, 512, -1),
     };
@@ -474,12 +474,12 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn trapezoid_clips_boundary_pixels_without_allocation() {
-    let segment = |top_y, bottom_y, top_x, bottom_x, winding| FixedSegment {
+    let segment = |top_y, bottom_y, top_x, bottom_x, winding| Segment {
         line_index: 0, top_y, bottom_y,
-            top_x: FixedIntersection { num:    top_x, den: 1, winding },
-        bottom_x: FixedIntersection { num: bottom_x, den: 1, winding },
+            top_x: Intersection { num:    top_x, den: 1, winding },
+        bottom_x: Intersection { num: bottom_x, den: 1, winding },
     };
-    let centered = FixedTrapezoid {
+    let centered = Trapezoid {
             left: segment(0, 256, 128, 128, 1),
         right: segment(0, 256, 384, 384, -1),
     };
@@ -487,7 +487,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(centered.pixel_area_twice_raw(1, 0), Ok(PIXEL_AREA_TWICE / 2));
     assert_eq!(centered.pixel_area_twice_raw(2, 0), Ok(0));
 
-    let diagonal = FixedTrapezoid {
+    let diagonal = Trapezoid {
             left: segment(0, 256, 0, 256, 1),
         right: segment(0, 256, 256, 256, -1),
     };
@@ -495,22 +495,22 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(area, PIXEL_AREA_TWICE / 2);
     assert_eq!(quantize_area_coverage(area), 128);
 
-    let partial_height = FixedTrapezoid {
+    let partial_height = Trapezoid {
             left: segment(128, 256, 0, 0, 1),
         right: segment(128, 256, 256, 256, -1),
     };
     assert_eq!(partial_height.pixel_area_twice_raw(0, 0), Ok(PIXEL_AREA_TWICE / 2));
     assert_eq!(partial_height.pixel_area_twice_raw(0, 1),
-        Err(FixedRasterError::InvalidSlabPartition));
+        Err(Error::InvalidSlabPartition));
 }
 
 #[test] fn slab_areas_accumulate_before_quantization_and_emit_as_runs() {
-    let segment = |top_y, bottom_y, x, winding| FixedSegment {
+    let segment = |top_y, bottom_y, x, winding| Segment {
         line_index: 0, top_y, bottom_y,
-            top_x: FixedIntersection { num: x, den: 1, winding },
-        bottom_x: FixedIntersection { num: x, den: 1, winding },
+            top_x: Intersection { num: x, den: 1, winding },
+        bottom_x: Intersection { num: x, den: 1, winding },
     };
-    let trapezoid = |top_y, bottom_y| FixedTrapezoid {
+    let trapezoid = |top_y, bottom_y| Trapezoid {
             left: segment(top_y, bottom_y, 0, 1),
         right: segment(top_y, bottom_y, 512, -1),
     };
@@ -532,61 +532,61 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn row_accumulation_combines_boundary_and_interior_pixels() {
-    let segment = |x, winding| FixedSegment {
+    let segment = |x, winding| Segment {
         line_index: 0, top_y: 0, bottom_y: 256,
-            top_x: FixedIntersection { num: x, den: 1, winding },
-        bottom_x: FixedIntersection { num: x, den: 1, winding },
+            top_x: Intersection { num: x, den: 1, winding },
+        bottom_x: Intersection { num: x, den: 1, winding },
     };
-    let trapezoid = FixedTrapezoid { left: segment(128, 1), right: segment(896, -1) };
+    let trapezoid = Trapezoid { left: segment(128, 1), right: segment(896, -1) };
     let mut row = [0; 4];
     accumulate_trapezoid_row(trapezoid, 4, 0, &mut row).unwrap();
     assert_eq!(row, [PIXEL_AREA_TWICE / 2, PIXEL_AREA_TWICE,
                         PIXEL_AREA_TWICE, PIXEL_AREA_TWICE / 2]);
     assert_eq!(row.map(quantize_area_coverage), [128, 255, 255, 128]);
     assert_eq!(accumulate_trapezoid_row(trapezoid, 4, 0, &mut row[..3]),
-        Err(FixedRasterError::WorkspaceTooSmall {
-            kind: FixedWorkspace::RowArea, required: 4,
+        Err(Error::WorkspaceTooSmall {
+            kind: WorkspaceKind::RowArea, required: 4,
         }));
 }
 
 #[test] fn trapezoid_construction_rejects_crossings_and_unpartitioned_slabs() {
-    let segment = |top_y, bottom_y, top_x, bottom_x, winding| FixedSegment {
+    let segment = |top_y, bottom_y, top_x, bottom_x, winding| Segment {
         line_index: 0, top_y, bottom_y,
-            top_x: FixedIntersection { num:    top_x, den: 1, winding },
-        bottom_x: FixedIntersection { num: bottom_x, den: 1, winding },
+            top_x: Intersection { num:    top_x, den: 1, winding },
+        bottom_x: Intersection { num: bottom_x, den: 1, winding },
     };
     let mut crossing = [ segment(0, 256, 0, 256, 1), segment(0, 256, 256, 0, -1) ];
     assert_eq!(collect_trapezoids(&mut crossing, FillRule::NonZero, &mut []),
-        Err(FixedRasterError::CrossingEdges));
+        Err(Error::CrossingEdges));
 
     let mut unpartitioned = [segment(0, 128, 0, 0, 1), segment(0, 256, 256, 256, -1)];
     assert_eq!(collect_trapezoids(&mut unpartitioned, FillRule::NonZero, &mut []),
-        Err(FixedRasterError::InvalidSlabPartition));
+        Err(Error::InvalidSlabPartition));
 }
 
 #[test] fn scanline_collection_is_half_open_sorted_and_bounded() {
-    let line = |from, to| FixedLine::new(Edge::from_line(from, to).unwrap()).unwrap();
+    let line = |from, to| Line::new(Edge::from_line(from, to).unwrap()).unwrap();
     let lines = [
         line((fixed(2.0), fixed(0.0)).into(), (fixed(1.0), fixed(1.0)).into()),
         line((fixed(0.0), fixed(0.0)).into(), (fixed(0.0), fixed(2.0)).into()),
     ];
-    let mut intersections = [FixedIntersection::default(); 2];
+    let mut intersections = [Intersection::default(); 2];
 
     assert_eq!(collect_intersections(&lines, fixed(0.5), &mut intersections), Ok(2));
-    assert_eq!(intersections.map(FixedIntersection::floor_raw), [0, 384]);
+    assert_eq!(intersections.map(Intersection::floor_raw), [0, 384]);
     assert_eq!(collect_intersections(&lines, fixed(1.0), &mut intersections), Ok(1));
     assert_eq!(intersections[0].floor_raw(), 0);
     assert_eq!(collect_intersections(&lines, fixed(0.5), &mut intersections[..1]),
-        Err(FixedRasterError::WorkspaceTooSmall {
-            kind: FixedWorkspace::Intersections, required: 2,
+        Err(Error::WorkspaceTooSmall {
+            kind: WorkspaceKind::Intersections, required: 2,
         }));
 }
 
 #[test] fn crossing_events_form_exact_spans_for_both_fill_rules() {
-    let crossing = |x, winding| FixedIntersection { num: x, den: 1, winding, };
+    let crossing = |x, winding| Intersection { num: x, den: 1, winding, };
     let intersections = [crossing(0, 1), crossing(1, 1),
         crossing(2, -1), crossing(3, -1)];
-    let mut spans = [FixedSpan::default(); 2];
+    let mut spans = [Span::default(); 2];
 
     assert_eq!(collect_spans(&intersections, FillRule::NonZero, &mut spans), Ok(1));
     assert_eq!((spans[0].from.floor_raw(), spans[0].to.floor_raw()), (0, 3));
@@ -597,19 +597,19 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
 }
 
 #[test] fn coincident_crossings_are_grouped_and_errors_do_not_write_output() {
-    let crossing = |x, winding| FixedIntersection { num: x, den: 1, winding };
-    let mut output = [FixedSpan { from: crossing(7, 0), to: crossing(9, 0) }];
+    let crossing = |x, winding| Intersection { num: x, den: 1, winding };
+    let mut output = [Span { from: crossing(7, 0), to: crossing(9, 0) }];
     let sentinel = output;
     assert_eq!(collect_spans(&[crossing(0, 1), crossing(0, -1)],
         FillRule::NonZero, &mut output), Ok(0));
     assert_eq!(output, sentinel);
 
     assert_eq!(collect_spans(&[crossing(1, 1), crossing(0, -1)],
-        FillRule::NonZero, &mut output), Err(FixedRasterError::InvalidIntersectionOrder));
+        FillRule::NonZero, &mut output), Err(Error::InvalidIntersectionOrder));
     assert_eq!(output, sentinel);
     assert_eq!(collect_spans(&[crossing(0, 1), crossing(1, -1), crossing(2, 1),
         crossing(3, -1)], FillRule::EvenOdd, &mut []),
-        Err(FixedRasterError::WorkspaceTooSmall {
-            kind: FixedWorkspace::Spans, required: 2,
+        Err(Error::WorkspaceTooSmall {
+            kind: WorkspaceKind::Spans, required: 2,
         }));
 }

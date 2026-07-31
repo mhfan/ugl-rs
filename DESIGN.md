@@ -180,20 +180,21 @@ and SIMD layouts do not enter the common `Edge` representation.
   `PaintSampler` compositor and rectangle/path-mask adapters. This establishes
   functional backend parity without claiming FPU-free paint evaluation:
   existing gradient samplers remain `f32`.
-- `FixedPaintSampler` is the explicit no-FPU contract. `FixedLinearGradient`
-  accepts Q24.8 endpoints and a caller-owned encoded ramp. It uses `i64`
+- `FixedPaintSampler` is the explicit no-FPU contract.
+  `fixed::sampler::LinearGradient` accepts Q24.8 endpoints and a caller-owned
+  encoded ramp. It uses `i64`
   coordinate deltas and exact `i128` projection, spread mapping, and nearest
   ramp selection: the full Q24.8 endpoint difference squared reaches the edge
   of `i64`, so `i128` is required before summing two axes.
-  `FixedRadialGradient` supports increasing or decreasing concentric radii and
-  general two-circle/focal geometry. Its reduced discriminant is proven within
+  `fixed::sampler::RadialGradient` supports increasing or decreasing concentric
+  radii and general two-circle/focal geometry. Its reduced discriminant is proven within
   `i128` over the fixed device domain; adaptive integer square roots retain up
   to 16 fractional bits, and the same largest-valid-root policy as the `f32`
   reference handles focal cones. Ordinary values take `u64`/`i64` fast paths.
   Static ramps need no allocation or runtime color conversion on an MCU.
-- `FixedAngle` stores one binary turn in `u32`, avoiding unit ambiguity and
+- `fixed::math::Angle` stores one binary turn in `u32`, avoiding unit ambiguity and
   floating-point conversion at the fixed conic API boundary.
-  `FixedConicGradient` uses 16 integer CORDIC vectoring steps and direct
+  `fixed::sampler::ConicGradient` uses 16 integer CORDIC vectoring steps and direct
   wrapping ramp selection. Tests bound angular error below `6e-6` turn on the
   integer grid and encoded output to one adjacent ramp entry versus `atan2f`.
 - Solid paint reports its constant color so span and tile compositors retain
@@ -267,10 +268,10 @@ and SIMD layouts do not enter the common `Edge` representation.
   but must preserve the documented device-space result within its error bound.
 - Stroke expansion can stream consistently wound fill contours into bounded
   caller-owned storage. It must not require an owned intermediate `Path`.
-- `FixedStrokeOptions` and `stroke_polyline_fixed` provide the initial no-FPU
+- `fixed::stroke::Options` and `fixed::stroke::stroke_polyline` provide the initial no-FPU
   Q24.8 path for all caps and joins. Integer square-root normalization and
   widened intersection tests preserve bounded arithmetic.
-  `render_native_stroke_polyline_fixed` connects caller-owned edge/line scratch
+  `fixed::canvas::render_stroke_polyline` connects caller-owned edge/line scratch
   directly to fixed raster and paint. Round geometry shares the binary-angle
   CORDIC with fixed conic paint. Its explicit `round_segments` count is per
   half circle, making edge capacity and the chord error
@@ -518,7 +519,7 @@ The facade uses two concrete, deliberately parallel entry points:
 
 - `Context` selects the analytic f32 geometry/raster path and the encoded
   compatibility compositor.
-- `FixedContext` selects Q24.8 geometry/rasterization and fixed paint sampling.
+- `fixed::context::Context` selects Q24.8 geometry/rasterization and fixed paint sampling.
   Compatibility `PaintSampler` entry points remain available explicitly but
   must not be mistaken for a no-FPU path.
 
@@ -545,7 +546,7 @@ The first stable method vocabulary is small:
   caller data and requires additional bounded scratch. It is not hidden inside
   an enum that expands every context.
 
-Status: the first `Context` and `FixedContext` fill/stroke facade is
+Status: the first `Context` and `fixed::context::Context` fill/stroke facade is
 implemented. Both share generic state storage and parallel method names;
 rectangle/mask clip state and statically dispatched custom paint are supported.
 Dashed methods, caller-owned save/restore, and workspace sizing helpers remain
@@ -563,23 +564,22 @@ Backend-specific implementation lives under `src/fixed/`:
 
 ```text
 src/fixed/
+    canvas.rs
     context.rs
+    dash.rs
     flatten.rs
     math.rs
     raster.rs
     sampler.rs
     stroke.rs
     tile.rs
-    tests.rs
 ```
 
-Shared `geometry`, `edge`, `coverage`, `color`, `sampler` traits, and compositor
-adapters remain outside that directory. Existing public paths
-(`raster_fixed`, `stroke_fixed`, `flatten_fixed`, and `tile_fixed`) are
-remain preserved by thin re-export modules, so source organization does not
-silently become an unrelated API break. Once the facade is established, a
-pre-1.0 cleanup may expose a coherent `fixed` module and deprecate the old
-paths deliberately.
+Shared `geometry`, `edge`, coverage, color, sampler traits, and compositor
+adapters remain outside that directory. The canonical public paths are rooted
+at `fixed::*`; redundant crate-root aliases and `Fixed`/`_fixed` affixes are
+omitted inside that namespace. Cross-backend call sites add local import aliases
+only where names collide.
 
 ### Engineering gates for the facade
 

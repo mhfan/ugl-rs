@@ -17,11 +17,6 @@
 
 use crate::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA},
     geometry::{Affine, Point}};
-#[cfg(feature = "fixed")]
-pub use crate::fixed::sampler::{
-    FixedAngle, FixedConicGradient, FixedLinearGradient, FixedPaintSampler,
-    FixedRadialGradient,
-};
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
 /// Implementations should be small values borrowed by the compositor. Calls are

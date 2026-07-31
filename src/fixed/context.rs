@@ -1,30 +1,29 @@
 //! Stateful facade for the fixed-point rendering pipeline.
 
 use crate::{
-    canvas::{FixedGeometryWorkspace, FixedRenderOptions, FixedStrokePathOptions, PixmapMut,
-        RenderError, prepare_fixed_stroke_path, render_native_paint_fixed,
-        render_native_paint_fixed_clipped, render_native_paint_fixed_masked,
-        render_native_path_fixed, render_native_path_fixed_clipped,
-        render_native_path_fixed_masked},
+    canvas::{PixmapMut, RenderError},
     color::{PremulSRGBA8, SRGBA}, context::{Clip, DrawState},
-    fixed::{flatten::FixedFlattenOptions, raster::FixedRasterWorkspace,
-        stroke::FixedStrokeOptions},
+    fixed::{canvas::{GeometryWorkspace, RenderOptions, StrokePathOptions,
+            prepare_stroke_path, render_paint, render_paint_clipped, render_paint_masked,
+            render_path, render_path_clipped, render_path_masked},
+        flatten::Options as FlattenOptions, raster::Workspace,
+        sampler::FixedPaintSampler, stroke::Options as StrokeOptions},
     geometry::{Affine, FixedScalar, Path, Rect}, raster::{CoverageMask, FillRule},
-    sampler::FixedPaintSampler, stroke::StrokePathWorkspace,
+    stroke::StrokePathWorkspace,
 };
 
-/// Caller-owned scratch for [`FixedContext`].
-pub struct FixedContextWorkspace<'a> {
+/// Caller-owned scratch for [`Context`].
+pub struct ContextWorkspace<'a> {
     pub path: StrokePathWorkspace<'a, FixedScalar>,
-    pub geometry: FixedGeometryWorkspace<'a>,
-    pub raster: FixedRasterWorkspace<'a>,
+    pub geometry: GeometryWorkspace<'a>,
+    pub raster: Workspace<'a>,
 }
 
-#[derive(Clone, Copy)] struct FixedSolidPaint(PremulSRGBA8);
+#[derive(Clone, Copy)] struct SolidPaint(PremulSRGBA8);
 
-impl FixedPaintSampler for FixedSolidPaint {
-    fn sample_fixed(&self, _x: u32, _y: u32) -> PremulSRGBA8 { self.0 }
-    fn solid_color_fixed(&self) -> Option<PremulSRGBA8> { Some(self.0) }
+impl FixedPaintSampler for SolidPaint {
+    fn sample(&self, _x: u32, _y: u32) -> PremulSRGBA8 { self.0 }
+    fn solid_color(&self) -> Option<PremulSRGBA8> { Some(self.0) }
 }
 
 /// Stateful Q24.8 drawing facade.
@@ -32,23 +31,23 @@ impl FixedPaintSampler for FixedSolidPaint {
 /// Methods accepting [`FixedPaintSampler`] are no-FPU except rectangle
 /// clipping, whose compatibility coverage adapter currently uses f32. Use a
 /// pre-rasterized fixed path mask when the complete clip path must avoid an FPU.
-pub struct FixedContext<'a, 'target, 'workspace, 'clip> {
+pub struct Context<'a, 'target, 'workspace, 'clip> {
     target: &'a mut PixmapMut<'target>,
-    workspace: &'a mut FixedContextWorkspace<'workspace>,
-    state: DrawState<FixedScalar, FixedFlattenOptions, FixedStrokeOptions, FixedSolidPaint>,
+    workspace: &'a mut ContextWorkspace<'workspace>,
+    state: DrawState<FixedScalar, FlattenOptions, StrokeOptions, SolidPaint>,
     clip: Clip<'clip>,
 }
 
-impl<'a, 'target, 'workspace, 'clip> FixedContext<'a, 'target, 'workspace, 'clip> {
+impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
     pub fn new(target: &'a mut PixmapMut<'target>,
-        workspace: &'a mut FixedContextWorkspace<'workspace>) -> Self {
+        workspace: &'a mut ContextWorkspace<'workspace>) -> Self {
         Self {
             target, workspace,
             state: DrawState {
                 transform: Affine::identity(), fill_rule: FillRule::NonZero,
-                flatten: FixedFlattenOptions::default(),
-                stroke: FixedStrokeOptions::default(),
-                paint: FixedSolidPaint(SRGBA::black().premul_encoded()),
+                flatten: FlattenOptions::default(),
+                stroke: StrokeOptions::default(),
+                paint: SolidPaint(SRGBA::black().premul_encoded()),
             },
             clip: Clip::None,
         }
@@ -58,8 +57,8 @@ impl<'a, 'target, 'workspace, 'clip> FixedContext<'a, 'target, 'workspace, 'clip
     pub fn target_mut(&mut self) -> &mut PixmapMut<'target> { self.target }
     pub fn transform(&self) -> Affine<FixedScalar> { self.state.transform }
     pub fn fill_rule(&self) -> FillRule { self.state.fill_rule }
-    pub fn flatten(&self) -> FixedFlattenOptions { self.state.flatten }
-    pub fn stroke_options(&self) -> FixedStrokeOptions { self.state.stroke }
+    pub fn flatten(&self) -> FlattenOptions { self.state.flatten }
+    pub fn stroke_options(&self) -> StrokeOptions { self.state.stroke }
 
     pub fn set_transform(&mut self, transform: Affine<FixedScalar>) -> &mut Self {
         self.state.transform = transform; self
@@ -69,16 +68,16 @@ impl<'a, 'target, 'workspace, 'clip> FixedContext<'a, 'target, 'workspace, 'clip
         self.state.fill_rule = fill_rule; self
     }
 
-    pub fn set_flatten(&mut self, flatten: FixedFlattenOptions) -> &mut Self {
+    pub fn set_flatten(&mut self, flatten: FlattenOptions) -> &mut Self {
         self.state.flatten = flatten; self
     }
 
-    pub fn set_stroke(&mut self, stroke: FixedStrokeOptions) -> &mut Self {
+    pub fn set_stroke(&mut self, stroke: StrokeOptions) -> &mut Self {
         self.state.stroke = stroke; self
     }
 
     pub fn set_color(&mut self, color: SRGBA<u8>) -> &mut Self {
-        self.state.paint = FixedSolidPaint(color.premul_encoded()); self
+        self.state.paint = SolidPaint(color.premul_encoded()); self
     }
 
     pub fn clear_clip(&mut self) -> &mut Self { self.clip = Clip::None; self }
@@ -99,17 +98,17 @@ impl<'a, 'target, 'workspace, 'clip> FixedContext<'a, 'target, 'workspace, 'clip
 
     pub fn fill_with<S: FixedPaintSampler>(&mut self, path: &Path<FixedScalar>,
         paint: &S) -> Result<(), RenderError> {
-        let (options, clip) = (FixedRenderOptions {
+        let (options, clip) = (RenderOptions {
             transform: self.state.transform, flatten: self.state.flatten,
             fill_rule: self.state.fill_rule,
         }, self.clip);
         let workspace = &mut *self.workspace;
         match clip {
-            Clip::None => render_native_path_fixed(path, paint, options, self.target,
+            Clip::None => render_path(path, paint, options, self.target,
                 &mut workspace.geometry, &mut workspace.raster),
-            Clip::Rect(rect) => render_native_path_fixed_clipped(path, paint, rect, options,
+            Clip::Rect(rect) => render_path_clipped(path, paint, rect, options,
                 self.target, &mut workspace.geometry, &mut workspace.raster),
-            Clip::Mask(mask) => render_native_path_fixed_masked(path, paint, mask, options,
+            Clip::Mask(mask) => render_path_masked(path, paint, mask, options,
                 self.target, &mut workspace.geometry, &mut workspace.raster),
         }
     }
@@ -121,20 +120,20 @@ impl<'a, 'target, 'workspace, 'clip> FixedContext<'a, 'target, 'workspace, 'clip
 
     pub fn stroke_with<S: FixedPaintSampler>(&mut self, path: &Path<FixedScalar>,
         paint: &S) -> Result<(), RenderError> {
-        let (options, clip) = (FixedStrokePathOptions {
+        let (options, clip) = (StrokePathOptions {
             transform: self.state.transform, flatten: self.state.flatten,
             stroke: self.state.stroke,
         }, self.clip);
         let workspace = &mut *self.workspace;
-        let line_count = prepare_fixed_stroke_path(
+        let line_count = prepare_stroke_path(
             path, options, &mut workspace.path, &mut workspace.geometry)?;
         let lines = &workspace.geometry.lines[..line_count];
         match clip {
-            Clip::None => render_native_paint_fixed(
+            Clip::None => render_paint(
                 lines, paint, FillRule::NonZero, self.target, &mut workspace.raster),
-            Clip::Rect(rect) => render_native_paint_fixed_clipped(
+            Clip::Rect(rect) => render_paint_clipped(
                 lines, paint, rect, FillRule::NonZero, self.target, &mut workspace.raster),
-            Clip::Mask(mask) => render_native_paint_fixed_masked(
+            Clip::Mask(mask) => render_paint_masked(
                 lines, paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
         }
     }
@@ -142,7 +141,7 @@ impl<'a, 'target, 'workspace, 'clip> FixedContext<'a, 'target, 'workspace, 'clip
 
 #[cfg(test)] mod tests {
     use super::*;
-    use crate::{edge::Edge, fixed::raster::{FixedLine, FixedSegment, FixedTrapezoid},
+    use crate::{edge::Edge, fixed::raster::{Line, Segment, Trapezoid},
         geometry::PathBuilder, stroke::{StrokeContour, StrokePathWorkspace}};
 
     #[test] fn fixed_context_matches_state_clip_and_workspace_shape() {
@@ -156,18 +155,18 @@ impl<'a, 'target, 'workspace, 'clip> FixedContext<'a, 'target, 'workspace, 'clip
             [StrokeContour::default(); 2],
         );
         let (mut edges, mut lines) = (
-            [Edge::<FixedScalar>::default(); 32], [FixedLine::default(); 32],
+            [Edge::<FixedScalar>::default(); 32], [Line::default(); 32],
         );
         let (mut segments, mut trapezoids, mut row_area) = (
-            [FixedSegment::default(); 32], [FixedTrapezoid::default(); 16], [0; 4],
+            [Segment::default(); 32], [Trapezoid::default(); 16], [0; 4],
         );
         let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 32]);
-        let mut workspace = FixedContextWorkspace {
+        let mut workspace = ContextWorkspace {
             path: StrokePathWorkspace {
                 points: &mut points, contours: &mut contours,
             },
-            geometry: FixedGeometryWorkspace { edges: &mut edges, lines: &mut lines },
-            raster: FixedRasterWorkspace {
+            geometry: GeometryWorkspace { edges: &mut edges, lines: &mut lines },
+            raster: Workspace {
                 segments: &mut segments, trapezoids: &mut trapezoids,
                 row_area: &mut row_area, strip_offsets: &mut strip_offsets,
                 strip_indices: &mut strip_indices,
@@ -180,7 +179,7 @@ impl<'a, 'target, 'workspace, 'clip> FixedContext<'a, 'target, 'workspace, 'clip
         ];
         let mut pixels = [0; 4 * 3 * 4];
         let mut target = PixmapMut::new(&mut pixels, 4, 3, 16).unwrap();
-        let mut context = FixedContext::new(&mut target, &mut workspace);
+        let mut context = Context::new(&mut target, &mut workspace);
         context.set_color(SRGBA::new(255, 0, 0, 128))
             .set_transform(Affine::translate(fixed(1), FixedScalar::ZERO))
             .set_clip_mask(CoverageMask::new(&mask_data, 4, 3, 4).unwrap());

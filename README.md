@@ -145,21 +145,21 @@ The fixed raster APIs can feed any existing `PaintSampler` through streaming,
 retained-strip, or retained-tile coverage, with rectangle or borrowed path-mask
 clipping. This gives functional parity on desktop, but does not claim a wholly
 integer pipeline because those compatibility samplers use `f32`.
-`FixedPaintSampler` makes the no-FPU contract explicit. `FixedLinearGradient`
-projects Q24.8 endpoints with widened integer arithmetic and samples a
-caller-owned encoded ramp; streaming and retained strip/tile compositors support
-the same rectangle and path-mask adapters. `FixedRadialGradient` implements
-both concentric and general two-circle/focal geometry with integer root solving
-and exact integer spread/ramp mapping. `FixedConicGradient` uses a compact
-binary-turn angle and a fixed 16-step integer CORDIC.
+`FixedPaintSampler` makes the no-FPU contract explicit.
+`fixed::sampler::LinearGradient` projects Q24.8 endpoints with widened integer
+arithmetic and samples a caller-owned encoded ramp; streaming and retained
+strip/tile compositors support the same rectangle and path-mask adapters.
+`fixed::sampler::RadialGradient` implements both concentric and general
+two-circle/focal geometry with integer root solving and exact integer
+spread/ramp mapping. `fixed::sampler::ConicGradient` uses a compact binary-turn
+angle and a fixed 16-step integer CORDIC.
 
 Fixed-only context, numeric helpers, sampler contracts, flattening,
 rasterization, stroking, tiling, and their focused tests live under
-`src/fixed/`. The coherent `fixed::*` paths are
-available directly; thin re-export modules preserve the existing `context`,
-`flatten_fixed`,
-`raster_fixed`, `stroke_fixed`, and `tile_fixed` public paths during the
-pre-1.0 API transition.
+`src/fixed/`. The canonical public API uses `fixed::*` paths directly. Backend
+modules use concise names such as `fixed::raster::Workspace`,
+`fixed::stroke::Options`, and `fixed::context::Context`; no legacy crate-root
+backend aliases are retained.
 
 Both f32 analytic and Q24.8 fixed paths can rasterize arbitrary path clips into
 caller-owned `CoverageMaskMut` storage. Fixed compositors can therefore produce
@@ -171,7 +171,7 @@ encoded `SRGBA<u8>`, while `PixmapMut::pixel` returns only validated
 Pixmap construction intentionally validates layout without scanning the image;
 source-over callers are responsible for valid premultiplied destination data.
 
-`Context` and `FixedContext` provide parallel stateful drawing APIs for the
+`Context` and `fixed::context::Context` provide parallel stateful drawing APIs for the
 analytic f32 and Q24.8 pipelines. They retain transform, fill rule, flattening,
 stroke, solid color, and rectangle/mask clip state while borrowing the target
 and bounded scratch storage. `fill_with` and `stroke_with` preserve static
@@ -265,8 +265,9 @@ point-sampling fallback.
 
 The native fixed sampler benchmark uses the same 65,536 pixel centers and a
 caller-owned 1024-entry encoded ramp. A short 10-sample diagnostic on
-2026-07-31 measured `FixedLinearGradient` at about 423.3 µs (154.8 Mpixel/s)
-and concentric `FixedRadialGradient` at about 689.4 µs (95.1 Mpixel/s).
+2026-07-31 measured `fixed::sampler::LinearGradient` at about 423.3 µs
+(154.8 Mpixel/s) and concentric `fixed::sampler::RadialGradient` at about
+689.4 µs (95.1 Mpixel/s).
 The radial implementation selects a `u64` integer-square-root and `i64` ramp
 mapping fast path for ordinary device coordinates, with widened arithmetic
 retained for the full public coordinate range. Before that specialization the
@@ -389,7 +390,7 @@ The initial caller-owned scratch budgets are:
 | --- | ---: | ---: | ---: |
 | sampled `f32` | 128 `Edge` | 128 `Intersection` | 256 `f32` |
 | analytic `f32` | 128 `Edge` | 257 `u32` row offsets + 128 `u32` edge indices + 128 `AnalyticIntersection` | 256 `f32` |
-| Q24.8 fixed | 128 `FixedSegment` + 64 `FixedTrapezoid` | one `u32` offset per strip plus one `u32` per line/strip overlap | 256 `u64` |
+| Q24.8 fixed | 128 `fixed::raster::Segment` + 64 `fixed::raster::Trapezoid` | one `u32` offset per strip plus one `u32` per line/strip overlap | 256 `u64` |
 
 The compact target uses 4 bytes per pixel. `LinearPixmapMut` deliberately uses
 16 bytes per pixel (`LinearPremulRGBA<f32>`) and its fast presentation path

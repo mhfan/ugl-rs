@@ -12,9 +12,9 @@
 pub use fixed::traits::Fixed;
 
 /// Unsigned binary angle where the complete `u32` range represents one turn.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub struct FixedAngle(u32);
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub struct Angle(u32);
 
-impl FixedAngle {
+impl Angle {
     pub const ZERO: Self = Self(0);
     pub const QUARTER_TURN: Self = Self(1 << 30);
     pub const HALF_TURN: Self = Self(1 << 31);
@@ -37,11 +37,11 @@ const CORDIC_ATAN_TURNS: [i64; 16] = [
 ];
 
 pub(crate) fn cordic_turn(mut x: i64, mut y: i64) -> u32 {
-    if y == 0 { return if x < 0 { FixedAngle::HALF_TURN.0 } else { 0 }; }
+    if y == 0 { return if x < 0 { Angle::HALF_TURN.0 } else { 0 }; }
     if x == 0 {
         return if y < 0 {
-            FixedAngle::THREE_QUARTER_TURN.0
-        } else { FixedAngle::QUARTER_TURN.0 };
+            Angle::THREE_QUARTER_TURN.0
+        } else { Angle::QUARTER_TURN.0 };
     }
     let magnitude = x.unsigned_abs().max(y.unsigned_abs());
     let shift = 48_u32.saturating_sub(64 - magnitude.leading_zeros());
@@ -51,7 +51,7 @@ pub(crate) fn cordic_turn(mut x: i64, mut y: i64) -> u32 {
     if x < 0 {
         x = -x;
         y = -y;
-        angle = FixedAngle::HALF_TURN.0 as _;
+        angle = Angle::HALF_TURN.0 as _;
     }
     for (shift, increment) in CORDIC_ATAN_TURNS.into_iter().enumerate() {
         if y == 0 { break; }
@@ -70,7 +70,7 @@ pub(crate) fn cordic_turn(mut x: i64, mut y: i64) -> u32 {
 }
 
 /// Returns `(cos, sin)` in signed Q1.30.
-pub(crate) fn cordic_unit_vector(angle: FixedAngle) -> (i64, i64) {
+pub(crate) fn cordic_unit_vector(angle: Angle) -> (i64, i64) {
     const CORDIC_GAIN_INVERSE_Q30: i64 = 0x26dd_3b6a;
     const ONE_Q30: i64 = 1 << 30;
     match angle.to_bits() {
@@ -82,11 +82,11 @@ pub(crate) fn cordic_unit_vector(angle: FixedAngle) -> (i64, i64) {
     }
     let mut angle = angle.to_bits() as i32 as i64;
     let mut sign = 1;
-    if angle > FixedAngle::QUARTER_TURN.0 as i64 {
-        angle -= FixedAngle::HALF_TURN.0 as i64;
+    if angle > Angle::QUARTER_TURN.0 as i64 {
+        angle -= Angle::HALF_TURN.0 as i64;
         sign = -1;
-    } else if angle < -(FixedAngle::QUARTER_TURN.0 as i64) {
-        angle += FixedAngle::HALF_TURN.0 as i64;
+    } else if angle < -(Angle::QUARTER_TURN.0 as i64) {
+        angle += Angle::HALF_TURN.0 as i64;
         sign = -1;
     }
     let (mut x, mut y) = (CORDIC_GAIN_INVERSE_Q30, 0_i64);
@@ -148,7 +148,7 @@ pub(crate) fn scaled_integer_sqrt(value: u128) -> (u128, u128) {
     #[test] fn rotation_cordic_tracks_unit_circle() {
         let mut maximum_error = 0.0_f32;
         for step in 0..65_536_u32 {
-            let angle = FixedAngle::from_bits(step << 16);
+            let angle = Angle::from_bits(step << 16);
             let (x, y) = cordic_unit_vector(angle);
             let radians = step as f32 / 65_536.0 * core::f32::consts::TAU;
             maximum_error = maximum_error

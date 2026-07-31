@@ -14,8 +14,7 @@ use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
     stroke::{flatten_stroke_path, stroke_polyline, StrokeContour, StrokeExpandError,
         StrokeOptions, StrokePathWorkspace, StrokeWorkspaceError},
 };
-#[cfg(feature = "fixed")] use crate::raster_fixed::FixedRasterError;
-#[cfg(feature = "fixed")] pub use crate::fixed::canvas::*;
+#[cfg(feature = "fixed")] use crate::fixed::raster::Error as FixedRasterError;
 
 const BYTES_PER_PIXEL: u32 = 4;
 

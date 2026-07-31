@@ -145,9 +145,6 @@ fn analytic_workspace<'a>(
     }
 }
 
-#[cfg(feature = "fixed")]
-pub use crate::fixed::context::{FixedContext, FixedContextWorkspace};
-
 #[cfg(test)] mod tests {
     use super::*;
     use crate::{analytic::AnalyticIntersection, edge::Edge, geometry::{PathBuilder, Point},

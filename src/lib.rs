@@ -22,7 +22,3 @@ pub mod context;
 pub mod edge;
 
 #[cfg(feature = "fixed")] pub mod fixed;
-#[cfg(feature = "fixed")] pub use fixed::{ math,
-    flatten as flatten_fixed, raster as raster_fixed,
-    stroke as stroke_fixed, tile as tile_fixed,
-};
