@@ -19,6 +19,8 @@ pub type Scalar = f32;
 /// Raster products and areas must use widened intermediates rather than this
 /// 32-bit storage type.
 #[cfg(feature = "fixed")] pub type FixedScalar = fixed::types::I24F8;
+/// Raw Q24.8 coordinate magnitude supported by the bounded fixed render path.
+#[cfg(feature = "fixed")] pub const FIXED_DEVICE_RAW_LIMIT: i32 = 1 << 29;
 
 pub trait ScalarConstants { const ZERO: Self; const ONE: Self; }
 impl ScalarConstants for f32 { const ZERO: Self = 0.0; const ONE: Self = 1.0; }

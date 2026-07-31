@@ -185,14 +185,12 @@ and SIMD layouts do not enter the common `Edge` representation.
   coordinate deltas and exact `i128` projection, spread mapping, and nearest
   ramp selection: the full Q24.8 endpoint difference squared reaches the edge
   of `i64`, so `i128` is required before summing two axes.
-  `FixedConcentricRadialGradient` supports increasing or decreasing
-  non-negative Q24.8 radii. It rounds an integer square root to Q24.8, then
-  performs spread and ramp selection with exact integer arithmetic. Ordinary
-  device ranges take a `u64`/`i64` fast path; widened arithmetic preserves the
-  full public coordinate contract. Static ramps need no allocation or runtime
-  color conversion on an MCU. General two-circle/focal fixed radial paint
-  remains separate because its discriminant and valid-root policy require
-  their own width and error analysis.
+  `FixedRadialGradient` supports increasing or decreasing concentric radii and
+  general two-circle/focal geometry. Its reduced discriminant is proven within
+  `i128` over the fixed device domain; adaptive integer square roots retain up
+  to 16 fractional bits, and the same largest-valid-root policy as the `f32`
+  reference handles focal cones. Ordinary values take `u64`/`i64` fast paths.
+  Static ramps need no allocation or runtime color conversion on an MCU.
 - Solid paint reports its constant color so span and tile compositors retain
   their bulk fast paths.
 - `TransformedPaint` maps device samples into paint-local coordinates through
@@ -471,7 +469,7 @@ Status: planned.
 | `f32` fill | Sampled and analytic coverage, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
 | Stroke | Allocation-free undashed caps and joins | Dashes, fuzzing, and production reliability validation |
-| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, rectangle and path-mask clipping, encoded composition, native fixed linear and concentric-radial paint | Native fixed focal radial/conic paint, fixed stroke, real-device and range validation |
+| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, rectangle and path-mask clipping, encoded composition, native fixed linear and two-circle radial paint | Native fixed conic paint, fixed stroke, real-device and range validation |
 | Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
 

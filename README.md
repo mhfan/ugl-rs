@@ -52,8 +52,8 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | `f32` fill and clipping | Reference path implemented and allocation-free |
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Undashed caps/joins reference implemented; reliability work continues |
-| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, encoded composition, and native fixed linear/concentric-radial gradients implemented |
-| Production readiness | Pre-release: broader fuzzing, golden scenes, native fixed focal radial/conic paint and stroke, and real-device validation remain |
+| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, encoded composition, and native fixed linear/two-circle-radial gradients implemented |
+| Production readiness | Pre-release: broader fuzzing, golden scenes, native fixed conic paint and stroke, and real-device validation remain |
 
 ## Architecture at a glance
 
@@ -128,9 +128,10 @@ integer pipeline because those compatibility samplers use `f32`.
 `FixedPaintSampler` makes the no-FPU contract explicit. `FixedLinearGradient`
 projects Q24.8 endpoints with widened integer arithmetic and samples a
 caller-owned encoded ramp; streaming and retained strip/tile compositors support
-the same rectangle and path-mask adapters. `FixedConcentricRadialGradient`
-uses a rounded integer square root and exact integer spread/ramp mapping.
-General two-circle/focal radial and conic gradients remain future MCU work.
+the same rectangle and path-mask adapters. `FixedRadialGradient` implements
+both concentric and general two-circle/focal geometry with integer root solving
+and exact integer spread/ramp mapping. Native fixed conic gradients remain
+future MCU work.
 
 Pending architectural work includes:
 
@@ -235,11 +236,18 @@ point-sampling fallback.
 The native fixed sampler benchmark uses the same 65,536 pixel centers and a
 caller-owned 1024-entry encoded ramp. A short 10-sample diagnostic on
 2026-07-31 measured `FixedLinearGradient` at about 423.3 µs (154.8 Mpixel/s)
-and `FixedConcentricRadialGradient` at about 689.4 µs (95.1 Mpixel/s).
+and concentric `FixedRadialGradient` at about 689.4 µs (95.1 Mpixel/s).
 The radial implementation selects a `u64` integer-square-root and `i64` ramp
 mapping fast path for ordinary device coordinates, with widened arithmetic
 retained for the full public coordinate range. Before that specialization the
 same radial diagnostic measured about 1.78 ms.
+
+The general fixed two-circle path uses the same largest-valid-root policy as the
+`f32` reference and retains up to 16 adaptive fractional square-root bits. A
+short 10-sample diagnostic measured about 2.23 ms (29.4 Mpixel/s), improved
+from about 7.03 ms after keeping ordinary discriminants and ramp division on
+proved `u64`/`i64` paths. This remains a scalar reference baseline rather than
+a final MCU performance target.
 
 Conic gradients keep exact `atan2f` as the default and expose
 `ConicAngleMode::Fast` as an explicit quality/performance choice. Fast mode

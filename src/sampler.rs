@@ -17,7 +17,8 @@
 
 use crate::{color::{EncodedPremulSRGBA8, LinearPremulRGBA, SRGBA, RGBA},
     geometry::{Affine, Point}};
-#[cfg(feature = "fixed")] use crate::geometry::FixedScalar;
+#[cfg(feature = "fixed")]
+use crate::geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar};
 
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
@@ -197,7 +198,8 @@ impl GradientStop {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum GradientError {
     EmptyStops, NonFiniteOffset, OffsetOutOfRange, UnorderedStops,
-    RampTooSmall, RampTooLarge, NonFiniteGeometry, NegativeRadius, DegenerateGeometry,
+    RampTooSmall, RampTooLarge, NonFiniteGeometry, CoordinateOutOfRange,
+    NegativeRadius, DegenerateGeometry,
 }
 
 /// Validated, caller-owned gradient stops.
@@ -358,22 +360,24 @@ impl SpreadMode {
     }
 }
 
-/// Allocation-free, no-FPU concentric radial gradient.
+/// Allocation-free, no-FPU two-circle radial gradient.
 ///
-/// Center and radii use Q24.8. Distance is rounded to the nearest Q24.8 value
-/// with an integer square root before exact spread and ramp mapping.
+/// Geometry uses Q24.8 within [`FIXED_DEVICE_RAW_LIMIT`]. Root solving,
+/// spread, and ramp mapping use widened integer arithmetic.
 #[cfg(feature = "fixed")]
-#[derive(Clone, Copy, Debug)] pub struct FixedConcentricRadialGradient<'a> {
-    center: [i32; 2], start_radius: i64, radius_delta: i64,
+#[derive(Clone, Copy, Debug)] pub struct FixedRadialGradient<'a> {
+    start: [i32; 2], center_delta: [i64; 2],
+    start_radius: i64, radius_delta: i64, quadratic: i128,
     ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode,
 }
 
-#[cfg(feature = "fixed")] impl<'a> FixedConcentricRadialGradient<'a> {
+#[cfg(feature = "fixed")] impl<'a> FixedRadialGradient<'a> {
     /// Creates a concentric gradient from radius zero to `radius`.
     pub fn new(center: impl Into<Point<FixedScalar>>, radius: FixedScalar,
         ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode) ->
         Result<Self, GradientError> {
-        Self::with_radii(center, FixedScalar::ZERO, radius, ramp, spread)
+        let center = center.into();
+        Self::two_circle(center, FixedScalar::ZERO, center, radius, ramp, spread)
     }
 
     /// Creates a concentric gradient between two non-negative radii.
@@ -381,29 +385,57 @@ impl SpreadMode {
         start_radius: FixedScalar, end_radius: FixedScalar,
         ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode) ->
         Result<Self, GradientError> {
+        let center = center.into();
+        Self::two_circle(center, start_radius, center, end_radius, ramp, spread)
+    }
+
+    /// Creates the general gradient between two circles.
+    pub fn two_circle(start: impl Into<Point<FixedScalar>>, start_radius: FixedScalar,
+        end: impl Into<Point<FixedScalar>>, end_radius: FixedScalar,
+        ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode) ->
+        Result<Self, GradientError> {
         validate_fixed_ramp(ramp)?;
         if start_radius < FixedScalar::ZERO || end_radius < FixedScalar::ZERO {
             return Err(GradientError::NegativeRadius);
         }
+        let (start, end) = (start.into(), end.into());
+        let raw = [start.x.to_bits(), start.y.to_bits(), end.x.to_bits(),
+                   end.y.to_bits(), start_radius.to_bits(), end_radius.to_bits()];
+        if raw.iter().any(|value|
+            value.unsigned_abs() > FIXED_DEVICE_RAW_LIMIT as u32) {
+            return Err(GradientError::CoordinateOutOfRange);
+        }
+        let start = [start.x.to_bits(), start.y.to_bits()];
+        let center_delta = [
+            end.x.to_bits() as i64 - start[0] as i64,
+            end.y.to_bits() as i64 - start[1] as i64,
+        ];
         let radius_delta = end_radius.to_bits() as i64 - start_radius.to_bits() as i64;
-        if radius_delta == 0 { return Err(GradientError::DegenerateGeometry); }
-        let center = center.into();
-        Ok(Self { center: [center.x.to_bits(), center.y.to_bits()],
-            start_radius: start_radius.to_bits() as _, radius_delta, ramp, spread })
+        if center_delta == [0, 0] && radius_delta == 0 {
+            return Err(GradientError::DegenerateGeometry);
+        }
+        let quadratic = center_delta[0] as i128 * center_delta[0] as i128 +
+                        center_delta[1] as i128 * center_delta[1] as i128 -
+                        radius_delta as i128 * radius_delta as i128;
+        Ok(Self { start, center_delta, start_radius: start_radius.to_bits() as _,
+            radius_delta, quadratic, ramp, spread })
     }
 
     pub fn ramp(&self) -> &'a [EncodedPremulSRGBA8] { self.ramp }
     pub fn spread(&self) -> SpreadMode { self.spread }
 
-    fn ramp_index(&self, x: u32, y: u32) -> usize {
-        const HALF_PIXEL_RAW: i128 = 1 << 7;
-        const SUBPIXEL_SCALE: i128 = 1 << 8;
-        let dx = x as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW -
-                 self.center[0] as i128;
-        let dy = y as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW -
-                 self.center[1] as i128;
-        let squared = (dx * dx + dy * dy) as u128;
-        let floor = integer_sqrt(squared);
+    fn concentric_ramp_index(&self, x: u32, y: u32) -> Option<usize> {
+        const HALF_PIXEL_RAW: i64 = 1 << 7;
+        const SUBPIXEL_SCALE: u64 = 1 << 8;
+        let (x, y) = (x as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64,
+                      y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64);
+        if x > FIXED_DEVICE_RAW_LIMIT as u64 || y > FIXED_DEVICE_RAW_LIMIT as u64 {
+            return None;
+        }
+        let (dx, dy) = (x as i64 - self.start[0] as i64,
+                        y as i64 - self.start[1] as i64);
+        let squared = (dx * dx + dy * dy) as u64;
+        let floor = integer_sqrt_u64(squared);
         let distance = if squared - floor * floor > floor { floor + 1 } else { floor };
         let (mut parameter, mut denominator) =
             (distance as i64 - self.start_radius, self.radius_delta);
@@ -411,14 +443,71 @@ impl SpreadMode {
             parameter = -parameter;
             denominator = -denominator;
         }
-        fixed_ramp_index_i64(parameter, denominator, self.ramp.len(), self.spread)
+        Some(fixed_ramp_index_i64(
+            parameter, denominator, self.ramp.len(), self.spread))
+    }
+
+    fn parameter(&self, x: u32, y: u32) -> Option<(i128, i128)> {
+        const HALF_PIXEL_RAW: i64 = 1 << 7;
+        const SUBPIXEL_SCALE: u64 = 1 << 8;
+        let (x, y) = (x as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64,
+                      y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64);
+        if x > FIXED_DEVICE_RAW_LIMIT as u64 || y > FIXED_DEVICE_RAW_LIMIT as u64 {
+            return None;
+        }
+        let point = [x as i64 - self.start[0] as i64,
+                     y as i64 - self.start[1] as i64];
+        let linear_half = point[0] as i128 * self.center_delta[0] as i128 +
+                          point[1] as i128 * self.center_delta[1] as i128 +
+                          self.start_radius as i128 * self.radius_delta as i128;
+        let constant = point[0] as i128 * point[0] as i128 +
+                       point[1] as i128 * point[1] as i128 -
+                       self.start_radius as i128 * self.start_radius as i128;
+        if self.quadratic == 0 {
+            if linear_half == 0 {
+                return (constant == 0).then_some((0, 1));
+            }
+            let ratio = normalize_ratio(constant, linear_half * 2)?;
+            return self.valid_radius(ratio).then_some(ratio);
+        }
+        let discriminant = linear_half * linear_half - self.quadratic * constant;
+        if discriminant < 0 { return None; }
+        let (root, scale) = scaled_integer_sqrt(discriminant as _);
+        let (linear_half, quadratic) =
+            (linear_half * scale as i128, self.quadratic * scale as i128);
+        let first = normalize_ratio(linear_half + root as i128, quadratic)?;
+        let second = normalize_ratio(linear_half - root as i128, quadratic)?;
+        debug_assert_eq!(first.1, second.1);
+        [first, second].into_iter().filter(|ratio| self.valid_radius(*ratio))
+            .max_by_key(|ratio| ratio.0)
+    }
+
+    fn valid_radius(&self, (numerator, denominator): (i128, i128)) -> bool {
+        self.start_radius as i128 * denominator +
+            numerator * self.radius_delta as i128 >= 0
     }
 }
 
-#[cfg(feature = "fixed")] impl FixedPaintSampler for FixedConcentricRadialGradient<'_> {
+#[cfg(feature = "fixed")] impl FixedPaintSampler for FixedRadialGradient<'_> {
     fn sample_fixed(&self, x: u32, y: u32) -> EncodedPremulSRGBA8 {
-        self.ramp[self.ramp_index(x, y)]
+        if self.center_delta == [0, 0] {
+            return self.concentric_ramp_index(x, y)
+                .map_or_else(EncodedPremulSRGBA8::zeroed, |index| self.ramp[index]);
+        }
+        self.parameter(x, y).map_or_else(EncodedPremulSRGBA8::zeroed,
+            |(parameter, denominator)| self.ramp[
+                fixed_ramp_index(parameter, denominator, self.ramp.len(), self.spread)])
     }
+}
+
+#[cfg(feature = "fixed")]
+fn normalize_ratio(mut numerator: i128, mut denominator: i128) -> Option<(i128, i128)> {
+    if denominator == 0 { return None; }
+    if denominator < 0 {
+        numerator = -numerator;
+        denominator = -denominator;
+    }
+    Some((numerator, denominator))
 }
 
 #[cfg(feature = "fixed")]
@@ -432,6 +521,10 @@ fn validate_fixed_ramp(ramp: &[EncodedPremulSRGBA8]) -> Result<(), GradientError
 fn fixed_ramp_index(parameter: i128, denominator: i128, ramp_len: usize,
     spread: SpreadMode) -> usize {
     debug_assert!(denominator > 0);
+    if let (Ok(parameter), Ok(denominator)) =
+        (i64::try_from(parameter), i64::try_from(denominator)) {
+        return fixed_ramp_index_i64(parameter, denominator, ramp_len, spread);
+    }
     let mapped = match spread {
         SpreadMode::Pad => parameter.clamp(0, denominator),
         SpreadMode::Repeat => parameter.rem_euclid(denominator),
@@ -445,10 +538,7 @@ fn fixed_ramp_index(parameter: i128, denominator: i128, ramp_len: usize,
 }
 
 #[cfg(feature = "fixed")]
-/// Narrow equivalent of `fixed_ramp_index` for the radial hot path.
-///
-/// Validated ramp and Q24.8 radius bounds prove the multiply fits `u64`;
-/// retaining this specialization avoids per-pixel `i128` division on MCUs.
+/// Narrow equivalent of `fixed_ramp_index` for the concentric radial hot path.
 fn fixed_ramp_index_i64(parameter: i64, denominator: i64, ramp_len: usize,
     spread: SpreadMode) -> usize {
     debug_assert!(denominator > 0);
@@ -487,6 +577,23 @@ fn integer_sqrt_u64(value: u64) -> u64 {
         if next >= estimate { return estimate; }
         estimate = next;
     }
+}
+
+#[cfg(feature = "fixed")]
+fn scaled_integer_sqrt(value: u128) -> (u128, u128) {
+    const MAX_FRACTION_BITS: u32 = 16;
+    if let Ok(value) = u64::try_from(value) {
+        let fraction_bits = (value.leading_zeros() / 2).min(MAX_FRACTION_BITS);
+        let scaled = value << (fraction_bits * 2);
+        let floor = integer_sqrt_u64(scaled);
+        let root = if scaled - floor * floor > floor { floor + 1 } else { floor };
+        return (root as _, 1 << fraction_bits);
+    }
+    let fraction_bits = (value.leading_zeros() / 2).min(MAX_FRACTION_BITS);
+    let scaled = value << (fraction_bits * 2);
+    let floor = integer_sqrt(scaled);
+    let root = if scaled - floor * floor > floor { floor + 1 } else { floor };
+    (root, 1 << fraction_bits)
 }
 
 #[derive(Clone, Copy, Debug)] pub struct LinearGradient<'a> {
@@ -887,7 +994,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         let ramp = stops.encoded_ramp().unwrap();
         let center = (FixedScalar::from_num(8), FixedScalar::from_num(8));
         for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {
-            let fixed = FixedConcentricRadialGradient::new(
+            let fixed = FixedRadialGradient::new(
                 center, FixedScalar::from_num(8), ramp, spread).unwrap();
             let reference = RadialGradient::new((8.0, 8.0), 8.0, stops, spread).unwrap();
             for y in 0..16 {
@@ -903,7 +1010,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
             }
         }
 
-        let fixed = FixedConcentricRadialGradient::with_radii(center,
+        let fixed = FixedRadialGradient::with_radii(center,
             FixedScalar::from_num(8), FixedScalar::ZERO, ramp, SpreadMode::Pad).unwrap();
         let reference = RadialGradient::two_circle(
             (8.0, 8.0), 8.0, (8.0, 8.0), 0.0, stops, SpreadMode::Pad).unwrap();
@@ -920,10 +1027,10 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
     #[test] fn fixed_concentric_radial_validates_radii_and_integer_sqrt() {
         let ramp = [encoded(RGBA::<u8>::red()), encoded(RGBA::<u8>::blue())];
         let center = (FixedScalar::ZERO, FixedScalar::ZERO);
-        assert_eq!(FixedConcentricRadialGradient::new(center,
+        assert_eq!(FixedRadialGradient::new(center,
             FixedScalar::from_num(-1), &ramp, SpreadMode::Pad).unwrap_err(),
             GradientError::NegativeRadius);
-        assert_eq!(FixedConcentricRadialGradient::with_radii(center,
+        assert_eq!(FixedRadialGradient::with_radii(center,
             FixedScalar::from_num(2), FixedScalar::from_num(2),
             &ramp, SpreadMode::Pad).unwrap_err(), GradientError::DegenerateGeometry);
 
@@ -942,6 +1049,74 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
             assert!(root * root <= value);
             if root < u64::MAX as u128 { assert!((root + 1) * (root + 1) > value); }
         }
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_two_circle_radial_matches_quadratic_and_linear_references() {
+        fn assert_close(fixed: &FixedRadialGradient<'_>, reference: &RadialGradient<'_>,
+            ramp: &[EncodedPremulSRGBA8], x: u32, y: u32) {
+            let (actual, expected) = (fixed.sample_fixed(x, y),
+                reference.sample(x as f32 + 0.5, y as f32 + 0.5));
+            match (ramp.iter().position(|color| *color == actual),
+                   ramp.iter().position(|color| *color == expected)) {
+                (Some(actual), Some(expected)) => assert!(actual.abs_diff(expected) <= 1,
+                    "point=({x}, {y}), actual={actual}, expected={expected}"),
+                (None, None) => assert_eq!(actual, expected),
+                _ => panic!("root validity differs at ({x}, {y}): {actual:?} != {expected:?}"),
+            }
+        }
+
+        let stop_values = red_blue_stops();
+        let mut storage = [EncodedPremulSRGBA8::zeroed(); 257];
+        let stops = GradientStops::with_ramp(&stop_values, &mut storage).unwrap();
+        let ramp = stops.encoded_ramp().unwrap();
+        let fixed = FixedScalar::from_num;
+        for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {
+            let radial = FixedRadialGradient::two_circle(
+                (fixed(1), fixed(0)), fixed(0), (fixed(0), fixed(0)), fixed(4),
+                ramp, spread).unwrap();
+            let reference = RadialGradient::two_circle(
+                (1.0, 0.0), 0.0, (0.0, 0.0), 4.0, stops, spread).unwrap();
+            for y in 0..8 {
+                for x in 0..8 { assert_close(&radial, &reference, ramp, x, y); }
+            }
+        }
+
+        let tangent = FixedRadialGradient::two_circle(
+            (fixed(0), fixed(0)), fixed(0), (fixed(1), fixed(0)), fixed(1),
+            ramp, SpreadMode::Pad).unwrap();
+        let tangent_reference = RadialGradient::two_circle(
+            (0.0, 0.0), 0.0, (1.0, 0.0), 1.0, stops, SpreadMode::Pad).unwrap();
+        for y in 0..4 {
+            for x in 0..4 { assert_close(&tangent, &tangent_reference, ramp, x, y); }
+        }
+
+        let near_tangent = FixedRadialGradient::two_circle(
+            (fixed(4), fixed(4)), fixed(1),
+            (FixedScalar::from_bits(4 * 256 + 257), fixed(4)), fixed(2),
+            ramp, SpreadMode::Reflect).unwrap();
+        let near_tangent_reference = RadialGradient::two_circle(
+            (4.0, 4.0), 1.0, (5.0 + 1.0 / 256.0, 4.0), 2.0,
+            stops, SpreadMode::Reflect).unwrap();
+        for y in 0..12 {
+            for x in 0..12 {
+                assert_close(&near_tangent, &near_tangent_reference, ramp, x, y);
+            }
+        }
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_two_circle_radial_enforces_the_fixed_device_domain() {
+        let ramp = [encoded(RGBA::<u8>::red()), encoded(RGBA::<u8>::blue())];
+        let fixed = FixedScalar::from_num;
+        assert_eq!(FixedRadialGradient::new(
+            (FixedScalar::from_bits(FIXED_DEVICE_RAW_LIMIT + 1), fixed(0)), fixed(1),
+            &ramp, SpreadMode::Pad).unwrap_err(), GradientError::CoordinateOutOfRange);
+        let radial = FixedRadialGradient::new(
+            (fixed(0), fixed(0)), fixed(1), &ramp, SpreadMode::Pad).unwrap();
+        let first_outside_pixel = FIXED_DEVICE_RAW_LIMIT as u32 / 256;
+        assert_eq!(radial.sample_fixed(first_outside_pixel, 0),
+            EncodedPremulSRGBA8::zeroed());
     }
 
     #[test] fn radial_gradient_supports_concentric_and_focal_circles() {

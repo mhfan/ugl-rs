@@ -1,14 +1,15 @@
 //! Widened arithmetic primitives for the Q24.8 fixed-point raster backend.
 
 use core::cmp::Ordering;
-use crate::{edge::Edge, geometry::{FixedScalar, Point}, raster::{CoverageSink, FillRule}};
+use crate::{edge::Edge, geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar, Point},
+    raster::{CoverageSink, FillRule}};
 
 /// Accepted Q24.8 raw-coordinate magnitude for the fixed rasterizer.
 ///
 /// This corresponds to ±2,097,152 device units and leaves enough headroom for
 /// every line-intersection multiply-add to remain in `i64`.
 pub const   SUBPIXEL_SCALE: u32 = 1 << 8;
-pub const DEVICE_RAW_LIMIT: i32 = 1 << 29;
+pub const DEVICE_RAW_LIMIT: i32 = FIXED_DEVICE_RAW_LIMIT;
 pub const FIXED_STRIP_HEIGHT: u32 = 16;
 const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 
