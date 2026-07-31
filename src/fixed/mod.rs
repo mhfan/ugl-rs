@@ -8,3 +8,4 @@ pub mod stroke;
 pub mod tile;
 pub mod context;
 pub mod canvas;
+pub mod dash;
