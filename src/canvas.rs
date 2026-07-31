@@ -262,6 +262,7 @@ pub struct AnalyticStrokeOptions {
     StrokeContourCapacity { needed_at_least: usize },
     DashPointCapacity { needed_at_least: usize },
     DashContourCapacity { needed_at_least: usize },
+    DashPrecisionExhausted,
     StrokeArcSegmentLimit { needed: usize, maximum: u16 },
     AnalyticBinOffsetCapacity { required: usize },
     AnalyticBinIndexCapacity { required: usize },
@@ -1084,6 +1085,7 @@ fn map_stroke_expand_error(error: StrokeExpandError<EdgeCapacity>) -> RenderErro
 fn map_dash_error(error: DashError) -> RenderError {
     match error {
         DashError::NonFinitePoint => RenderError::NonFiniteCoordinate,
+        DashError::PrecisionExhausted => RenderError::DashPrecisionExhausted,
         #[cfg(feature = "fixed")]
         DashError::CoordinateOutOfRange =>
             RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),

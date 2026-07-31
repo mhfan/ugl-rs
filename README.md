@@ -67,6 +67,10 @@ point, contour, and edge storage.
 The fixed counterpart preserves the same contract with Q24.8 pattern lengths
 and phase. It uses integer square roots and widened rational interpolation;
 dash-state accumulation stays in integer subpixels and does not require an FPU.
+Both implementations locate every cut from the original segment and cumulative
+distance instead of repeatedly advancing rounded cut points. The f32 backend
+returns `DashPrecisionExhausted` when a requested dash is too short to advance
+at the segment's current magnitude rather than looping or silently dropping it.
 
 ## Architecture at a glance
 

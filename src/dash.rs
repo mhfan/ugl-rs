@@ -39,12 +39,12 @@ impl<'a> DashPattern<'a> {
     pub fn cycle(&self) -> f32 { self.cycle }
 
     fn initial_state(self) -> DashState {
-        let (mut index, mut phase) = (0, self.phase);
-        while phase >= self.length(index) {
-            phase -= self.length(index);
+        let (mut index, mut phase) = (0, self.phase as f64);
+        while phase >= self.length(index) as f64 {
+            phase -= self.length(index) as f64;
             index = self.next(index);
         }
-        DashState { index, remaining: self.length(index) - phase }
+        DashState { index, remaining: self.length(index) - phase as f32 }
     }
 
     fn length(self, index: usize) -> f32 { self.lengths[index % self.lengths.len()] }
@@ -69,7 +69,7 @@ pub struct DashWorkspace<'a, T = Scalar> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum DashError {
-    NonFinitePoint,
+    NonFinitePoint, PrecisionExhausted,
     #[cfg(feature = "fixed")] CoordinateOutOfRange,
     PointCapacity { needed_at_least: usize },
     ContourCapacity { needed_at_least: usize },
@@ -137,19 +137,22 @@ fn dash_segment(from: Point, to: Point, pattern: DashPattern<'_>,
     if !length.is_finite() { return Err(DashError::NonFinitePoint); }
     if length == 0.0 { return Ok(()); }
     let (unit_x, unit_y) = (dx / length, dy / length);
-    let (mut current, mut left) = (from, length);
-    while left > 0.0 {
+    let (mut current, mut consumed) = (from, 0.0);
+    while consumed < length {
+        let left = length - consumed;
         let ends_dash = state.remaining <= left;
         let step = state.remaining.min(left);
-        let endpoint = if step == left { to } else {
-            (current.x + unit_x * step, current.y + unit_y * step).into()
+        let next_consumed = consumed + step;
+        if next_consumed == consumed { return Err(DashError::PrecisionExhausted); }
+        consumed = next_consumed;
+        let endpoint = if consumed == length { to } else {
+            (from.x + unit_x * consumed, from.y + unit_y * consumed).into()
         };
         if state.index & 1 == 0 {
             if writer.current_start.is_none() { writer.begin(current)?; }
             writer.point(endpoint)?;
         }
         current = endpoint;
-        left = if step == left { 0.0 } else { left - step };
         state.remaining = if ends_dash { 0.0 } else { state.remaining - step };
         if ends_dash {
             if state.index & 1 == 0 { writer.end()?; }
@@ -423,6 +426,17 @@ impl<'a, T: Copy + PartialEq> DashWriter<'a, T> {
             DashError::PointCapacity { needed_at_least: 1 });
     }
 
+    #[test] fn reports_when_f32_can_no_longer_advance_a_short_dash() {
+        let points = [(0.0, 0.0).into(), (2.0e9, 0.0).into()];
+        let lengths = [1.0, 1.0e9, f32::MIN_POSITIVE, 1.0];
+        let pattern = DashPattern::new(&lengths, 1.0).unwrap();
+        let (mut output, mut contours) =
+            ([Point::default(); 4], [DashContour::default(); 2]);
+        assert_eq!(dash_polyline(&points, false, pattern,
+            &mut DashWorkspace { points: &mut output, contours: &mut contours }).unwrap_err(),
+            DashError::PrecisionExhausted);
+    }
+
     #[test] fn full_on_closed_contour_remains_closed_for_join_semantics() {
         let square = [(0.0, 0.0).into(), (1.0, 0.0).into(),
             (1.0, 1.0).into(), (0.0, 1.0).into()];
@@ -486,5 +500,57 @@ impl<'a, T: Copy + PartialEq> DashWriter<'a, T> {
         let (points, closed) = dashed.contours().next().unwrap();
         assert!(!closed);
         assert!(points.contains(&(fixed(0), fixed(0)).into()));
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn randomized_f32_and_fixed_dash_outputs_remain_bounded() {
+        let mut state = 0x4d59_5df4_d0f3_3173_u64;
+        let mut random = || {
+            state ^= state << 13; state ^= state >> 7; state ^= state << 17; state
+        };
+        for case in 0..256 {
+            let mut float_points: Vec<Point> = Vec::new();
+            for _ in 0..8 {
+                let x = (random() % 129) as i32 - 64;
+                let y = (random() % 129) as i32 - 64;
+                float_points.push((x as f32, y as f32).into());
+            }
+            let fixed_points: Vec<_> = float_points.iter().map(|point|
+                (FixedScalar::from_num(point.x), FixedScalar::from_num(point.y)).into())
+                .collect();
+            let lengths = [
+                (random() % 8 + 1) as f32,
+                (random() % 8 + 1) as f32,
+                (random() % 8 + 1) as f32,
+            ];
+            let fixed_lengths = lengths.map(FixedScalar::from_num);
+            let phase = (random() % 33) as i32 - 16;
+            let closed = case & 1 != 0;
+            let (mut float_output, mut float_contours) =
+                ([Point::default(); 2048], [DashContour::default(); 1024]);
+            let mut float_workspace = DashWorkspace {
+                points: &mut float_output, contours: &mut float_contours,
+            };
+            let float_dashed = dash_polyline(&float_points, closed,
+                DashPattern::new(&lengths, phase as _).unwrap(), &mut float_workspace).unwrap();
+            assert!(float_dashed.contours().all(|(points, _)|
+                !points.is_empty() && points.iter().all(|point|
+                    point.x.is_finite() && point.y.is_finite())));
+
+            let zero = FixedScalar::ZERO;
+            let (mut fixed_output, mut fixed_contours) = (
+                [(zero, zero).into(); 2048], [DashContour::default(); 1024],
+            );
+            let mut fixed_workspace = DashWorkspace {
+                points: &mut fixed_output, contours: &mut fixed_contours,
+            };
+            let fixed_dashed = dash_polyline_fixed(&fixed_points, closed,
+                FixedDashPattern::new(&fixed_lengths, FixedScalar::from_num(phase)).unwrap(),
+                &mut fixed_workspace).unwrap();
+            assert!(fixed_dashed.contours().all(|(points, _)|
+                !points.is_empty() && points.iter().all(|point|
+                    [point.x.to_bits(), point.y.to_bits()].iter().all(|value|
+                        value.unsigned_abs() <= FIXED_DEVICE_RAW_LIMIT as u32))));
+        }
     }
 }

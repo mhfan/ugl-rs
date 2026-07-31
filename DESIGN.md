@@ -441,6 +441,8 @@ ongoing (2026-07-31).
   row storage.
 - Allocation-free dash decomposition with normalized phase, repeated odd
   patterns, and closed-contour seam merging.
+- Non-accumulating segment-relative cut placement, explicit f32 precision
+  exhaustion, and randomized f32/fixed bounded-output validation.
 
 ### M4 — Fixed-point backend
 
