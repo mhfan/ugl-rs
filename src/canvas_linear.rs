@@ -185,19 +185,29 @@ impl<'a> LinearPixmapMut<'a> {
         self.mark_dirty_span(x, y, len);
         let factor = coverage as f32 / u8::MAX as f32;
         if let Some(color) = sampler.solid_color_linear() {
+            let pixels = &mut self.data[y as usize * self.stride as usize + x as usize..
+                y as usize * self.stride as usize + (x + len) as usize];
+            if coverage == u8::MAX && color.alpha() == 1.0 {
+                pixels.fill(color);
+                return;
+            }
             let source = color.scale(factor);
-            for pixel in &mut self.data[y as usize * self.stride as usize + x as usize..
-                y as usize * self.stride as usize + (x + len) as usize] {
+            for pixel in pixels {
                 *pixel = source.src_over(*pixel);
             }   return;
         }
         let row = y as usize * self.stride as usize;
         let pixels = &mut self.data[row + x as usize..row + (x + len) as usize];
         let mut pixels = pixels.iter_mut();
-        sampler.sample_linear_span(x as f32 + 0.5, y as f32 + 0.5, 1.0, 0.0, len,
-            |source| if let Some(pixel) = pixels.next() {
-                *pixel = source.scale(factor).src_over(*pixel);
-            });
+        if coverage == u8::MAX && sampler.is_opaque_linear() {
+            sampler.sample_linear_span(x as f32 + 0.5, y as f32 + 0.5, 1.0, 0.0, len,
+                |source| if let Some(pixel) = pixels.next() { *pixel = source; });
+        } else {
+            sampler.sample_linear_span(x as f32 + 0.5, y as f32 + 0.5, 1.0, 0.0, len,
+                |source| if let Some(pixel) = pixels.next() {
+                    *pixel = source.scale(factor).src_over(*pixel);
+                });
+        }
     }
 
     fn mark_dirty_span(&mut self, x: u32, y: u32, len: u32) {
@@ -513,6 +523,37 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
                 assert!((f64::from(actual[channel]) - reference[channel]).abs() < 2e-6);
             }
             assert!(actual[0] <= actual[3] && actual[1] <= actual[3] && actual[2] <= actual[3]);
+        }
+    }
+
+    #[test] fn opaque_sampler_fast_path_matches_source_over_at_full_and_partial_coverage() {
+        use crate::{color::RGBA,
+            sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode}};
+
+        struct Composite<'a, S>(&'a S);
+        impl<S: LinearPaintSampler> LinearPaintSampler for Composite<'_, S> {
+            fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
+                self.0.sample_linear(x, y)
+            }
+            fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+                emit: impl FnMut(LinearPremulRGBA<f32>)) {
+                self.0.sample_linear_span(x, y, dx, dy, len, emit)
+            }
+        }
+
+        let stops = [GradientStop::new(0.0, RGBA::red()),
+                     GradientStop::new(1.0, RGBA::blue())];
+        let gradient = LinearGradient::new((0.0, 0.0), (8.0, 0.0),
+            GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
+        assert!(gradient.is_opaque_linear());
+        for coverage in [u8::MAX, 128] {
+            let initial = SolidPaint::from_srgba(SRGBA::new(20, 200, 40, 160)).linear_color();
+            let (mut fast, mut reference) = ([initial; 8], [initial; 8]);
+            LinearPixmapMut::new(&mut fast, 8, 1, 8).unwrap()
+                .blend_sampled_span(0, 0, 8, &gradient, coverage);
+            LinearPixmapMut::new(&mut reference, 8, 1, 8).unwrap()
+                .blend_sampled_span(0, 0, 8, &Composite(&gradient), coverage);
+            assert_eq!(fast, reference);
         }
     }
 }

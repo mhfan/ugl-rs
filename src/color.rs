@@ -405,6 +405,7 @@ impl LinearPremulRGBA<f32> {
         PremulRGBA::new(r, g, b, a).map(Self)
     }
     pub fn to_array(self) -> [f32; 4] { self.0.to_array() }
+    pub fn alpha(&self) -> f32 { self.0.alpha() }
     pub fn unpremul(self) -> LinearRGBA<f32> { LinearRGBA(self.0.unpremul()) }
     pub fn to_encoded_srgba8(self) -> EncodedPremulSRGBA8 {
         self.unpremul().to_srgba8().premul_encoded()

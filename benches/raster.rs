@@ -20,10 +20,21 @@ use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWork
 };
 #[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
 struct PointLinearSampler<'a, S>(&'a S);
+struct CompositeLinearSampler<'a, S>(&'a S);
 
 impl<S: LinearPaintSampler> LinearPaintSampler for PointLinearSampler<'_, S> {
     fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
         self.0.sample_linear(x, y)
+    }
+}
+
+impl<S: LinearPaintSampler> LinearPaintSampler for CompositeLinearSampler<'_, S> {
+    fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
+        self.0.sample_linear(x, y)
+    }
+    fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        emit: impl FnMut(LinearPremulRGBA<f32>)) {
+        self.0.sample_linear_span(x, y, dx, dy, len, emit)
     }
 }
 
@@ -189,6 +200,39 @@ fn benchmark_f32(c: &mut Criterion) {
                 }).unwrap();
             black_box(&linear_pixels);
         }));
+    let opaque_stop_values = [GradientStop::new(0.0, RGBA::new(240, 20, 80, 255)),
+                              GradientStop::new(1.0, RGBA::new(30, 60, 250, 255))];
+    let mut opaque_ramp = vec![LinearPremulRGBA::default(); 1024];
+    let opaque_gradient = LinearGradient::new((0.0, 0.0), (WIDTH as _, HEIGHT as _),
+        GradientStops::with_linear_ramp(&opaque_stop_values, &mut opaque_ramp).unwrap(),
+        SpreadMode::Pad).unwrap();
+    group.bench_function(BenchmarkId::new(
+        "analytic_linear_gradient_opaque_composite", "64_rectangles"), |b| b.iter(|| {
+        linear_pixels.fill(LinearPremulRGBA::default());
+        let mut target =
+            LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+        render_paint_linear_analytic(&path, Affine::identity(),
+            &CompositeLinearSampler(&opaque_gradient), AnalyticRenderOptions::default(),
+            &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut analytic_intersections,
+                row_coverage: &mut row_coverage,
+                row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+            }).unwrap();
+        black_box(&linear_pixels);
+    }));
+    group.bench_function(BenchmarkId::new(
+        "analytic_linear_gradient_opaque", "64_rectangles"), |b| b.iter(|| {
+        linear_pixels.fill(LinearPremulRGBA::default());
+        let mut target =
+            LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+        render_paint_linear_analytic(&path, Affine::identity(), &opaque_gradient,
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut analytic_intersections,
+                row_coverage: &mut row_coverage,
+                row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+            }).unwrap();
+        black_box(&linear_pixels);
+    }));
     group.bench_function(BenchmarkId::new("analytic_linear_present_exact", "64_rectangles"),
         |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());

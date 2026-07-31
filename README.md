@@ -155,6 +155,16 @@ conic samples at about 486.6 µs versus 603.7 µs for exact evaluation
 (approximately 19% faster); the 64-rectangle analytic render measured about
 691.5 µs versus 799.8 µs (approximately 14% faster).
 
+The linear sampler contract also propagates conservative opacity metadata.
+When coverage is full and every possible sample has alpha exactly one, the
+compositor writes sampled pixels directly instead of reading the destination
+and evaluating source-over. Fractional antialiasing coverage always retains
+the general compositor. In the opaque linear-gradient 64-rectangle diagnostic,
+this reduced rendering from about 397.3 µs to 215.9 µs (approximately 46%).
+This store-only span is also the first SIMD-ready kernel boundary: future
+platform backends can batch sampling and stores without coupling paint
+evaluation to destination loads.
+
 These are scalar reference costs, not optimized paint targets. In particular,
 the general radial sampler performs stable two-circle root solving per pixel;
 future specialized concentric/span-stepping paths must retain byte-equivalent

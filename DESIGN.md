@@ -216,6 +216,11 @@ and SIMD layouts do not enter the common `Edge` representation.
   polynomial. Fast mode has a measured circular error below `3e-5` turns and
   may shift a discontinuous seam within that bound, so it is never enabled
   implicitly.
+- `LinearPaintSampler::is_opaque_linear` is conservative semantic metadata.
+  Full-coverage opaque spans bypass destination loads and source-over; partial
+  coverage never does. This store-only path is the first SIMD kernel boundary,
+  while the trait default remains false for third-party samplers that cannot
+  prove opacity over their complete domain.
 
 ## Strokes
 

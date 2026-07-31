@@ -37,6 +37,13 @@ pub trait LinearPaintSampler {
     fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32>;
     fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> { None }
 
+    /// Reports that every finite-position sample has alpha exactly one.
+    ///
+    /// Returning `true` permits full-coverage compositors to skip reading the
+    /// destination. Implementations must conservatively return `false` unless
+    /// this invariant holds for every sample.
+    fn is_opaque_linear(&self) -> bool { false }
+
     /// Samples an affine sequence without requiring caller-owned scratch.
     ///
     /// Implementations must call `emit` exactly `len` times, in order.
@@ -60,6 +67,7 @@ impl<S: LinearPaintSampler + ?Sized> LinearPaintSampler for &S {
     fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> {
         (**self).solid_color_linear()
     }
+    fn is_opaque_linear(&self) -> bool { (**self).is_opaque_linear() }
     fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
         emit: impl FnMut(LinearPremulRGBA<f32>)) {
         (**self).sample_linear_span(x, y, dx, dy, len, emit)
@@ -104,6 +112,7 @@ impl<S: LinearPaintSampler> LinearPaintSampler for TransformedPaint<S> {
     fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> {
         self.sampler.solid_color_linear()
     }
+    fn is_opaque_linear(&self) -> bool { self.sampler.is_opaque_linear() }
 
     fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
         emit: impl FnMut(LinearPremulRGBA<f32>)) {
@@ -142,6 +151,7 @@ impl PaintSampler for SolidPaint {
 impl LinearPaintSampler for SolidPaint {
     fn sample_linear(&self, _x: f32, _y: f32) -> LinearPremulRGBA<f32> { self.linear }
     fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> { Some(self.linear) }
+    fn is_opaque_linear(&self) -> bool { self.linear.alpha() == 1.0 }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -169,7 +179,7 @@ impl GradientStop {
 #[derive(Clone, Copy, Debug)] pub struct GradientStops<'a> {
     stops: &'a [GradientStop],
     encoded_ramp: Option<&'a [EncodedPremulSRGBA8]>,
-    linear_ramp: Option<&'a [LinearPremulRGBA<f32>]>,
+    linear_ramp: Option<&'a [LinearPremulRGBA<f32>]>, opaque: bool,
 }
 
 impl<'a> GradientStops<'a> {
@@ -184,7 +194,9 @@ impl<'a> GradientStops<'a> {
             if index != 0 && stop.offset < previous {
                 return Err(GradientError::UnorderedStops);
             }   previous =   stop.offset;
-        }   Ok(Self { stops, encoded_ramp: None, linear_ramp: None })
+        }
+        let opaque = stops.iter().all(|stop| stop.color.alpha() == 1.0);
+        Ok(Self { stops, encoded_ramp: None, linear_ramp: None, opaque })
     }
 
     /// Builds an encoded lookup ramp once for the high-throughput sampling path.
@@ -194,13 +206,14 @@ impl<'a> GradientStops<'a> {
     /// stops used for hard transitions are quantized to one ramp interval.
     pub fn with_ramp(stops: &'a [GradientStop],
         ramp: &'a mut [EncodedPremulSRGBA8]) -> Result<Self, GradientError> {
-        Self::new(stops)?;
+        let mut result = Self::new(stops)?;
         if ramp.len() < 2 { return Err(GradientError::RampTooSmall); }
         let scale = (ramp.len() - 1) as f32;
         for (index, color) in ramp.iter_mut().enumerate() {
             *color = Self::sample_stops(stops, index as f32 / scale);
         }
-        Ok(Self { stops, encoded_ramp: Some(ramp), linear_ramp: None })
+        result.encoded_ramp = Some(ramp);
+        Ok(result)
     }
 
     /// Builds a premultiplied linear-light lookup ramp for linear framebuffers.
@@ -209,16 +222,19 @@ impl<'a> GradientStops<'a> {
     /// conversion while retaining a fully linear sampling and compositing path.
     pub fn with_linear_ramp(stops: &'a [GradientStop],
         ramp: &'a mut [LinearPremulRGBA<f32>]) -> Result<Self, GradientError> {
-        Self::new(stops)?;
+        let mut result = Self::new(stops)?;
         if ramp.len() < 2 { return Err(GradientError::RampTooSmall); }
         let scale = (ramp.len() - 1) as f32;
         for (index, color) in ramp.iter_mut().enumerate() {
             *color = Self::sample_linear_stops(stops, index as f32 / scale);
         }
-        Ok(Self { stops, encoded_ramp: None, linear_ramp: Some(ramp) })
+        result.linear_ramp = Some(ramp);
+        Ok(result)
     }
 
     pub fn as_slice(&self) -> &'a [GradientStop] { self.stops }
+    /// Returns whether every stop has alpha exactly one.
+    pub fn is_opaque(&self) -> bool { self.opaque }
 
     fn sample(&self, t: f32) -> EncodedPremulSRGBA8 {
         let Some(ramp) = self.encoded_ramp else { return Self::sample_stops(self.stops, t); };
@@ -303,6 +319,8 @@ impl LinearPaintSampler for LinearGradient<'_> {
                  (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
         self.stops.sample_linear(self.spread.map(t))
     }
+
+    fn is_opaque_linear(&self) -> bool { self.stops.is_opaque() }
 
     fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
         mut emit: impl FnMut(LinearPremulRGBA<f32>)) {
@@ -488,6 +506,7 @@ impl LinearPaintSampler for ConicGradient<'_> {
     fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
         self.stops.sample_linear(SpreadMode::Repeat.map(self.turn(x, y) - self.start_turn))
     }
+    fn is_opaque_linear(&self) -> bool { self.stops.is_opaque() }
 }
 
 /// Skia's [Sollya-generated] seventh-degree approximation of `atan(x) / TAU`.
@@ -558,6 +577,11 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
 
     #[test] fn gradient_ramp_validates_storage_and_tracks_exact_sampling() {
         let stops = red_blue_stops();
+        assert!(GradientStops::new(&stops).unwrap().is_opaque());
+        assert!(!GradientStops::new(&[
+            GradientStop::new(0.0, RGBA::red()),
+            GradientStop::new(1.0, RGBA::new(0, 0, 255, 254)),
+        ]).unwrap().is_opaque());
         let mut too_small = [EncodedPremulSRGBA8::zeroed(); 1];
         assert_eq!(GradientStops::with_ramp(&stops, &mut too_small).unwrap_err(),
             GradientError::RampTooSmall);
