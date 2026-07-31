@@ -3,9 +3,6 @@
 use core::cmp::Ordering;
 use crate::{geometry::{Affine, Path, Point, Scalar},
     flatten::{flatten_path, FlattenError, FlattenOptions, LineSink}};
-#[cfg(feature = "fixed")]
-use crate::{flatten_fixed::{flatten_path_fixed, FixedFlattenError, FixedFlattenOptions},
-    geometry::FixedScalar};
 
 /// A non-horizontal edge normalized to increasing device-space `y`.
 ///
@@ -61,20 +58,14 @@ pub fn build_fill_edges<S>(path: &Path, transform: Affine, options: FlattenOptio
     flatten_path(path, transform, options, &mut FillEdgeBuilder::new(sink))
 }
 
-/// Flattens a device-space fixed path and emits fixed fill edges.
-#[cfg(feature = "fixed")]
-pub fn build_fill_edges_fixed<S>(path: &Path<FixedScalar>, transform: Affine<FixedScalar>,
-    options: FixedFlattenOptions, sink: &mut S) -> Result<(), FixedFlattenError<S::Error>>
-    where S: EdgeSink<FixedScalar> {
-    flatten_path_fixed(path, transform, options, &mut FillEdgeBuilder::new(sink))
-}
-
-struct FillEdgeBuilder<'a, S, T = Scalar> {
+pub(crate) struct FillEdgeBuilder<'a, S, T = Scalar> {
     sink: &'a mut S, start: Option<Point<T>>, current: Option<Point<T>>,
 }
 
 impl<'a, S, T> FillEdgeBuilder<'a, S, T> {
-    fn new(sink: &'a mut S) -> Self { Self { sink, start: None, current: None } }
+    pub(crate) fn new(sink: &'a mut S) -> Self {
+        Self { sink, start: None, current: None }
+    }
 }
 
 impl<S, T> LineSink<T> for FillEdgeBuilder<'_, S, T>
@@ -156,31 +147,4 @@ impl<S, T> FillEdgeBuilder<'_, S, T> where S: EdgeSink<T>, T: Copy + PartialOrd 
         assert_eq!(result, Err(FlattenError::Sink("full")));
     }
 
-    #[cfg(feature = "fixed")]
-    #[test] fn fixed_lines_share_edge_normalization_and_winding() {
-        use crate::geometry::FixedScalar;
-
-        let (zero, one) = (FixedScalar::ZERO, FixedScalar::ONE);
-        assert_eq!(Edge::from_line((zero, one).into(), (one, zero).into()),
-            Some(Edge { upper: (one, zero).into(),
-                        lower: (zero, one).into(), winding: -1,
-            }));
-        assert_eq!(Edge::from_line((zero, one).into(), (one, one).into()), None);
-    }
-
-    #[cfg(feature = "fixed")]
-    #[test] fn fixed_fill_builder_closes_curved_subpaths() {
-        use crate::{flatten_fixed::FixedFlattenOptions, geometry::FixedScalar};
-
-        let (zero, one, two) = (FixedScalar::ZERO, FixedScalar::ONE,
-            FixedScalar::from_num(2));
-        let mut builder = PathBuilder::new();
-        builder.move_to((zero, zero)).quad_to((one, two), (two, zero));
-        let mut edges = Vec::new();
-        build_fill_edges_fixed(&builder.build(), Affine::identity(),
-            FixedFlattenOptions::default(),
-            &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
-        assert!(!edges.is_empty());
-        assert_eq!(edges.iter().map(|edge| edge.winding as i32).sum::<i32>(), 0);
-    }
 }

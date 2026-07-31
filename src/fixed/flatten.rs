@@ -1,6 +1,6 @@
 //! Allocation-free Q24.8 curve flattening without floating point.
 
-use crate::{flatten::LineSink,
+use crate::{edge::{EdgeSink, FillEdgeBuilder}, flatten::LineSink,
     geometry::{Affine, FIXED_DEVICE_RAW_LIMIT, FixedScalar, Path, PathError,
         PathSegment, Point}};
 
@@ -85,6 +85,13 @@ pub fn flatten_path_fixed<S: LineSink<FixedScalar>>(path: &Path<FixedScalar>,
     }
     if current.is_some() { sink.end_subpath().map_err(FixedFlattenError::Sink)?; }
     Ok(())
+}
+
+/// Flattens a device-space fixed path and emits normalized fill edges.
+pub fn build_fill_edges_fixed<S>(path: &Path<FixedScalar>, transform: Affine<FixedScalar>,
+    options: FixedFlattenOptions, sink: &mut S) -> Result<(), FixedFlattenError<S::Error>>
+    where S: EdgeSink<FixedScalar> {
+    flatten_path_fixed(path, transform, options, &mut FillEdgeBuilder::new(sink))
 }
 
 fn transform_point<E>(point: Point<FixedScalar>, transform: Affine<FixedScalar>) ->
@@ -221,6 +228,30 @@ fn midpoint(a: Point<FixedScalar>, b: Point<FixedScalar>) -> Point<FixedScalar> 
         flatten_path_fixed(path, Affine::identity(), options,
             &mut |from, to| { lines.push((from, to)); Ok::<_, Infallible>(()) })?;
         Ok(lines)
+    }
+
+    #[test] fn fixed_lines_share_edge_normalization_and_winding() {
+        let (zero, one) = (FixedScalar::ZERO, FixedScalar::ONE);
+        assert_eq!(crate::edge::Edge::from_line(
+            (zero, one).into(), (one, zero).into()),
+            Some(crate::edge::Edge {
+                upper: (one, zero).into(), lower: (zero, one).into(), winding: -1,
+            }));
+        assert_eq!(crate::edge::Edge::from_line(
+            (zero, one).into(), (one, one).into()), None);
+    }
+
+    #[test] fn fixed_fill_builder_closes_curved_subpaths() {
+        let (zero, one, two) =
+            (FixedScalar::ZERO, FixedScalar::ONE, FixedScalar::from_num(2));
+        let mut builder = PathBuilder::new();
+        builder.move_to((zero, zero)).quad_to((one, two), (two, zero));
+        let mut edges = Vec::new();
+        build_fill_edges_fixed(&builder.build(), Affine::identity(),
+            FixedFlattenOptions::default(),
+            &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
+        assert!(!edges.is_empty());
+        assert_eq!(edges.iter().map(|edge| edge.winding as i32).sum::<i32>(), 0);
     }
 
     #[test] fn straight_curves_emit_their_exact_endpoints_once() {

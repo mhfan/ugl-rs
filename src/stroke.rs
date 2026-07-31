@@ -4,10 +4,6 @@ use core::f32::consts::{FRAC_PI_2, PI};
 use crate::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point, Scalar},
     flatten::{flatten_path, FlattenError, FlattenOptions, LineSink},
 };
-#[cfg(feature = "fixed")] use crate::{
-    flatten_fixed::{flatten_path_fixed, FixedFlattenError, FixedFlattenOptions},
-    geometry::FixedScalar,
-};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum LineCap { #[default] Butt, Round, Square, }
@@ -110,51 +106,39 @@ impl<'a, T> FlattenedStrokePath<'a, T> {
     }
 }
 
-#[cfg(feature = "fixed")]
-pub fn flatten_stroke_path_fixed<'a>(path: &Path<FixedScalar>,
-    transform: Affine<FixedScalar>, options: FixedFlattenOptions,
-    workspace: &'a mut StrokePathWorkspace<'_, FixedScalar>) ->
-    Result<FlattenedStrokePath<'a, FixedScalar>,
-        FixedFlattenError<StrokeWorkspaceError>> {
-    let (point_len, contour_len) = {
-        let mut sink = StrokePathSink {
-            points: workspace.points, contours: workspace.contours,
-            point_len: 0, contour_len: 0, current_start: None, current_closed: false,
-        };
-        flatten_path_fixed(path, transform, options, &mut sink)?;
-        (sink.point_len, sink.contour_len)
-    };
-    Ok(FlattenedStrokePath {
-          points: &workspace.points[..point_len],
-        contours: &workspace.contours[..contour_len],
-    })
-}
-
 /// Flattens a transformed path into caller-owned, compact stroke storage.
 pub fn flatten_stroke_path<'a>(path: &Path, transform: Affine, options: FlattenOptions,
     workspace: &'a mut StrokePathWorkspace<'_>) ->
     Result<FlattenedStrokePath<'a>, FlattenError<StrokeWorkspaceError>> {
-    let (point_len, contour_len) = {
-        let mut sink = StrokePathSink {
-            points: workspace.points, contours: workspace.contours,
-            point_len: 0, contour_len: 0, current_start: None, current_closed: false,
-        };
-        flatten_path(path, transform, options, &mut sink)?;
-        (sink.point_len, sink.contour_len)
-    };
-    Ok(FlattenedStrokePath {
-          points: &workspace.points[..point_len],
-        contours: &workspace.contours[..contour_len],
-    })
+    flatten_stroke_path_with(workspace,
+        |sink| flatten_path(path, transform, options, sink))
 }
 
-struct StrokePathSink<'a, T = Scalar> {
+pub(crate) struct StrokePathSink<'a, T = Scalar> {
     points: &'a mut [Point<T>],
     contours: &'a mut [StrokeContour],
     point_len: usize,
     contour_len: usize,
     current_start: Option<usize>,
     current_closed: bool,
+}
+
+pub(crate) fn flatten_stroke_path_with<'a, T: Copy, E>(
+    workspace: &'a mut StrokePathWorkspace<'_, T>,
+    flatten: impl FnOnce(&mut StrokePathSink<'_, T>) -> Result<(), E>) ->
+    Result<FlattenedStrokePath<'a, T>, E> {
+    let (point_len, contour_len) = {
+        let mut sink = StrokePathSink {
+            points: workspace.points, contours: workspace.contours,
+            point_len: 0, contour_len: 0, current_start: None, current_closed: false,
+        };
+        flatten(&mut sink)?;
+        (sink.point_len, sink.contour_len)
+    };
+    Ok(FlattenedStrokePath {
+          points: &workspace.points[..point_len],
+        contours: &workspace.contours[..contour_len],
+    })
 }
 
 impl<T: Copy> StrokePathSink<'_, T> {

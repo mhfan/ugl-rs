@@ -713,7 +713,8 @@ fn benchmark_paint(c: &mut Criterion) {
             encode_fixed_coverage_tiles, fixed_tile_requirements, rasterize_lines_to_tiles,
         },
         sampler::{FixedAngle, FixedConicGradient, FixedLinearGradient, FixedRadialGradient},
-        stroke::{StrokeContour, StrokePathWorkspace, flatten_stroke_path_fixed},
+        stroke::{StrokeContour, StrokePathWorkspace},
+        stroke_fixed::flatten_stroke_path_fixed,
         stroke_fixed::{FixedStrokeOptions, stroke_polyline_fixed},
     };
 

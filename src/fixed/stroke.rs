@@ -1,8 +1,11 @@
 //! No-FPU stroke expansion for Q24.8 polylines.
 
-use crate::{edge::{Edge, EdgeSink}, geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar, Point},
-    fixed::math::{FixedAngle, cordic_turn, cordic_unit_vector, integer_sqrt_u64},
-    stroke::{LineCap, LineJoin}};
+use crate::{edge::{Edge, EdgeSink},
+    geometry::{Affine, FIXED_DEVICE_RAW_LIMIT, FixedScalar, Path, Point},
+    fixed::{flatten::{FixedFlattenError, FixedFlattenOptions, flatten_path_fixed},
+        math::{FixedAngle, cordic_turn, cordic_unit_vector, integer_sqrt_u64}},
+    stroke::{FlattenedStrokePath, LineCap, LineJoin, StrokePathWorkspace,
+        StrokeWorkspaceError, flatten_stroke_path_with}};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FixedStrokeError {
     NonPositiveWidth, WidthOutOfRange, MiterLimitTooSmall, RoundSegmentLimitZero,
@@ -56,6 +59,15 @@ impl Default for FixedStrokeOptions {
 }
 
 #[derive(Clone, Copy)] struct Direction { dx: i64, dy: i64, length: u64 }
+
+pub fn flatten_stroke_path_fixed<'a>(path: &Path<FixedScalar>,
+    transform: Affine<FixedScalar>, options: FixedFlattenOptions,
+    workspace: &'a mut StrokePathWorkspace<'_, FixedScalar>) ->
+    Result<FlattenedStrokePath<'a, FixedScalar>,
+        FixedFlattenError<StrokeWorkspaceError>> {
+    flatten_stroke_path_with(workspace,
+        |sink| flatten_path_fixed(path, transform, options, sink))
+}
 
 pub fn stroke_line_fixed<S: EdgeSink<FixedScalar>>(from: Point<FixedScalar>,
     to: Point<FixedScalar>, options: FixedStrokeOptions, sink: &mut S) ->
