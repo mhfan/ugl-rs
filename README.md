@@ -103,15 +103,11 @@ renderer research and explicit adoption decisions are tracked in
 
 ## Quick start
 
-The rendering APIs borrow both destination and scratch storage. Capacities are
-chosen by the caller and insufficient workspace is returned as an error:
+The ordinary API owns and reuses scratch storage, planning any growth before a
+draw can modify the destination:
 
 ```rust
-use ugl_rs::{analytic::Intersection,
-    color::SRGBA, edge::Edge, geometry::{Affine, PathBuilder},
-    canvas::{RenderOptions, RenderWorkspace, PixmapMut,
-        render_solid},
-};
+use ugl_rs::{Canvas, color::SRGBA, geometry::PathBuilder};
 
 const  WIDTH: u32 = 4;
 const HEIGHT: u32 = 4;
@@ -121,19 +117,15 @@ builder.move_to((0.5, 0.5)).line_to((3.5, 0.5))
        .line_to((3.5, 3.5)).line_to((0.5, 3.5));
 let path = builder.build();
 let mut pixels = [0; WIDTH as usize * HEIGHT as usize * 4];
-let mut intersections = [Intersection::default(); 8];
-let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
-let (mut edges, mut coverage) = ([Edge::default(); 8], [0.0; WIDTH as usize]);
-let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
-
-render_solid(&path, Affine::identity(), SRGBA::new(20, 200, 40, 160),
-    RenderOptions::default(), &mut target,
-    &mut RenderWorkspace { edges: &mut edges,
-        intersections: &mut intersections, row_coverage: &mut coverage,
-        row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
-    },
-).unwrap();
+let mut canvas = Canvas::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+canvas.set_color(SRGBA::new(20, 200, 40, 160)).fill(&path).unwrap();
 ```
+
+`Context` is the allocation-free facade for callers that provide bounded
+scratch explicitly. The lower-level `canvas::*` functions expose individual
+workspace arrays only for static-memory systems, custom allocators, retained
+coverage integration, and renderer development; they are not required for
+ordinary drawing.
 
 The crate is `no_std` and currently uses `alloc`. The default feature enables
 the Q24.8 fixed backend; use `--no-default-features` for the floating-point
@@ -171,10 +163,10 @@ encoded `SRGBA<u8>`, while `PixmapMut::pixel` returns only validated
 Pixmap construction intentionally validates layout without scanning the image;
 source-over callers are responsible for valid premultiplied destination data.
 
-`Context` and `fixed::context::Context` provide parallel stateful drawing APIs
-for the exact-area f32 and Q24.8 pipelines. They retain transform, fill rule,
-flattening, stroke, solid color, and rectangle/mask clip state while borrowing
-the target and bounded scratch storage. `fill_with`, `stroke_with`, and
+`context::Context` and `fixed::context::Context` provide parallel bounded
+drawing APIs for the exact-area f32 and Q24.8 pipelines. They retain transform,
+fill rule, flattening, stroke, solid color, and rectangle/mask clip state while
+borrowing the target and bounded scratch storage. `fill_with`, `stroke_with`, and
 `stroke_dashed_with` preserve static sampler dispatch; all low-level functions
 remain available.
 
@@ -182,15 +174,19 @@ remain available.
 
 Choose the narrowest layer that owns the required state:
 
-- `Context` or `fixed::context::Context` for immediate stateful drawing;
+- `Canvas` for ordinary f32 drawing with automatically managed scratch and
+  retained path clips;
+- `context::Context` or `fixed::context::Context` when scratch must be bounded
+  and supplied by the caller;
 - `canvas::render_*` for direct exact-area f32 rendering;
 - `canvas::render_*_sampled` only as the supersampled reference;
 - `canvas_linear` for a premultiplied linear-light working framebuffer;
 - `fixed::canvas` for explicit Q24.8 streaming, retained strips, and tiles.
 
-No layer allocates destination or raster scratch implicitly. Context
-construction borrows a `ContextWorkspace`; dash buffers may be empty when
-dashed strokes are not used.
+No layer allocates the destination. `Canvas` owns reusable raster scratch and
+grows it transactionally before drawing. Context construction takes a
+`context::Workspace` containing caller-owned slices; dash buffers may be empty
+when dashed strokes are not used.
 
 ### Workspace planning
 
@@ -213,21 +209,24 @@ explicitly sized as `stride × height`.
 
 ### Arbitrary path clipping
 
-Free-path clipping is deliberately a two-stage operation so its image-sized
-storage and lifetime stay visible:
+`Canvas::set_clip_path` is the ordinary free-path clipping API. It rasterizes
+and retains the antialiased mask in internal storage; subsequent fill,
+stroke, and dashed-stroke calls apply it without exposing mask storage.
+
+The bounded Context and low-level APIs deliberately use a two-stage operation
+so image-sized storage and lifetime remain visible:
 
 1. Rasterize any path into caller-owned `CoverageMaskMut` with
    `canvas::rasterize_path_clip` or
    `fixed::canvas::rasterize_path_clip`.
-2. Borrow it with `as_mask()` and pass it to `Context::set_clip_mask`, or to a
-   low-level `render_*_masked` function.
+2. Borrow it with `as_mask()` and pass it to `context::Context::set_clip_mask`,
+   or to a low-level `render_*_masked` function.
 
 During rendering, shape and mask coverage are multiplied before paint
 composition. The mask therefore preserves antialiased path boundaries and can
 be reused across multiple draws. `set_clip_rect` is the cheaper direct path
-for a single rectangle. There is currently no implicit clip stack or hidden
-mask allocation; callers that need clip intersections must combine
-caller-owned masks explicitly.
+for a single rectangle. There is currently no implicit clip stack; bounded
+callers that need clip intersections must combine caller-owned masks explicitly.
 
 ## Benchmarking
 

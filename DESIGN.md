@@ -527,6 +527,13 @@ state, and delegates to the existing allocation-free functions. Those
 low-level functions remain public expert APIs for retained coverage, custom
 sinks, exact capacity planning, and applications that keep state elsewhere.
 
+`Canvas` (implemented by `context::Canvas` and re-exported at crate root) is the
+ordinary allocation-backed facade. It owns and reuses f32 scratch, performs
+exact planning and any growth before drawing, and then delegates to `Context`.
+Consequently its public workflow does not expose edge, intersection, row-bin,
+or coverage-row storage. `Context` remains the bounded zero-allocation
+boundary; low-level workspace layout belongs to expert APIs.
+
 The facade uses two concrete, deliberately parallel entry points:
 
 - `Context` selects the analytic f32 geometry/raster path and the encoded
@@ -553,19 +560,19 @@ The first stable method vocabulary is small:
   storing trait objects or allocating.
 - `stroke_dashed` and `stroke_dashed_with` accept a borrowed validated pattern
   rather than storing it in context state; their additional point/contour
-  buffers are explicit in `ContextWorkspace`.
+  buffers are explicit in `context::Workspace`.
 - clipping is context state, represented as no clip, one rectangle, or one
-  borrowed coverage mask. A later caller-owned clip stack uses explicit
-  `save`/`restore`; the first facade must not allocate an implicit stack.
+  borrowed coverage mask. `Canvas` additionally owns a mask produced by
+  `set_clip_path`. A later clip stack uses explicit `save`/`restore` semantics.
 
 Status: the first `Context` and `fixed::context::Context` fill/stroke/dash
 facade is implemented. Both share generic state storage and parallel method
 names; rectangle/mask clip state and statically dispatched custom paint are
-supported. Arbitrary path clipping is intentionally explicit: low-level
-`rasterize_path_clip` writes caller-owned `CoverageMaskMut`, after which the
-facade borrows the mask with `set_clip_mask`. Caller-owned save/restore,
-multi-clip mask combination, and convenience allocation remain before the
-facade can be considered complete. Exact fill/stroke/dash planning is available
+supported. `Canvas::set_clip_path` provides ordinary owned path clipping;
+bounded Context and low-level callers use `rasterize_path_clip` with a
+caller-owned `CoverageMaskMut`, then borrow it with `set_clip_mask`.
+Save/restore and multi-clip mask combination remain future work. Exact
+fill/stroke/dash planning is available
 both through low-level functions and Context methods; path clips reuse the fill
 planner through the semantic `path_clip_requirements` entry point.
 
@@ -573,7 +580,7 @@ All methods preserve existing error and mutation contracts. Geometry/capacity
 failure before rasterization leaves the target unchanged. Once span emission
 begins, sink/raster errors follow the documented low-level behavior. Context
 construction performs no allocation and does not infer or resize workspace.
-Workspace requirement helpers should be added before any convenience allocator.
+`Canvas` performs requirement planning before growing its reusable storage.
 
 ### Fixed source layout
 

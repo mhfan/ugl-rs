@@ -12,19 +12,27 @@ use crate::{
             render_paint, render_paint_clipped, render_paint_masked,
             render_path, render_path_clipped, render_path_masked},
         dash::Pattern as DashPattern,
-        flatten::Options as FlattenOptions, raster::Workspace,
+        flatten::Options as FlattenOptions, raster::Workspace as RasterWorkspace,
         sampler::PaintSampler, stroke::Options as StrokeOptions},
     geometry::{Affine, Path, Point, Rect}, raster::{CoverageMask, FillRule},
     stroke::StrokePathWorkspace,
 };
 
-/// Caller-owned scratch for [`Context`].
-pub struct ContextWorkspace<'a> {
-    pub path: StrokePathWorkspace<'a, Scalar>,
-    pub dash_points: &'a mut [Point<Scalar>],
-    pub dash_contours: &'a mut [DashContour],
-    pub geometry: GeometryWorkspace<'a>,
-    pub raster: Workspace<'a>,
+/// Caller-owned scratch borrowed by [`Context`].
+pub struct Workspace<'a> {
+    path: StrokePathWorkspace<'a, Scalar>,
+    dash_points: &'a mut [Point<Scalar>],
+    dash_contours: &'a mut [DashContour],
+    geometry: GeometryWorkspace<'a>,
+    raster: RasterWorkspace<'a>,
+}
+
+impl<'a> Workspace<'a> {
+    pub fn new(path: StrokePathWorkspace<'a, Scalar>,
+        dash_points: &'a mut [Point<Scalar>], dash_contours: &'a mut [DashContour],
+        geometry: GeometryWorkspace<'a>, raster: RasterWorkspace<'a>) -> Self {
+        Self { path, dash_points, dash_contours, geometry, raster }
+    }
 }
 
 #[derive(Clone, Copy)] struct SolidPaint(PremulSRGBA8);
@@ -41,14 +49,14 @@ impl PaintSampler for SolidPaint {
 /// pre-rasterized fixed path mask when the complete clip path must avoid an FPU.
 pub struct Context<'a, 'target, 'workspace, 'clip> {
     target: &'a mut PixmapMut<'target>,
-    workspace: &'a mut ContextWorkspace<'workspace>,
+    workspace: Workspace<'workspace>,
     state: DrawState<Scalar, FlattenOptions, StrokeOptions, SolidPaint>,
     clip: Clip<'clip>,
 }
 
 impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
     pub fn new(target: &'a mut PixmapMut<'target>,
-        workspace: &'a mut ContextWorkspace<'workspace>) -> Self {
+        workspace: Workspace<'workspace>) -> Self {
         Self {
             target, workspace,
             state: DrawState {
@@ -119,7 +127,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             transform: self.state.transform, flatten: self.state.flatten,
             fill_rule: self.state.fill_rule,
         }, self.clip);
-        let workspace = &mut *self.workspace;
+        let workspace = &mut self.workspace;
         match clip {
             Clip::None => render_path(path, paint, options, self.target,
                 &mut workspace.geometry, &mut workspace.raster),
@@ -150,7 +158,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             transform: self.state.transform, flatten: self.state.flatten,
             stroke: self.state.stroke,
         }, self.clip);
-        let workspace = &mut *self.workspace;
+        let workspace = &mut self.workspace;
         let usage = prepare_stroke_path(
             path, options, &mut workspace.path, &mut workspace.geometry)?;
         let lines = &workspace.geometry.lines[..usage.lines];
@@ -191,7 +199,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             },
             dash,
         }, self.clip);
-        let workspace = &mut *self.workspace;
+        let workspace = &mut self.workspace;
         let mut dashed = DashedStrokeWorkspace {
             path: StrokePathWorkspace {
                 points: workspace.path.points, contours: workspace.path.contours,
@@ -241,19 +249,17 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             [Segment::default(); 32], [Trapezoid::default(); 16], [0; 4],
         );
         let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 32]);
-        let mut workspace = ContextWorkspace {
-            path: StrokePathWorkspace {
+        let workspace = Workspace::new(StrokePathWorkspace {
                 points: &mut points, contours: &mut contours,
             },
-            dash_points: &mut dash_points,
-            dash_contours: &mut dash_contours,
-            geometry: GeometryWorkspace { edges: &mut edges, lines: &mut lines },
-            raster: Workspace {
+            &mut dash_points, &mut dash_contours,
+            GeometryWorkspace { edges: &mut edges, lines: &mut lines },
+            RasterWorkspace {
                 segments: &mut segments, trapezoids: &mut trapezoids,
                 row_area: &mut row_area, strip_offsets: &mut strip_offsets,
                 strip_indices: &mut strip_indices,
             },
-        };
+        );
         let mask_data = [
             255, 128, 0, 0,
             255, 128, 0, 0,
@@ -261,7 +267,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         ];
         let mut pixels = [0; 4 * 3 * 4];
         let mut target = PixmapMut::new(&mut pixels, 4, 3, 16).unwrap();
-        let mut context = Context::new(&mut target, &mut workspace);
+        let mut context = Context::new(&mut target, workspace);
         context.set_color(SRGBA::new(255, 0, 0, 128))
             .set_transform(Affine::translate(fixed(1), Scalar::ZERO))
             .set_clip_mask(CoverageMask::new(&mask_data, 4, 3, 4).unwrap());
