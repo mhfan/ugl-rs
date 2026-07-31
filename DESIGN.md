@@ -144,36 +144,45 @@ and SIMD layouts do not enter the common `Edge` representation.
 
 ## Pixels and color
 
-- The first target format is premultiplied RGBA8888.
+- The first target format is encoded-sRGB premultiplied RGBA8888.
 - Public color constructors use logical RGBA channel order regardless of memory
   layout.
 - Compositing is source-over unless explicitly selected otherwise.
 - Coverage multiplies premultiplied source color and alpha.
-- The reference pipeline interprets channel values in linear light. Explicit
-  sRGB conversion belongs at input/output boundaries.
+- `SRGBA`, `LinearRGBA`, and their premultiplied counterparts make transfer
+  state explicit. The current RGBA8888 compositor remains an encoded-domain
+  compatibility path; a fully linear working framebuffer is a later stage.
 - Integer conversion maps channel extrema exactly and uses round-to-nearest.
 
 ## Paint and gradients
 
-- `PaintSampler` returns premultiplied RGBA8888 at device-space pixel centers
+- `PaintSampler` returns `EncodedPremulSRGBA8` at device-space pixel centers
   and is statically dispatched without allocation.
 - Solid paint reports its constant color so span and tile compositors retain
   their bulk fast paths.
 - `TransformedPaint` maps device samples into paint-local coordinates through
   an inverse affine computed once at construction. A singular or non-finite
   transform is rejected.
-- Gradient stops borrow caller-owned storage, are ordered in `[0, 1]`, and
-  interpolate premultiplied channels. Equal offsets form a hard transition;
-  the last stop at an exact repeated offset wins.
+- Gradient stops borrow caller-owned storage, are ordered in `[0, 1]`, decode
+  supplied sRGB to linear light once, and interpolate premultiplied `f32`
+  channels. Samples are encoded to sRGB at the framebuffer boundary. Equal
+  offsets form a hard transition; the last stop at an exact repeated offset
+  wins.
 - Linear and radial gradients support pad, repeat, and reflect extension.
 - Radial paint uses the general two-circle model. Samples outside its valid
   cone are transparent, and negative, non-finite, or identical-circle inputs
   are rejected.
 - Conic paint covers one complete turn, repeats at the seam, and takes its
   start angle in radians.
-- The reference API treats supplied channel values as linear-light values.
-  Encoding or decoding sRGB is an explicit input/output-boundary operation,
-  not an implicit sampler step.
+- `GradientStop::new` treats `RGBA<u8>` as straight encoded sRGB for migration;
+  `GradientStop::from_srgba` is the explicit API. Linear interpolation and
+  encoded-domain framebuffer compositing are intentionally separate stages.
+- `GradientStops::new` is the exact reference path. `GradientStops::with_ramp`
+  precomputes into caller-owned storage for allocation-free high-throughput
+  sampling. Its encoded premultiplied entries approximate the linear-light
+  reference: smooth-gradient error decreases with ramp size, while hard
+  transitions are quantized to one ramp interval. A 1024-entry ramp is the
+  current performance baseline.
 
 ## Strokes
 

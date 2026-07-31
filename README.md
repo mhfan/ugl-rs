@@ -90,7 +90,7 @@ cargo bench --bench raster --all-features -- paint_sample_rgba8888
 The paint benchmark directly samples 65,536 device-space pixel centers and
 accumulates the resulting premultiplied RGBA channels. It excludes path
 processing, rasterization, clipping, destination writes, and compositing.
-The development baseline at commit `ad3906f`, measured on 2026-07-30 with
+The original encoded-domain baseline at commit `ad3906f`, measured on 2026-07-30 with
 `rustc 1.97.1`/LLVM 22.1.6 on Darwin arm64 using Criterion's default 3-second
 warm-up, 5-second measurement, and 100 samples, is:
 
@@ -100,6 +100,22 @@ warm-up, 5-second measurement, and 100 samples, is:
 | linear | 500.50 µs | 487.76–517.64 µs | 130.94 Mpixel/s |
 | two-circle radial | 1.3429 ms | 1.3189–1.3844 ms | 48.80 Mpixel/s |
 | conic | 1.1343 ms | 1.1126–1.1625 ms | 57.78 Mpixel/s |
+
+After moving gradient interpolation to linear light, the high-throughput path
+uses a caller-owned 1024-entry encoded premultiplied ramp. The same machine and
+Criterion settings measured the 2026-07-31 working tree as:
+
+| Paint | Time estimate | Reported interval | Throughput |
+| --- | ---: | ---: | ---: |
+| solid | 259.12 µs | 248.92–280.20 µs | 252.92 Mpixel/s |
+| linear | 269.32 µs | 263.44–278.85 µs | 243.33 Mpixel/s |
+| two-circle radial | 894.45 µs | 876.32–917.27 µs | 73.27 Mpixel/s |
+| conic | 582.08 µs | 567.54–602.77 µs | 112.59 Mpixel/s |
+
+`GradientStops::new` remains the exact linear-light reference path;
+`GradientStops::with_ramp` is the measured path. The ramp is prepared outside
+the timed loop. Its nearest-entry sampling keeps tested smooth-gradient output
+within one RGBA8 code value per channel of the exact path.
 
 These are scalar reference costs, not optimized paint targets. In particular,
 the general radial sampler performs stable two-circle root solving per pixel;

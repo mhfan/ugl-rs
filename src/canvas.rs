@@ -79,12 +79,12 @@ impl<'a> PixmapMut<'a> {
     fn blend_sampled_span<S: PaintSampler>(&mut self, x: u32, y: u32, len: u32,
         sampler: &S, coverage: u8) {
         if let Some(color) = sampler.solid_color() {
-            self.blend_solid_span(x, y, len, color, coverage);
+            self.blend_solid_span(x, y, len, color.into_legacy(), coverage);
             return;
         }
         for pixel_x in x..x + len {
             let color = sampler.sample(pixel_x as f32 + 0.5, y as f32 + 0.5);
-            self.blend_solid_span(pixel_x, y, 1, color, coverage);
+            self.blend_solid_span(pixel_x, y, 1, color.into_legacy(), coverage);
         }
     }
 
@@ -424,13 +424,14 @@ pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule:
             FixedTileKind::Full => {
                 let (width, height) = tiled.tile_extent(*tile);
                 compositor.target.blend_solid_tile(
-                    tile.x, tile.y, width, height, paint.color());
+                    tile.x, tile.y, width, height, paint.color().into_legacy());
             }
             FixedTileKind::Boundary => {
                 let start = tile.run_start as usize;
                 for run in &tiled.runs()[start..start + tile.run_count as usize] {
                     compositor.target.blend_solid_span(tile.x + run.x as u32,
-                        tile.y + run.row as u32, run.len as _, paint.color(), run.coverage);
+                        tile.y + run.row as u32, run.len as _,
+                        paint.color().into_legacy(), run.coverage);
                 }
             }
         }

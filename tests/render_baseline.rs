@@ -111,8 +111,8 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PremulRGBA<u8>; 16] {
     let gradient = LinearGradient::new((0.0, 0.0), (4.0, 0.0),
         GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
     let row: [PremulRGBA<u8>; 4] = [
-        (223, 0, 32, 255).into(), (159, 0, 96, 255).into(),
-        (96, 0, 159, 255).into(), (32, 0, 223, 255).into(),
+        (240, 0, 99, 255).into(), (207, 0, 165, 255).into(),
+        (165, 0, 207, 255).into(), (99, 0, 240, 255).into(),
     ];
     assert_eq!(render_analytic_paint(path, &gradient),
         core::array::from_fn(|index| row[index % row.len()]));

@@ -1,6 +1,7 @@
 
 use super::*;
-use crate::{analytic::AnalyticIntersection, color::{PremulRGBA, RGBA}, edge::Edge,
+use crate::{analytic::AnalyticIntersection,
+    color::{EncodedPremulSRGBA8, PremulRGBA, RGBA}, edge::Edge,
     geometry::{Affine, PathBuilder}, raster::Intersection,
     sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient, SpreadMode},
     stroke::{LineCap, LineJoin},
@@ -108,7 +109,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 #[test] fn analytic_sampled_paint_uses_device_pixel_centers_and_coverage() {
     struct CoordinatePaint;
     impl PaintSampler for CoordinatePaint {
-        fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
+        fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
             ((x * 40.0) as u8, (y * 40.0) as u8, 0, u8::MAX).into()
         }
     }
@@ -261,14 +262,14 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         AnalyticStrokeOptions::default(),
         &mut PixmapMut::new(&mut clipped, 2, 1, 8).unwrap(),
         &mut workspace).unwrap();
-    assert_eq!(clipped, [96, 0, 32, 128, 32, 0, 96, 128]);
+    assert_eq!(clipped, [113, 0, 69, 128, 69, 0, 113, 128]);
 
     render_stroke_paint_analytic_masked(&path, Affine::identity(), &gradient,
         CoverageMask::new(&mask_data, 2, 1, 2).unwrap(),
         AnalyticStrokeOptions::default(),
         &mut PixmapMut::new(&mut masked, 2, 1, 8).unwrap(),
         &mut workspace).unwrap();
-    assert_eq!(masked, [96, 0, 32, 128, 64, 0, 191, 255]);
+    assert_eq!(masked, [113, 0, 69, 128, 137, 0, 225, 255]);
 }
 
 #[test] fn analytic_linear_gradient_renders_end_to_end() {
@@ -281,8 +282,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_paint_analytic(&path, Affine::identity(), &gradient,
         AnalyticRenderOptions::default(), &mut target,
         &mut buffers.workspace()).unwrap();
-    assert_eq!(target.pixel(0, 0), Some((191, 0, 64, 255).into()));
-    assert_eq!(target.pixel(1, 0), Some((64, 0, 191, 255).into()));
+    assert_eq!(target.pixel(0, 0), Some((225, 0, 137, 255).into()));
+    assert_eq!(target.pixel(1, 0), Some((137, 0, 225, 255).into()));
 }
 
 #[test] fn analytic_radial_gradient_renders_end_to_end() {
@@ -295,7 +296,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_paint_analytic(&path, Affine::identity(), &gradient,
         AnalyticRenderOptions::default(), &mut target,
         &mut buffers.workspace()).unwrap();
-    assert_eq!(target.pixel(0, 0), Some((85, 0, 170, 255).into()));
+    assert_eq!(target.pixel(0, 0), Some((156, 0, 213, 255).into()));
     assert_eq!(target.pixel(1, 0), Some((255, 0, 0, 255).into()));
     assert_eq!(target.pixel(2, 0), target.pixel(0, 0));
 }
@@ -314,7 +315,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         AnalyticRenderOptions::default(),
         &mut PixmapMut::new(&mut clipped_pixels, 2, 1, 8).unwrap(),
         &mut workspace).unwrap();
-    assert_eq!(clipped_pixels, [96, 0, 32, 128, 32, 0, 96, 128]);
+    assert_eq!(clipped_pixels, [113, 0, 69, 128, 69, 0, 113, 128]);
 
     let (mask_data, mut masked_pixels) = ([128, 255], [0; 8]);
     render_paint_analytic_masked(&path, Affine::identity(), &gradient,
@@ -322,7 +323,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         AnalyticRenderOptions::default(),
         &mut PixmapMut::new(&mut masked_pixels, 2, 1, 8).unwrap(),
         &mut workspace).unwrap();
-    assert_eq!(masked_pixels, [96, 0, 32, 128, 64, 0, 191, 255]);
+    assert_eq!(masked_pixels, [113, 0, 69, 128, 137, 0, 225, 255]);
 }
 
 #[test] fn analytic_rectangle_clip_multiplies_coverage_end_to_end() {

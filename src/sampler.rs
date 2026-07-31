@@ -2,9 +2,9 @@
 //! Allocation-free paint samplers.
 //!
 //! Sampling currently uses device-space `f32` pixel centers as the reference
-//! implementation. The compositor is generic over this trait, so later fixed
-//! coordinate samplers can be introduced without changing premultiplied color
-//! storage or raster coverage.
+//! implementation. Gradient stops are decoded to linear-light premultiplied
+//! colors and interpolated there. Samples are encoded to premultiplied sRGB
+//! bytes at the current framebuffer boundary.
 
 /*  Samplers can be though of as 2D shaders. Sampler is a first class citizen in *ugl-rs*,
     think of them as an object, that can be sampled in the normalized unit square.
@@ -15,22 +15,23 @@
       a texture (image)
  */
 
-use crate::{color::{PremulRGBA, RGBA}, geometry::{Affine, Point}};
+use crate::{color::{EncodedPremulSRGBA8, LinearPremulRGBA, SRGBA, RGBA},
+    geometry::{Affine, Point}};
 
-/// Produces premultiplied source colors at device-space positions.
+/// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
 /// Implementations should be small values borrowed by the compositor. Calls are
 /// statically dispatched; no trait object or allocation is required.
 pub trait PaintSampler {
-    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8>;
+    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8;
 
     /// Reports a position-independent color to enable span and tile fast paths.
-    fn solid_color(&self) -> Option<PremulRGBA<u8>> { None }
+    fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { None }
 }
 
 impl<S: PaintSampler + ?Sized> PaintSampler for &S {
-    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> { (**self).sample(x, y) }
-    fn solid_color(&self) -> Option<PremulRGBA<u8>> { (**self).solid_color() }
+    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 { (**self).sample(x, y) }
+    fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { (**self).solid_color() }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum PaintTransformError {
@@ -54,54 +55,59 @@ impl<S> TransformedPaint<S> {
 }
 
 impl<S: PaintSampler> PaintSampler for TransformedPaint<S> {
-    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
+    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
         let point = self.device_to_paint.transform_point((x, y).into());
         self.sampler.sample(point.x, point.y)
     }
 
-    fn solid_color(&self) -> Option<PremulRGBA<u8>> { self.sampler.solid_color() }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)] pub struct SolidPaint { color: PremulRGBA<u8> }
-
-impl SolidPaint {
-    pub fn new(color: RGBA<u8>) -> Self { Self { color: color.premul() } }
-    pub fn premultiplied(color: PremulRGBA<u8>) -> Self { Self { color } }
-    pub fn color(&self) -> PremulRGBA<u8> { self.color }
-}
-
-impl From<RGBA<u8>> for SolidPaint { fn from(color: RGBA<u8>) -> Self { Self::new(color) } }
-
-impl From<PremulRGBA<u8>> for SolidPaint {
-    fn from(color: PremulRGBA<u8>) -> Self { Self::premultiplied(color) }
-}
-
-impl PaintSampler for SolidPaint {
-    fn sample(&self, _x: f32, _y: f32) -> PremulRGBA<u8> { self.color }
-    fn solid_color(&self) -> Option<PremulRGBA<u8>> { Some(self.color) }
+    fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { self.sampler.solid_color() }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GradientStop { offset: f32, color: PremulRGBA<u8> }
+pub struct SolidPaint { color: EncodedPremulSRGBA8 }
+
+impl SolidPaint {
+    pub fn new(color: RGBA<u8>) -> Self {
+        Self { color: SRGBA::from(color).premul_encoded() }
+    }
+    pub fn from_srgba(color: SRGBA<u8>) -> Self { Self { color: color.premul_encoded() } }
+    pub fn premultiplied(color: EncodedPremulSRGBA8) -> Self { Self { color } }
+    pub fn color(&self) -> EncodedPremulSRGBA8 { self.color }
+}
+
+impl From<RGBA<u8>> for SolidPaint { fn from(color: RGBA<u8>) -> Self { Self::new(color) } }
+impl From<SRGBA<u8>> for SolidPaint { fn from(color: SRGBA<u8>) -> Self { Self::from_srgba(color) } }
+
+impl PaintSampler for SolidPaint {
+    fn sample(&self, _x: f32, _y: f32) -> EncodedPremulSRGBA8 { self.color }
+    fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { Some(self.color) }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GradientStop { offset: f32, color: LinearPremulRGBA<f32> }
 
 impl GradientStop {
     pub fn new(offset: f32, color: RGBA<u8>) -> Self {
-        Self { offset, color: color.premul() }
+        Self::from_srgba(offset, color.into())
     }
 
-    pub fn premultiplied(offset: f32, color: PremulRGBA<u8>) -> Self { Self { offset, color } }
+    pub fn from_srgba(offset: f32, color: SRGBA<u8>) -> Self {
+        Self { offset, color: color.to_linear().premul() }
+    }
 
     pub fn offset(&self) -> f32 { self.offset }
-    pub fn color(&self) -> PremulRGBA<u8> { self.color }
+    pub fn color(&self) -> LinearPremulRGBA<f32> { self.color }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum GradientError {
     EmptyStops, NonFiniteOffset, OffsetOutOfRange, UnorderedStops,
-    NonFiniteGeometry, NegativeRadius, DegenerateGeometry,
+    RampTooSmall, NonFiniteGeometry, NegativeRadius, DegenerateGeometry,
 }
 
 /// Validated, caller-owned gradient stops.
-#[derive(Clone, Copy, Debug)] pub struct GradientStops<'a> { stops: &'a [GradientStop] }
+#[derive(Clone, Copy, Debug)] pub struct GradientStops<'a> {
+    stops: &'a [GradientStop], ramp: Option<&'a [EncodedPremulSRGBA8]>,
+}
 
 impl<'a> GradientStops<'a> {
     pub fn new(stops: &'a [GradientStop]) -> Result<Self, GradientError> {
@@ -115,26 +121,44 @@ impl<'a> GradientStops<'a> {
             if index != 0 && stop.offset < previous {
                 return Err(GradientError::UnorderedStops);
             }   previous =   stop.offset;
-        }   Ok(Self { stops })
+        }   Ok(Self { stops, ramp: None })
+    }
+
+    /// Builds an encoded lookup ramp once for the high-throughput sampling path.
+    ///
+    /// This approximates the exact linear-light interpolation performed by
+    /// [`Self::new`]. Smooth gradients converge with ramp resolution; repeated
+    /// stops used for hard transitions are quantized to one ramp interval.
+    pub fn with_ramp(stops: &'a [GradientStop],
+        ramp: &'a mut [EncodedPremulSRGBA8]) -> Result<Self, GradientError> {
+        Self::new(stops)?;
+        if ramp.len() < 2 { return Err(GradientError::RampTooSmall); }
+        let scale = (ramp.len() - 1) as f32;
+        for (index, color) in ramp.iter_mut().enumerate() {
+            *color = Self::sample_stops(stops, index as f32 / scale);
+        }
+        Ok(Self { stops, ramp: Some(ramp) })
     }
 
     pub fn as_slice(&self) -> &'a [GradientStop] { self.stops }
 
-    fn sample(&self, t: f32) -> PremulRGBA<u8> {
-        let upper = self.stops.partition_point(|stop| stop.offset <= t);
-        if  upper == 0 { return self.stops[0].color; }
-        if  upper == self.stops.len() { return self.stops[upper - 1].color; }
-        let (from, to) = (self.stops[upper - 1], self.stops[upper]);
+    fn sample(&self, t: f32) -> EncodedPremulSRGBA8 {
+        let Some(ramp) = self.ramp else { return Self::sample_stops(self.stops, t); };
+        let index = (t.clamp(0.0, 1.0) * (ramp.len() - 1) as f32 + 0.5) as usize;
+        ramp[index]
+    }
+
+    fn sample_stops(stops: &[GradientStop], t: f32) -> EncodedPremulSRGBA8 {
+        let upper = stops.partition_point(|stop| stop.offset <= t);
+        if  upper == 0 { return stops[0].color.to_encoded_srgba8(); }
+        if  upper == stops.len() {
+            return stops[upper - 1].color.to_encoded_srgba8();
+        }
+        let (from, to) = (stops[upper - 1], stops[upper]);
         let extent = to.offset - from.offset;
-        if  extent == 0.0 { return to.color; }
+        if  extent == 0.0 { return to.color.to_encoded_srgba8(); }
         let position = (t - from.offset) / extent;
-        let (from, to) = (from.color.to_array(), to.color.to_array());
-        let lerp = |from: u8, to: u8| {
-            (from as f32 + (to as f32 - from as f32) * position + 0.5)
-                .clamp(0.0, u8::MAX as _) as u8
-        };
-        (lerp(from[0], to[0]), lerp(from[1], to[1]),
-         lerp(from[2], to[2]), lerp(from[3], to[3])).into()
+        from.color.lerp(to.color, position).to_encoded_srgba8()
     }
 }
 
@@ -178,7 +202,7 @@ impl<'a> LinearGradient<'a> {
 }
 
 impl PaintSampler for LinearGradient<'_> {
-    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
+    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
         let t = ((x - self.from.x) * self.delta.x  +
                  (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
         self.stops.sample(self.spread.map(t))
@@ -255,8 +279,8 @@ impl<'a> RadialGradient<'a> {
 }
 
 impl PaintSampler for RadialGradient<'_> {
-    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
-        self.parameter(x, y).map_or_else(PremulRGBA::zeroed,
+    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
+        self.parameter(x, y).map_or_else(EncodedPremulSRGBA8::zeroed,
             |t| self.stops.sample(self.spread.map(t)))
     }
 }
@@ -279,13 +303,21 @@ impl<'a> ConicGradient<'a> {
 }
 
 impl PaintSampler for ConicGradient<'_> {
-    fn sample(&self, x: f32, y: f32) -> PremulRGBA<u8> {
+    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
         let turn =  libm::atan2f(y - self.center.y, x - self.center.x) / TAU;
         self.stops.sample(SpreadMode::Repeat.map(turn - self.start_turn))
     }
 }
 
 #[cfg(test)] mod tests { use super::*;
+    fn encoded(color: RGBA<u8>) -> EncodedPremulSRGBA8 {
+        SRGBA::from(color).premul_encoded()
+    }
+
+    fn linear(r: f32, g: f32, b: f32, a: f32) -> EncodedPremulSRGBA8 {
+        crate::color::LinearRGBA::new(r, g, b, a).premul().to_encoded_srgba8()
+    }
+
     #[test] fn solid_paint_is_position_independent_and_premultiplied() {
         let paint = SolidPaint::new(RGBA::new(200, 100, 50, 128));
         assert_eq!(paint.sample(0.5, 0.5), (100, 50, 25, 128).into());
@@ -318,8 +350,27 @@ impl PaintSampler for ConicGradient<'_> {
                     GradientStop::new(0.5, RGBA::blue()),
                     GradientStop::new(1.0, RGBA::blue())];
         let hard = GradientStops::new(&hard).unwrap();
-        assert_eq!(hard.sample(0.5 - f32::EPSILON), RGBA::<u8>::red().premul());
-        assert_eq!(hard.sample(0.5), RGBA::<u8>::blue().premul());
+        assert_eq!(hard.sample(0.5 - f32::EPSILON), encoded(RGBA::<u8>::red()));
+        assert_eq!(hard.sample(0.5), encoded(RGBA::<u8>::blue()));
+    }
+
+    #[test] fn gradient_ramp_validates_storage_and_tracks_exact_sampling() {
+        let stops = red_blue_stops();
+        let mut too_small = [EncodedPremulSRGBA8::zeroed(); 1];
+        assert_eq!(GradientStops::with_ramp(&stops, &mut too_small).unwrap_err(),
+            GradientError::RampTooSmall);
+
+        let exact = GradientStops::new(&stops).unwrap();
+        let mut storage = [EncodedPremulSRGBA8::zeroed(); 1024];
+        let ramp = GradientStops::with_ramp(&stops, &mut storage).unwrap();
+        for step in 0..=256 {
+            let t = step as f32 / 256.0;
+            let (actual, expected) = (ramp.sample(t).to_array(), exact.sample(t).to_array());
+            for channel in 0..4 {
+                assert!(actual[channel].abs_diff(expected[channel]) <= 1,
+                    "t={t}, actual={actual:?}, expected={expected:?}");
+            }
+        }
     }
 
     #[test] fn linear_gradient_projects_device_coordinates_and_spreads() {
@@ -327,9 +378,9 @@ impl PaintSampler for ConicGradient<'_> {
         let stops = GradientStops::new(&stops).unwrap();
         let pad = LinearGradient::new((1.0, 2.0), (5.0, 2.0),
             stops, SpreadMode::Pad).unwrap();
-        assert_eq!(pad.sample(1.0, 100.0), RGBA::<u8>::red().premul());
-        assert_eq!(pad.sample(3.0, -100.0), (128, 0, 128, 255).into());
-        assert_eq!(pad.sample(8.0, 2.0), RGBA::<u8>::blue().premul());
+        assert_eq!(pad.sample(1.0, 100.0), encoded(RGBA::<u8>::red()));
+        assert_eq!(pad.sample(3.0, -100.0), linear(0.5, 0.0, 0.5, 1.0));
+        assert_eq!(pad.sample(8.0, 2.0), encoded(RGBA::<u8>::blue()));
 
         let repeat  = LinearGradient::new((0.0, 0.0), (1.0, 0.0),
             stops, SpreadMode::Repeat).unwrap();
@@ -345,14 +396,14 @@ impl PaintSampler for ConicGradient<'_> {
         let stops = GradientStops::new(&stops).unwrap();
         let radial =
             RadialGradient::new((2.0, 3.0), 4.0, stops, SpreadMode::Pad).unwrap();
-        assert_eq!(radial.sample(2.0, 3.0), RGBA::<u8>::red().premul());
-        assert_eq!(radial.sample(4.0, 3.0), (128, 0, 128, 255).into());
-        assert_eq!(radial.sample(10.0, 3.0), RGBA::<u8>::blue().premul());
+        assert_eq!(radial.sample(2.0, 3.0), encoded(RGBA::<u8>::red()));
+        assert_eq!(radial.sample(4.0, 3.0), linear(0.5, 0.0, 0.5, 1.0));
+        assert_eq!(radial.sample(10.0, 3.0), encoded(RGBA::<u8>::blue()));
 
         let focal = RadialGradient::two_circle((1.0, 0.0), 0.0, (0.0, 0.0), 4.0,
             stops, SpreadMode::Pad).unwrap();
-        assert_eq!(focal.sample( 1.0, 0.0), RGBA::<u8>:: red().premul());
-        assert_eq!(focal.sample(-4.0, 0.0), RGBA::<u8>::blue().premul());
+        assert_eq!(focal.sample( 1.0, 0.0), encoded(RGBA::<u8>:: red()));
+        assert_eq!(focal.sample(-4.0, 0.0), encoded(RGBA::<u8>::blue()));
         assert_eq!(RadialGradient::new((0.0, 0.0), -1.0, stops, SpreadMode::Pad)
             .unwrap_err(), GradientError::NegativeRadius);
         assert_eq!(RadialGradient::two_circle((0.0, 0.0), 1.0, (0.0, 0.0), 1.0,
@@ -360,23 +411,23 @@ impl PaintSampler for ConicGradient<'_> {
 
         let tangent = RadialGradient::two_circle((0.0, 0.0), 0.0, (1.0, 0.0), 1.0,
             stops, SpreadMode::Pad).unwrap();
-        assert_eq!(tangent.sample(0.5, 0.0), (191, 0, 64, 255).into());
-        assert_eq!(tangent.sample(0.0, 1.0), PremulRGBA::zeroed());
+        assert_eq!(tangent.sample(0.5, 0.0), linear(0.75, 0.0, 0.25, 1.0));
+        assert_eq!(tangent.sample(0.0, 1.0), EncodedPremulSRGBA8::zeroed());
     }
 
     #[test] fn conic_gradient_wraps_a_full_turn_from_its_start_angle() {
         let stops = red_blue_stops();
         let stops = GradientStops::new(&stops).unwrap();
         let conic = ConicGradient::new((2.0, 3.0), 0.0, stops).unwrap();
-        assert_eq!(conic.sample(3.0, 3.0), RGBA::<u8>::red().premul());
-        assert_eq!(conic.sample(2.0, 4.0), (191, 0, 64, 255).into());
-        assert_eq!(conic.sample(1.0, 3.0), (128, 0, 128, 255).into());
-        assert_eq!(conic.sample(2.0, 2.0), (64, 0, 191, 255).into());
+        assert_eq!(conic.sample(3.0, 3.0), encoded(RGBA::<u8>::red()));
+        assert_eq!(conic.sample(2.0, 4.0), linear(0.75, 0.0, 0.25, 1.0));
+        assert_eq!(conic.sample(1.0, 3.0), linear(0.5, 0.0, 0.5, 1.0));
+        assert_eq!(conic.sample(2.0, 2.0), linear(0.25, 0.0, 0.75, 1.0));
 
         let rotated = ConicGradient::new((2.0, 3.0), TAU / 4.0, stops).unwrap();
-        assert_eq!(rotated.sample(2.0, 4.0), RGBA::<u8>::red().premul());
-        assert_eq!(conic.sample(3.0, 3.0 + 1e-4), RGBA::<u8>::red().premul());
-        assert_eq!(conic.sample(3.0, 3.0 - 1e-4), RGBA::<u8>::blue().premul());
+        assert_eq!(rotated.sample(2.0, 4.0), encoded(RGBA::<u8>::red()));
+        assert_eq!(conic.sample(3.0, 3.0 + 1e-4), encoded(RGBA::<u8>::red()));
+        assert_eq!(conic.sample(3.0, 3.0 - 1e-4), encoded(RGBA::<u8>::blue()));
     }
 
     #[test] fn transformed_paint_maps_device_coordinates_and_preserves_solid_fast_path() {
@@ -385,13 +436,13 @@ impl PaintSampler for ConicGradient<'_> {
             GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
         let transformed = TransformedPaint::new(&gradient,
             Affine::new(2.0, 0.0, 0.0, 1.0, 10.0, 0.0)).unwrap();
-        assert_eq!(transformed.sample(10.0, 0.0), RGBA::<u8>::red().premul());
-        assert_eq!(transformed.sample(12.0, 0.0), (128, 0, 128, 255).into());
-        assert_eq!(transformed.sample(14.0, 0.0), RGBA::<u8>::blue().premul());
+        assert_eq!(transformed.sample(10.0, 0.0), encoded(RGBA::<u8>::red()));
+        assert_eq!(transformed.sample(12.0, 0.0), linear(0.5, 0.0, 0.5, 1.0));
+        assert_eq!(transformed.sample(14.0, 0.0), encoded(RGBA::<u8>::blue()));
 
         let solid = TransformedPaint::new(SolidPaint::new(RGBA::green()),
             Affine::translate(5.0, 7.0)).unwrap();
-        assert_eq!(solid.solid_color(), Some(RGBA::<u8>::green().premul()));
+        assert_eq!(solid.solid_color(), Some(encoded(RGBA::<u8>::green())));
         assert_eq!(TransformedPaint::new(solid,
             Affine::new(1.0, 2.0, 2.0, 4.0, 0.0, 0.0)).unwrap_err(),
             PaintTransformError::NonInvertibleTransform);

@@ -3,7 +3,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWorkspace,
         analytic_bin_requirements, build_analytic_row_bins, rasterize_edges_analytic_binned},
-    color::RGBA, edge::Edge, raster::{FillRule, Intersection},
+    color::{EncodedPremulSRGBA8, RGBA}, edge::Edge, raster::{FillRule, Intersection},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, RenderOptions, RenderWorkspace,
         render_solid, render_solid_analytic, render_stroke_solid_analytic,
@@ -272,7 +272,8 @@ fn benchmark_paint(c: &mut Criterion) {
     let stops = [GradientStop::new( 0.0, RGBA::new(240, 20, 80,  32)),
                  GradientStop::new(0.35, RGBA::new(10, 220, 40, 160)),
                  GradientStop::new( 1.0, RGBA::new(30, 60, 250, 224)) ];
-    let stops = GradientStops::new(&stops).unwrap();
+    let mut ramp = vec![EncodedPremulSRGBA8::zeroed(); 1024];
+    let stops = GradientStops::with_ramp(&stops, &mut ramp).unwrap();
     let solid = SolidPaint::new(RGBA::new(40, 120, 220, 192));
     let linear = LinearGradient::new((0.0, 0.0), (WIDTH as _, HEIGHT as _),
         stops, SpreadMode::Pad).unwrap();
