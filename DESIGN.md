@@ -568,8 +568,8 @@ The first stable method vocabulary is small:
   rather than storing it in context state; their additional point/contour
   buffers are explicit in `context::Workspace`.
 - clipping is context state, represented as no clip, one rectangle, or one
-  borrowed coverage mask. `Canvas` additionally owns a mask produced by
-  `set_clip_path`. A later clip stack uses explicit `save`/`restore` semantics.
+  borrowed coverage mask. `Canvas` additionally owns accumulated clip masks
+  and scopes them together with drawing state through `save`/`restore`.
 
 Status: the first `Context` and `fixed::context::Context` fill/stroke/dash
 facade is implemented. Both share generic state storage and parallel method
@@ -577,8 +577,10 @@ names; rectangle/mask clip state and statically dispatched custom paint are
 supported. `Canvas::set_clip_path` provides ordinary owned path clipping;
 bounded Context and low-level callers use `rasterize_path_clip` with a
 caller-owned `CoverageMaskMut`, then borrow it with `set_clip_mask`.
-Save/restore and multi-clip mask combination remain future work. Exact
-fill/stroke/dash planning is available
+`Canvas` save/restore and intersecting rectangle, mask, and free-path clips are
+implemented. The bounded Context deliberately retains a single borrowed clip;
+callers that require a bounded clip stack own its mask storage explicitly.
+Exact fill/stroke/dash planning is available
 both through low-level functions and Context methods; path clips reuse the fill
 planner through the semantic `path_clip_requirements` entry point.
 

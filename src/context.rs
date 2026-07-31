@@ -1,6 +1,6 @@
 //! Stateful drawing facades over the allocation-free rendering pipelines.
 
-use alloc::vec::Vec;
+use alloc::{rc::Rc, vec::Vec};
 use crate::{
     analytic::Intersection as AnalyticIntersection,
     canvas::{DashedStrokePathOptions, DashedStrokePlanningWorkspace,
@@ -287,22 +287,79 @@ impl CanvasStorage {
 pub struct Canvas<'target> {
     target: Pixmap<'target>, storage: CanvasStorage,
     state: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>,
-    clip: CanvasClip,
+    clip: CanvasClip, saved: Vec<SavedCanvasState>,
 }
 
-enum CanvasClip {
-    None, Rect(Rect),
-    Path { data: Vec<u8>, width: u32, height: u32, stride: u32 },
+#[derive(Clone)] enum CanvasClip {
+    None, Empty, Rect(Rect),
+    Path { data: Rc<[u8]>, width: u32, height: u32, stride: u32 },
+}
+
+#[derive(Clone)] struct SavedCanvasState {
+    draw: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>, clip: CanvasClip,
 }
 
 impl CanvasClip {
     fn as_clip(&self) -> Result<Clip<'_>, RenderError> { Ok(match self {
         Self::None => Clip::None,
+        Self::Empty => Clip::Rect(Rect::from_ltrb(0.0, 0.0, 0.0, 0.0)
+            .expect("ordered empty rectangle")),
         Self::Rect(rect) => Clip::Rect(*rect),
         Self::Path { data, width, height, stride } => Clip::Mask(
             CoverageMask::new(data, *width, *height, *stride)
                 .map_err(|_| RenderError::DimensionsOverflow)?),
     }) }
+}
+
+fn intersect_rects(a: Rect, b: Rect) -> Option<Rect> {
+    let (left, top) = (a.left().max(b.left()), a.top().max(b.top()));
+    let (right, bottom) = (a.right().min(b.right()), a.bottom().min(b.bottom()));
+    (left < right && top < bottom).then(||
+        Rect::from_ltrb(left, top, right, bottom).expect("ordered rectangle intersection"))
+}
+
+fn multiply_rect_mask(data: &mut [u8], width: u32, height: u32, stride: u32,
+    rect: Rect) {
+    let overlap = |from: f32, to: f32, pixel: u32| {
+        (to.min(pixel as f32 + 1.0) - from.max(pixel as f32)).clamp(0.0, 1.0)
+    };
+    for y in 0..height {
+        let vertical = overlap(rect.top(), rect.bottom(), y);
+        for x in 0..width {
+            let clip = overlap(rect.left(), rect.right(), x) * vertical;
+            let offset = y as usize * stride as usize + x as usize;
+            data[offset] = (data[offset] as f32 * clip + 0.5) as _;
+        }
+    }
+}
+
+fn intersect_canvas_clip(current: &CanvasClip, next: &mut CanvasClip) {
+    let CanvasClip::Path { data, width, height, stride } = next else { return; };
+    match current {
+        CanvasClip::None => {}
+        CanvasClip::Empty => {
+            let data = Rc::make_mut(data);
+            for y in 0..*height as usize {
+                let start = y * *stride as usize;
+                data[start..start + *width as usize].fill(0);
+            }
+        }
+        CanvasClip::Rect(rect) => multiply_rect_mask(
+            Rc::make_mut(data), *width, *height, *stride, *rect),
+        CanvasClip::Path { data: mask, width: mask_width, height: mask_height,
+            stride: mask_stride } => {
+            if (*width, *height) != (*mask_width, *mask_height) { return; }
+            let data = Rc::make_mut(data);
+            for y in 0..*height as usize {
+                for x in 0..*width as usize {
+                    let offset = y * *stride as usize + x;
+                    let mask_offset = y * *mask_stride as usize + x;
+                    data[offset] = (data[offset] as u16 * mask[mask_offset] as u16 + 127)
+                        .div_euclid(255) as _;
+                }
+            }
+        }
+    }
 }
 
 impl Canvas<'static> {
@@ -329,6 +386,7 @@ impl<'target> Canvas<'target> {
                 paint: SolidPaint::new(SRGBA::black()),
             },
             clip: CanvasClip::None,
+            saved: Vec::new(),
         }
     }
 
@@ -354,18 +412,48 @@ impl<'target> Canvas<'target> {
     pub fn set_color(&mut self, value: SRGBA<u8>) -> &mut Self {
         self.state.paint = SolidPaint::new(value); self
     }
-    pub fn clear_clip(&mut self) -> &mut Self { self.clip = CanvasClip::None; self }
-    pub fn set_clip_rect(&mut self, value: Rect) -> &mut Self {
-        self.clip = CanvasClip::Rect(value); self
+
+    /// Saves the complete drawing state, including the current clip.
+    pub fn save(&mut self) -> &mut Self {
+        self.saved.push(SavedCanvasState { draw: self.state, clip: self.clip.clone() }); self
     }
-    pub fn set_clip_mask(&mut self, value: CoverageMask<'_>) -> &mut Self {
-        self.clip = CanvasClip::Path {
-            data: value.as_bytes().to_vec(), width: value.width(),
-            height: value.height(), stride: value.stride(),
+
+    /// Restores the most recently saved drawing state.
+    ///
+    /// Returns `false` without changing state when the stack is empty.
+    pub fn restore(&mut self) -> bool {
+        let Some(saved) = self.saved.pop() else { return false; };
+        (self.state, self.clip) = (saved.draw, saved.clip); true
+    }
+
+    /// Removes the complete accumulated clip.
+    pub fn clear_clip(&mut self) -> &mut Self { self.clip = CanvasClip::None; self }
+
+    /// Intersects the current clip with `value`.
+    pub fn set_clip_rect(&mut self, value: Rect) -> &mut Self {
+        self.clip = match &mut self.clip {
+            CanvasClip::None => CanvasClip::Rect(value),
+            CanvasClip::Empty => CanvasClip::Empty,
+            CanvasClip::Rect(current) => intersect_rects(*current, value)
+                .map_or(CanvasClip::Empty, CanvasClip::Rect),
+            CanvasClip::Path { data, width, height, stride } => {
+                multiply_rect_mask(Rc::make_mut(data), *width, *height, *stride, value);
+                return self;
+            }
         }; self
     }
 
-    /// Rasterizes and retains an antialiased path clip using internal storage.
+    /// Intersects the current clip with a retained copy of `value`.
+    pub fn set_clip_mask(&mut self, value: CoverageMask<'_>) -> &mut Self {
+        let mut clip = CanvasClip::Path {
+            data: Rc::from(value.as_bytes()), width: value.width(),
+            height: value.height(), stride: value.stride(),
+        };
+        intersect_canvas_clip(&self.clip, &mut clip);
+        self.clip = clip; self
+    }
+
+    /// Rasterizes an antialiased path and intersects it with the current clip.
     pub fn set_clip_path(&mut self, path: &Path) -> Result<&mut Self, RenderError> {
         self.plan_fill(path)?;
         let (width, height) = (self.target.width(), self.target.height());
@@ -380,7 +468,9 @@ impl<'target> Canvas<'target> {
         rasterize_path_clip(path, self.state.transform, RenderOptions {
             fill_rule: self.state.fill_rule, flatten: self.state.flatten,
         }, &mut mask, &mut workspace)?;
-        self.clip = CanvasClip::Path { data, width, height, stride: width };
+        let mut clip = CanvasClip::Path { data: data.into(), width, height, stride: width };
+        intersect_canvas_clip(&self.clip, &mut clip);
+        self.clip = clip;
         Ok(self)
     }
 
@@ -569,6 +659,46 @@ impl<'target> Canvas<'target> {
             .line_to((4.0, 4.0)).line_to((0.0, 4.0));
         canvas.set_color(SRGBA::red()).fill(&shape.build()).unwrap();
         assert_ne!(canvas.target().pixel_bytes(0, 1).unwrap(), [0; 4]);
+        assert_eq!(canvas.target().pixel_bytes(3, 1).unwrap(), [0; 4]);
+    }
+
+    #[test] fn canvas_save_restore_preserves_state_and_nested_clip() {
+        let mut shape = PathBuilder::new();
+        shape.move_to((0.0, 0.0)).line_to((4.0, 0.0))
+            .line_to((4.0, 4.0)).line_to((0.0, 4.0));
+        let path = shape.build();
+        let mut canvas = Canvas::new(4, 4).unwrap();
+        canvas.set_color(SRGBA::red())
+            .set_clip_rect(Rect::from_ltrb(0.0, 0.0, 3.0, 4.0).unwrap())
+            .save()
+            .set_color(SRGBA::green())
+            .set_clip_rect(Rect::from_ltrb(1.0, 0.0, 4.0, 4.0).unwrap());
+        canvas.fill(&path).unwrap();
+        assert_eq!(canvas.target().pixel_bytes(0, 1).unwrap(), [0; 4]);
+        assert_ne!(canvas.target().pixel_bytes(1, 1).unwrap(), [0; 4]);
+        assert_eq!(canvas.target().pixel_bytes(3, 1).unwrap(), [0; 4]);
+
+        assert!(canvas.restore());
+        assert_eq!(canvas.state.paint, SolidPaint::new(SRGBA::red()));
+        assert!(!canvas.restore());
+        canvas.fill(&path).unwrap();
+        assert_ne!(canvas.target().pixel_bytes(0, 1).unwrap(), [0; 4]);
+        assert_eq!(canvas.target().pixel_bytes(3, 1).unwrap(), [0; 4]);
+    }
+
+    #[test] fn canvas_path_clips_intersect_instead_of_replacing() {
+        let rectangle = |left, right| {
+            let mut builder = PathBuilder::new();
+            builder.move_to((left, 0.0)).line_to((right, 0.0))
+                .line_to((right, 4.0)).line_to((left, 4.0));
+            builder.build()
+        };
+        let mut canvas = Canvas::new(4, 4).unwrap();
+        canvas.set_clip_path(&rectangle(0.0, 3.0)).unwrap()
+            .set_clip_path(&rectangle(1.0, 4.0)).unwrap();
+        canvas.set_color(SRGBA::red()).fill(&rectangle(0.0, 4.0)).unwrap();
+        assert_eq!(canvas.target().pixel_bytes(0, 1).unwrap(), [0; 4]);
+        assert_ne!(canvas.target().pixel_bytes(1, 1).unwrap(), [0; 4]);
         assert_eq!(canvas.target().pixel_bytes(3, 1).unwrap(), [0; 4]);
     }
 

@@ -124,6 +124,9 @@ let pixels = canvas.target().as_bytes();
 `Canvas::from_buffer` renders into caller-owned storage when integrating with a
 window surface, framebuffer, or existing image. `target()` and `target_mut()`
 provide dimensions and raw pixel access without exposing raster scratch.
+`save()` and `restore()` preserve transform, paint, stroke, fill, and clip
+state. Consecutive `set_clip_rect`, `set_clip_mask`, and `set_clip_path` calls
+intersect with the current clip; `clear_clip()` explicitly resets it.
 
 `Context` is the allocation-free facade for callers that provide bounded
 scratch explicitly. The lower-level `canvas::*` functions expose individual
@@ -215,8 +218,9 @@ explicitly sized as `stride × height`.
 ### Arbitrary path clipping
 
 `Canvas::set_clip_path` is the ordinary free-path clipping API. It rasterizes
-and retains the antialiased mask in internal storage; subsequent fill,
-stroke, and dashed-stroke calls apply it without exposing mask storage.
+and retains the antialiased mask in internal storage, intersecting it with the
+current clip; subsequent fill, stroke, and dashed-stroke calls apply it without
+exposing mask storage. `save`/`restore` scopes nested clips.
 
 The bounded Context and low-level APIs deliberately use a two-stage operation
 so image-sized storage and lifetime remain visible:
