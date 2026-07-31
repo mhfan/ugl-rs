@@ -513,6 +513,33 @@ directly into caller-owned `CoverageMaskMut` storage. The fixed path-mask route
 uses the existing bounded geometry and raster workspaces, so mask production
 and consumption remain allocation-free and no-FPU.
 
+### Planned clip/mask bounds optimization
+
+The current owned path clip uses a canvas-sized 8-bit mask. Rasterization skips
+unoccupied path rows, and masked drawing touches only emitted shape spans, but
+mask allocation, clearing, rectangle intersection, and path-mask intersection
+still scale with the complete canvas area. Replace that storage model without
+changing antialiased intersection semantics:
+
+- add an integer device-space origin and bounds to coverage masks, treating
+  samples outside those bounds as zero;
+- derive conservative clipped bounds from transformed path geometry and the
+  target, allocate/clear only that rectangle, and intersect bounds before
+  multiplying nested clips;
+- preserve zero-copy borrowed full-canvas masks while allowing bounded masks
+  through the same `Context` and low-level rendering adapters;
+- specialize empty, rectangular, and fully opaque masks so they do not become
+  dense image-sized buffers;
+- use bounded dense masks for the desktop f32 path, and evaluate sparse
+  strips/tiles for fixed/MCU masks so memory tracks non-empty coverage rather
+  than canvas area;
+- add equivalence tests against the current full-canvas representation and
+  benchmarks for small clips on large targets, nested clips, clearing,
+  intersection, peak bytes, and masked draw throughput.
+
+The optimization is complete only when mask memory and preprocessing scale
+with the clipped region while drawing continues to visit only emitted spans.
+
 The framebuffer boundary now distinguishes raw storage from valid color:
 solid paint and gradient-stop inputs use straight encoded `SRGBA<u8>`;
 `Pixmap::pixel_bytes` exposes physical RGBA bytes unchanged; and `pixel`
