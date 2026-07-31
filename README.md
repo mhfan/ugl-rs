@@ -352,7 +352,7 @@ measurement produced these central estimates:
 | centerline curve flatten | 1.72 µs |
 | stroke outline expansion | 1.77 µs |
 | sparse row bin construction | 6.88 µs |
-| analytic coverage integration and run emission | 320.32 µs |
+| analytic coverage integration and run emission | 320.32 µs initial; 262.64 µs current |
 | complete clear + stroke + encoded composite | 366.58 µs |
 
 The independently measured stages are not strictly additive, but they locate
@@ -362,6 +362,13 @@ API can still remove repeated geometry work for retained content, but it cannot
 close the measured Blend2D gap by itself. Active-edge processing, slab event
 handling, area integration, and emitted-run cost therefore take priority;
 compositing and clear account for most of the remaining residual.
+
+The first measured coverage optimization fused active-edge lifetime and
+integer-x event discovery into one traversal. Against a fresh 282.69 µs
+same-process baseline, Criterion measured 262.64 µs, a statistically
+significant 6.2% improvement. Removing midpoint ordering was also tested, but
+randomized and self-intersecting paths proved that ordering is part of the
+numeric event contract, so that experiment was rejected.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the

@@ -375,7 +375,9 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
 - Analytic slabs special-case all-vertical active sets only after ordering new
   edges by x. Vertical edges cannot cross pixel boundaries or one another, so
   crossing-event and midpoint-order passes are unnecessary. Sloped sets retain
-  the numerically coalesced event algorithm and both ordering passes.
+  the numerically coalesced event algorithm and both ordering passes. Their
+  lifetime minimum and integer-x event are discovered in one active-edge
+  traversal; a measured stroke scene improved coverage time by about 6.2%.
 - The matched 8-cubic stroke expands to 65 centerline points and 480 edges.
   Stage benchmarks put flatten, outline expansion, and row binning near 10 µs
   combined versus roughly 320 µs for coverage and 367 µs end to end. Prepared
