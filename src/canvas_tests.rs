@@ -389,6 +389,61 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 #[cfg(feature = "fixed")]
+#[test] fn fixed_path_clip_supports_curves_and_preserves_mask_on_geometry_error() {
+    use crate::{geometry::FixedScalar,
+        raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid},
+    };
+
+    let fixed = FixedScalar::from_num;
+    let mut builder = PathBuilder::new();
+    builder.move_to((fixed(0.5), fixed(2.5)))
+        .quad_to((fixed(2.0), fixed(-0.5)), (fixed(3.5), fixed(2.5)))
+        .line_to((fixed(0.5), fixed(2.5))).close();
+    let path = builder.build();
+    let (mut edges, mut lines) = ([Edge::default(); 32], [FixedLine::default(); 32]);
+    let (mut segments, mut trapezoids, mut row_area) =
+        ([FixedSegment::default(); 32], [FixedTrapezoid::default(); 16], [0; 4]);
+    let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 32]);
+    let mut mask_data = [17; 4 * 3 + 2];
+    rasterize_path_clip_fixed(&path, FixedRenderOptions::default(),
+        &mut CoverageMaskMut::new(&mut mask_data, 4, 3, 4).unwrap(),
+        &mut FixedGeometryWorkspace { edges: &mut edges, lines: &mut lines },
+        &mut FixedRasterWorkspace {
+            segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+            strip_indices: &mut strip_indices,
+        }).unwrap();
+    assert!(mask_data[..12].iter().any(|&coverage| coverage != 0));
+    assert!(mask_data[..12].iter().any(|&coverage| coverage != u8::MAX));
+    assert_eq!(mask_data[12..], [17, 17]);
+
+    let mut reference_builder = PathBuilder::new();
+    reference_builder.move_to((0.5, 2.5))
+        .quad_to((2.0, -0.5), (3.5, 2.5)).line_to((0.5, 2.5)).close();
+    let mut reference_data = [0; 12];
+    let mut reference_buffers = AnalyticBuffers::<32, 4>::new();
+    rasterize_path_clip_analytic(&reference_builder.build(), Affine::identity(),
+        AnalyticRenderOptions::default(),
+        &mut CoverageMaskMut::new(&mut reference_data, 4, 3, 4).unwrap(),
+        &mut reference_buffers.workspace()).unwrap();
+    for (fixed, reference) in mask_data[..12].iter().zip(reference_data) {
+        assert!(fixed.abs_diff(reference) <= 2,
+            "fixed={fixed}, reference={reference}");
+    }
+
+    let mut untouched = [23; 12];
+    assert_eq!(rasterize_path_clip_fixed(&path, FixedRenderOptions::default(),
+        &mut CoverageMaskMut::new(&mut untouched, 4, 3, 4).unwrap(),
+        &mut FixedGeometryWorkspace { edges: &mut [], lines: &mut lines },
+        &mut FixedRasterWorkspace {
+            segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+            strip_indices: &mut strip_indices,
+        }), Err(RenderError::EdgeCapacity { needed_at_least: 1 }));
+    assert_eq!(untouched, [23; 12]);
+}
+
+#[cfg(feature = "fixed")]
 #[test] fn fixed_coverage_uses_shared_paint_and_clip_compositor() {
     use crate::{geometry::FixedScalar, raster_fixed::{
             FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace, FixedLine,

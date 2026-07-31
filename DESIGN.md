@@ -492,10 +492,10 @@ Status: planned.
 | Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
 
-The fixed backlog includes `rasterize_path_clip_fixed`: it must convert
-prepared fixed path coverage directly into a caller-owned `CoverageMaskMut`.
-Fixed compositors already consume arbitrary masks, but current path-mask
-generation uses the analytic `f32` backend.
+Both analytic f32 and Q24.8 fixed paths can convert arbitrary path coverage
+directly into caller-owned `CoverageMaskMut` storage. The fixed path-mask route
+uses the existing bounded geometry and raster workspaces, so mask production
+and consumption remain allocation-free and no-FPU.
 
 Two cross-cutting API reviews also remain:
 

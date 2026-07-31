@@ -455,6 +455,24 @@ pub fn rasterize_path_clip_analytic(path: &Path, transform: Affine,
         }, mask)
 }
 
+/// Rasterizes a Q24.8 path clip into caller-owned 8-bit coverage without an FPU.
+///
+/// The valid mask area is cleared after path flattening and line preparation
+/// succeed. Callers must discard the mask if this function returns an error.
+#[cfg(feature = "fixed")] pub fn rasterize_path_clip_fixed(
+    path: &Path<FixedScalar>, options: FixedRenderOptions,
+    mask: &mut CoverageMaskMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
+    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
+    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
+    build_fill_edges_fixed(path, options.transform, options.flatten, &mut sink)
+        .map_err(map_fixed_flatten_error)?;
+    let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
+        .map_err(RenderError::FixedRaster)?;
+    mask.clear();
+    rasterize_lines(&geometry.lines[..line_count], mask.width(), mask.height(),
+        options.fill_rule, raster_workspace, mask).map_err(map_fixed_render_error)
+}
+
 /// Renders analytic solid coverage multiplied by a borrowed path clip mask.
 pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: RGBA<u8>,
     mask: CoverageMask<'_>, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,

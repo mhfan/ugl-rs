@@ -155,8 +155,6 @@ binary-turn angle and a fixed 16-step integer CORDIC.
 
 Pending architectural work includes:
 
-- add `rasterize_path_clip_fixed` so arbitrary `FixedScalar` paths can produce
-  caller-owned `CoverageMaskMut` data without the analytic `f32` backend;
 - audit all `RGBA` uses so alpha representation, color space, component width,
   packing, and byte layout are explicit at every API boundary;
 - design a `Canvas`/`Context` facade that consolidates target, transform, paint,
@@ -167,9 +165,9 @@ Pending architectural work includes:
   without duplicating shared abstractions or accidentally changing public
   module paths.
 
-Until fixed path-mask generation is implemented, all fixed compositors can
-consume arbitrary path masks, but producing those masks is not yet an
-end-to-end no-FPU operation.
+Both f32 analytic and Q24.8 fixed paths can rasterize arbitrary path clips into
+caller-owned `CoverageMaskMut` storage. Fixed compositors can therefore produce
+and consume arbitrary path masks end to end without an FPU.
 
 ## Benchmarking
 
