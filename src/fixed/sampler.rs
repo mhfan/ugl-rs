@@ -312,3 +312,5 @@ impl FixedPaintSampler for FixedConicGradient<'_> {
             |index| self.ramp[index])
     }
 }
+
+#[cfg(test)] #[path = "sampler_tests.rs"] mod tests;

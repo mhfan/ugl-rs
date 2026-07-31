@@ -1,5 +1,8 @@
 use super::*;
-use crate::{analytic::AnalyticIntersection,
+use crate::{analytic::AnalyticIntersection, canvas::{
+        AnalyticRenderOptions, AnalyticRenderWorkspace, rasterize_path_clip_analytic,
+        render_paint_analytic, render_paint_analytic_clipped,
+        render_paint_analytic_masked},
     color::{PremulRGBA, PremulSRGBA8, RGBA as GenericRGBA, SRGBA as RGBA}, edge::Edge,
     geometry::{Affine, Path, PathBuilder}, sampler::SpreadMode};
 

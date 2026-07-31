@@ -555,3 +555,5 @@ pub(crate) fn map_fixed_render_error(
         FixedRenderError::Sink(error) => match error {},
     }
 }
+
+#[cfg(test)] #[path = "canvas_tests.rs"] mod tests;

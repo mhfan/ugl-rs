@@ -633,7 +633,4 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
     }
 }
 
-#[cfg(all(test, feature = "fixed"))]
-#[path = "fixed/canvas_tests.rs"] mod fixed_canvas_tests;
-
 #[cfg(test)] #[path = "canvas_tests.rs"] mod tests;

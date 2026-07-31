@@ -22,10 +22,6 @@ pub use crate::fixed::sampler::{
     FixedAngle, FixedConicGradient, FixedLinearGradient, FixedPaintSampler,
     FixedRadialGradient,
 };
-#[cfg(all(feature = "fixed", test))]
-use crate::{fixed::math::{cordic_turn, integer_sqrt},
-    geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar}};
-
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
 /// Implementations should be small values borrowed by the compositor. Calls are
@@ -532,9 +528,6 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
     if y < 0.0 { turn = 1.0 - turn; }
     turn
 }
-
-#[cfg(all(test, feature = "fixed"))]
-#[path = "fixed/sampler_tests.rs"] mod fixed_sampler_tests;
 
 #[cfg(test)] mod tests { use super::*;
     use crate::color::SRGBA as RGBA;

@@ -1,4 +1,11 @@
 use super::*;
+use super::super::math::{cordic_turn, integer_sqrt};
+use crate::{color::SRGBA, sampler::{
+    ConicGradient, GradientStop, GradientStops, LinearGradient, PaintSampler,
+    RadialGradient,
+}};
+
+const TAU: f32 = core::f32::consts::PI * 2.0;
 
 fn encoded(color: SRGBA<u8>) -> PremulSRGBA8 { color.premul_encoded() }
 fn red_blue_stops() -> [GradientStop; 2] {
@@ -187,8 +194,8 @@ fn red_blue_stops() -> [GradientStop; 2] {
             for x in -64_i64..=64 {
                 if x == 0 && y == 0 { continue; }
                 let actual = cordic_turn(x, y) as f32 / 4_294_967_296.0;
-                let expected = SpreadMode::Repeat.map(
-                    libm::atan2f(y as _, x as _) / TAU);
+                let turn = libm::atan2f(y as _, x as _) / TAU;
+                let expected = turn - libm::floorf(turn);
                 let difference = (actual - expected).abs();
                 maximum_error = maximum_error.max(difference.min(1.0 - difference));
             }
@@ -236,4 +243,3 @@ fn red_blue_stops() -> [GradientStop; 2] {
         assert_eq!(conic.sample_fixed(FIXED_DEVICE_RAW_LIMIT as u32 / 256, 0),
             PremulSRGBA8::zeroed());
     }
-
