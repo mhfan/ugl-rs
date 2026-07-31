@@ -22,6 +22,7 @@ pub mod analytic;
 #[cfg(feature = "fixed")] pub mod tile_fixed;
 pub mod canvas;
 pub mod canvas_linear;
+pub mod context;
 pub mod edge;
 
 pub mod math;
