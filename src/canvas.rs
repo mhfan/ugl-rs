@@ -15,24 +15,15 @@ use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
         StrokeOptions, StrokePathWorkspace, StrokeWorkspaceError},
 };
 #[cfg(feature = "fixed")] use crate::raster_fixed::{
-    FixedCoverageStrips, FixedLine, FixedRasterError, FixedRasterWorkspace,
-    FixedRenderError, prepare_lines, rasterize_lines,
+    FixedRasterError, FixedRasterWorkspace, FixedRenderError, prepare_lines, rasterize_lines,
 };
 #[cfg(feature = "fixed")] use crate::{
-    dash::dash_polyline_fixed,
     edge::build_fill_edges_fixed,
     flatten_fixed::FixedFlattenError,
     geometry::FixedScalar,
-    stroke::flatten_stroke_path_fixed,
-    stroke_fixed::{FixedStrokeExpandError, FixedStrokeOptions, stroke_polyline_fixed},
+    stroke_fixed::FixedStrokeExpandError,
 };
-#[cfg(feature = "fixed")] use crate::tile_fixed::{
-    FixedCoverageTiles, FixedDirectTileWorkspace, FixedTileKind, rasterize_lines_to_tiles,
-};
-#[cfg(feature = "fixed")] pub use crate::fixed::canvas::{
-    FixedDashedStrokePathOptions, FixedDashedStrokeWorkspace, FixedGeometryWorkspace,
-    FixedRenderOptions, FixedStrokePathOptions,
-};
+#[cfg(feature = "fixed")] pub use crate::fixed::canvas::*;
 
 const BYTES_PER_PIXEL: u32 = 4;
 
@@ -104,7 +95,7 @@ impl<'a> PixmapMut<'a> {
             .copy_from_slice(&color.to_array());
     }
 
-    fn blend_solid_span(&mut self, x: u32, y: u32, len: u32,
+    pub(crate) fn blend_solid_span(&mut self, x: u32, y: u32, len: u32,
         color: PremulRGBA<u8>, coverage: u8) {
         let terms = solid_blend_terms(color, coverage);
         let start = y as usize * self.stride as usize
@@ -138,7 +129,7 @@ impl<'a> PixmapMut<'a> {
         }
     }
 
-    #[cfg(feature = "fixed")] fn blend_solid_tile(&mut self, x: u32, y: u32,
+    #[cfg(feature = "fixed")] pub(crate) fn blend_solid_tile(&mut self, x: u32, y: u32,
         width: u32, height: u32, color: PremulRGBA<u8>) {
         let terms = solid_blend_terms(color, u8::MAX);
         for row in y..y + height {
@@ -472,414 +463,7 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
-/// Renders prepared Q24.8 lines through the allocation-free fixed backend.
-#[cfg(feature = "fixed")] pub fn render_solid_fixed(lines: &[FixedLine],
-    color: SRGBA<u8>, fill_rule: FillRule, target: &mut PixmapMut<'_>,
-    workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint_fixed(lines, &SolidPaint::new(color), fill_rule, target, workspace)
-}
-
-/// Renders prepared Q24.8 lines through the shared encoded paint compositor.
-///
-/// Raster geometry and coverage are fixed-point; the supplied sampler retains
-/// its own numeric contract and may use floating point.
-#[cfg(feature = "fixed")] pub fn render_paint_fixed<S: PaintSampler>(lines: &[FixedLine],
-    sampler: &S, fill_rule: FillRule, target: &mut PixmapMut<'_>,
-    workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let mut compositor = PaintCompositor { target, sampler };
-    rasterize_lines(lines, compositor.target.width, compositor.target.height,
-        fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
-}
-
-/// Renders fixed coverage and solid paint through an antialiased rectangle clip.
-#[cfg(feature = "fixed")] pub fn render_solid_fixed_clipped(lines: &[FixedLine],
-    color: SRGBA<u8>, clip: Rect, fill_rule: FillRule, target: &mut PixmapMut<'_>,
-    workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint_fixed_clipped(
-        lines, &SolidPaint::new(color), clip, fill_rule, target, workspace)
-}
-
-/// Renders fixed coverage and sampled paint through an antialiased rectangle clip.
-#[cfg(feature = "fixed")] pub fn render_paint_fixed_clipped<S: PaintSampler>(
-    lines: &[FixedLine], sampler: &S, clip: Rect, fill_rule: FillRule,
-    target: &mut PixmapMut<'_>, workspace: &mut FixedRasterWorkspace<'_>) ->
-    Result<(), RenderError> {
-    let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
-    rasterize_lines(lines, width, height, fill_rule, workspace,
-        &mut RectClipSink::new(clip, &mut compositor)).map_err(map_fixed_render_error)
-}
-
-/// Renders fixed coverage and solid paint multiplied by a borrowed path mask.
-#[cfg(feature = "fixed")] pub fn render_solid_fixed_masked(lines: &[FixedLine],
-    color: SRGBA<u8>, mask: CoverageMask<'_>, fill_rule: FillRule,
-    target: &mut PixmapMut<'_>, workspace: &mut FixedRasterWorkspace<'_>) ->
-    Result<(), RenderError> {
-    render_paint_fixed_masked(
-        lines, &SolidPaint::new(color), mask, fill_rule, target, workspace)
-}
-
-/// Renders fixed coverage and sampled paint multiplied by a borrowed path mask.
-#[cfg(feature = "fixed")] pub fn render_paint_fixed_masked<S: PaintSampler>(
-    lines: &[FixedLine], sampler: &S, mask: CoverageMask<'_>, fill_rule: FillRule,
-    target: &mut PixmapMut<'_>, workspace: &mut FixedRasterWorkspace<'_>) ->
-    Result<(), RenderError> {
-    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
-    let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
-    rasterize_lines(lines, width, height, fill_rule, workspace,
-        &mut MaskClipSink::new(mask, &mut compositor)).map_err(map_fixed_render_error)
-}
-
-/// Renders prepared Q24.8 lines with a no-FPU fixed paint sampler.
-#[cfg(feature = "fixed")] pub fn render_native_paint_fixed<
-    S: crate::sampler::FixedPaintSampler>(lines: &[FixedLine], sampler: &S,
-    fill_rule: FillRule, target: &mut PixmapMut<'_>,
-    workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let mut compositor = FixedPaintCompositor { target, sampler };
-    rasterize_lines(lines, compositor.target.width, compositor.target.height,
-        fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
-}
-
-/// Transforms, flattens, and fills a Q24.8 path without floating-point operations.
-#[cfg(feature = "fixed")] pub fn render_native_path_fixed<
-    S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>,
-    sampler: &S, options: FixedRenderOptions,
-    target: &mut PixmapMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
-    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let line_count = prepare_fixed_path(path, options, geometry)?;
-    render_native_paint_fixed(&geometry.lines[..line_count], sampler,
-        options.fill_rule, target, raster_workspace)
-}
-
-/// Transforms, flattens, and fills a Q24.8 path through a rectangle clip.
-#[cfg(feature = "fixed")] pub fn render_native_path_fixed_clipped<
-    S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>,
-    sampler: &S, clip: Rect, options: FixedRenderOptions,
-    target: &mut PixmapMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
-    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let line_count = prepare_fixed_path(path, options, geometry)?;
-    render_native_paint_fixed_clipped(&geometry.lines[..line_count], sampler,
-        clip, options.fill_rule, target, raster_workspace)
-}
-
-/// Transforms, flattens, and fills a Q24.8 path through a coverage mask.
-#[cfg(feature = "fixed")] pub fn render_native_path_fixed_masked<
-    S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>,
-    sampler: &S, mask: CoverageMask<'_>, options: FixedRenderOptions,
-    target: &mut PixmapMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
-    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let line_count = prepare_fixed_path(path, options, geometry)?;
-    render_native_paint_fixed_masked(&geometry.lines[..line_count], sampler,
-        mask, options.fill_rule, target, raster_workspace)
-}
-
-/// Expands and renders a Q24.8 polyline with no floating-point operations.
-#[cfg(feature = "fixed")] pub fn render_native_stroke_polyline_fixed<
-    S: crate::sampler::FixedPaintSampler>(points: &[Point<FixedScalar>], closed: bool,
-    stroke: FixedStrokeOptions, sampler: &S, target: &mut PixmapMut<'_>,
-    geometry: &mut FixedGeometryWorkspace<'_>,
-    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
-    stroke_polyline_fixed(points, closed, stroke, &mut sink)
-        .map_err(map_fixed_stroke_expand_error)?;
-    let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
-        .map_err(RenderError::FixedRaster)?;
-    render_native_paint_fixed(&geometry.lines[..line_count], sampler,
-        FillRule::NonZero, target, raster_workspace)
-}
-
-/// Transforms, flattens, expands, and renders a Q24.8 stroked path without an FPU.
-#[cfg(feature = "fixed")] pub fn render_native_stroke_path_fixed<
-    S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>, sampler: &S,
-    options: FixedStrokePathOptions, target: &mut PixmapMut<'_>,
-    path_workspace: &mut StrokePathWorkspace<'_, FixedScalar>,
-    geometry: &mut FixedGeometryWorkspace<'_>,
-    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let line_count = prepare_fixed_stroke_path(path, options, path_workspace, geometry)?;
-    render_native_paint_fixed(&geometry.lines[..line_count], sampler,
-        FillRule::NonZero, target, raster_workspace)
-}
-
-#[cfg(feature = "fixed")]
-fn prepare_fixed_path(path: &Path<FixedScalar>, options: FixedRenderOptions,
-    geometry: &mut FixedGeometryWorkspace<'_>) -> Result<usize, RenderError> {
-    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
-    build_fill_edges_fixed(path, options.transform, options.flatten, &mut sink)
-        .map_err(map_fixed_flatten_error)?;
-    prepare_lines(&sink.edges[..sink.len], geometry.lines)
-        .map_err(RenderError::FixedRaster)
-}
-
-#[cfg(feature = "fixed")]
-pub(crate) fn prepare_fixed_stroke_path(
-    path: &Path<FixedScalar>, options: FixedStrokePathOptions,
-    path_workspace: &mut StrokePathWorkspace<'_, FixedScalar>,
-    geometry: &mut FixedGeometryWorkspace<'_>) -> Result<usize, RenderError> {
-    let flattened = flatten_stroke_path_fixed(
-        path, options.transform, options.flatten, path_workspace)
-        .map_err(map_fixed_stroke_flatten_error)?;
-    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
-    for (points, closed) in flattened.contours() {
-        stroke_polyline_fixed(points, closed, options.stroke, &mut sink)
-            .map_err(map_fixed_stroke_expand_error)?;
-    }
-    prepare_lines(&sink.edges[..sink.len], geometry.lines)
-        .map_err(RenderError::FixedRaster)
-}
-
-/// Renders a transformed, dashed Q24.8 path without floating-point operations.
-#[cfg(feature = "fixed")] pub fn render_native_stroke_path_dashed_fixed<
-    S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>, sampler: &S,
-    options: FixedDashedStrokePathOptions<'_>, target: &mut PixmapMut<'_>,
-    workspace: &mut FixedDashedStrokeWorkspace<'_>,
-    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let flattened = flatten_stroke_path_fixed(path, options.path.transform,
-        options.path.flatten, &mut workspace.path)
-        .map_err(map_fixed_stroke_flatten_error)?;
-    let mut sink = EdgeSliceSink { edges: workspace.geometry.edges, len: 0 };
-    for (points, closed) in flattened.contours() {
-        let mut dash_workspace = DashWorkspace {
-            points: workspace.dash_points, contours: workspace.dash_contours,
-        };
-        let dashed = dash_polyline_fixed(points, closed, options.dash, &mut dash_workspace)
-            .map_err(map_dash_error)?;
-        for (points, closed) in dashed.contours() {
-            stroke_polyline_fixed(points, closed, options.path.stroke, &mut sink)
-                .map_err(map_fixed_stroke_expand_error)?;
-        }
-    }
-    let line_count = prepare_lines(&sink.edges[..sink.len], workspace.geometry.lines)
-        .map_err(RenderError::FixedRaster)?;
-    render_native_paint_fixed(&workspace.geometry.lines[..line_count], sampler,
-        FillRule::NonZero, target, raster_workspace)
-}
-
-/// Renders fixed geometry and no-FPU paint through a rectangle clip.
-#[cfg(feature = "fixed")] pub fn render_native_paint_fixed_clipped<
-    S: crate::sampler::FixedPaintSampler>(lines: &[FixedLine], sampler: &S,
-    clip: Rect, fill_rule: FillRule, target: &mut PixmapMut<'_>,
-    workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    let (width, height) = (target.width, target.height);
-    let mut compositor = FixedPaintCompositor { target, sampler };
-    rasterize_lines(lines, width, height, fill_rule, workspace,
-        &mut RectClipSink::new(clip, &mut compositor)).map_err(map_fixed_render_error)
-}
-
-/// Renders fixed geometry and no-FPU paint through a borrowed path mask.
-#[cfg(feature = "fixed")] pub fn render_native_paint_fixed_masked<
-    S: crate::sampler::FixedPaintSampler>(lines: &[FixedLine], sampler: &S,
-    mask: CoverageMask<'_>, fill_rule: FillRule, target: &mut PixmapMut<'_>,
-    workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
-    let (width, height) = (target.width, target.height);
-    let mut compositor = FixedPaintCompositor { target, sampler };
-    rasterize_lines(lines, width, height, fill_rule, workspace,
-        &mut MaskClipSink::new(mask, &mut compositor)).map_err(map_fixed_render_error)
-}
-
-#[cfg(feature = "fixed")]
-/// Renders prepared Q24.8 lines through direct sparse tiles.
-pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: SRGBA<u8>, fill_rule: FillRule,
-    target: &mut PixmapMut<'_>, raster_workspace: &mut FixedRasterWorkspace<'_>,
-    tile_workspace: FixedDirectTileWorkspace<'_, '_>) -> Result<(), RenderError> {
-    let tiled = rasterize_lines_to_tiles(lines, target.width, target.height, fill_rule,
-        raster_workspace, tile_workspace).map_err(RenderError::FixedRaster)?;
-    composite_solid_fixed_tiles(tiled, color, target)
-}
-
-/// Renders prepared fixed lines through direct sparse tiles and sampled paint.
-#[cfg(feature = "fixed")] pub fn render_paint_fixed_tiled<S: PaintSampler>(
-    lines: &[FixedLine], sampler: &S, fill_rule: FillRule, target: &mut PixmapMut<'_>,
-    raster_workspace: &mut FixedRasterWorkspace<'_>,
-    tile_workspace: FixedDirectTileWorkspace<'_, '_>) -> Result<(), RenderError> {
-    let tiled = rasterize_lines_to_tiles(lines, target.width, target.height, fill_rule,
-        raster_workspace, tile_workspace).map_err(RenderError::FixedRaster)?;
-    composite_paint_fixed_tiles(tiled, sampler, target)
-}
-
-/// Renders prepared fixed lines through direct sparse tiles and no-FPU paint.
-#[cfg(feature = "fixed")] pub fn render_native_paint_fixed_tiled<
-    S: crate::sampler::FixedPaintSampler>(lines: &[FixedLine], sampler: &S,
-    fill_rule: FillRule, target: &mut PixmapMut<'_>,
-    raster_workspace: &mut FixedRasterWorkspace<'_>,
-    tile_workspace: FixedDirectTileWorkspace<'_, '_>) -> Result<(), RenderError> {
-    let tiled = rasterize_lines_to_tiles(lines, target.width, target.height, fill_rule,
-        raster_workspace, tile_workspace).map_err(RenderError::FixedRaster)?;
-    composite_native_paint_fixed_tiles(tiled, sampler, target)
-}
-
-/// Composites retained fixed strips through the shared paint compositor.
-#[cfg(feature = "fixed")] pub fn composite_paint_fixed_strips<S: PaintSampler>(
-    strips: FixedCoverageStrips<'_>, sampler: &S, target: &mut PixmapMut<'_>) ->
-    Result<(), RenderError> {
-    validate_coverage_dimensions(strips.width(), strips.height(), target)?;
-    finish_infallible(strips.replay(&mut PaintCompositor { target, sampler }))
-}
-
-/// Composites retained fixed strips with a no-FPU fixed paint sampler.
-#[cfg(feature = "fixed")] pub fn composite_native_paint_fixed_strips<
-    S: crate::sampler::FixedPaintSampler>(strips: FixedCoverageStrips<'_>,
-    sampler: &S, target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(strips.width(), strips.height(), target)?;
-    finish_infallible(strips.replay(&mut FixedPaintCompositor { target, sampler }))
-}
-
-/// Composites retained fixed strips and no-FPU paint through a rectangle clip.
-#[cfg(feature = "fixed")] pub fn composite_native_paint_fixed_strips_clipped<
-    S: crate::sampler::FixedPaintSampler>(strips: FixedCoverageStrips<'_>,
-    sampler: &S, clip: Rect, target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(strips.width(), strips.height(), target)?;
-    let mut compositor = FixedPaintCompositor { target, sampler };
-    finish_infallible(strips.replay(&mut RectClipSink::new(clip, &mut compositor)))
-}
-
-/// Composites retained fixed strips and no-FPU paint through a path mask.
-#[cfg(feature = "fixed")] pub fn composite_native_paint_fixed_strips_masked<
-    S: crate::sampler::FixedPaintSampler>(strips: FixedCoverageStrips<'_>,
-    sampler: &S, mask: CoverageMask<'_>,
-    target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(strips.width(), strips.height(), target)?;
-    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
-    let mut compositor = FixedPaintCompositor { target, sampler };
-    finish_infallible(strips.replay(&mut MaskClipSink::new(mask, &mut compositor)))
-}
-
-/// Composites retained fixed strips through an antialiased rectangle clip.
-#[cfg(feature = "fixed")] pub fn composite_paint_fixed_strips_clipped<S: PaintSampler>(
-    strips: FixedCoverageStrips<'_>, sampler: &S, clip: Rect,
-    target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(strips.width(), strips.height(), target)?;
-    let mut compositor = PaintCompositor { target, sampler };
-    finish_infallible(strips.replay(&mut RectClipSink::new(clip, &mut compositor)))
-}
-
-/// Composites retained fixed strips multiplied by a borrowed path mask.
-#[cfg(feature = "fixed")] pub fn composite_paint_fixed_strips_masked<S: PaintSampler>(
-    strips: FixedCoverageStrips<'_>, sampler: &S, mask: CoverageMask<'_>,
-    target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(strips.width(), strips.height(), target)?;
-    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
-    let mut compositor = PaintCompositor { target, sampler };
-    finish_infallible(strips.replay(&mut MaskClipSink::new(mask, &mut compositor)))
-}
-
-/// Composites retained fixed coverage without rasterizing its geometry again.
-#[cfg(feature = "fixed")] pub fn composite_solid_fixed_tiles(tiled: FixedCoverageTiles<'_>,
-    color: SRGBA<u8>, target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(tiled.width(), tiled.height(), target)?;
-    let paint = SolidPaint::new(color);
-    let compositor = PaintCompositor { target, sampler: &paint };
-    for tile in tiled.tiles() {
-        match tile.kind {
-            FixedTileKind::Full => {
-                let (width, height) = tiled.tile_extent(*tile);
-                compositor.target.blend_solid_tile(
-                    tile.x, tile.y, width, height, paint.color().into_legacy());
-            }
-            FixedTileKind::Boundary => {
-                let start = tile.run_start as usize;
-                for run in &tiled.runs()[start..start + tile.run_count as usize] {
-                    compositor.target.blend_solid_span(tile.x + run.x as u32,
-                        tile.y + run.row as u32, run.len as _,
-                        paint.color().into_legacy(), run.coverage);
-                }
-            }
-        }
-    }   Ok(())
-}
-
-/// Composites retained fixed tiles through the shared paint compositor.
-#[cfg(feature = "fixed")] pub fn composite_paint_fixed_tiles<S: PaintSampler>(
-    tiled: FixedCoverageTiles<'_>, sampler: &S, target: &mut PixmapMut<'_>) ->
-    Result<(), RenderError> {
-    validate_coverage_dimensions(tiled.width(), tiled.height(), target)?;
-    let mut compositor = PaintCompositor { target, sampler };
-    finish_infallible(replay_fixed_tiles(tiled, &mut compositor))
-}
-
-/// Composites retained fixed tiles with a no-FPU fixed paint sampler.
-#[cfg(feature = "fixed")] pub fn composite_native_paint_fixed_tiles<
-    S: crate::sampler::FixedPaintSampler>(tiled: FixedCoverageTiles<'_>,
-    sampler: &S, target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(tiled.width(), tiled.height(), target)?;
-    let mut compositor = FixedPaintCompositor { target, sampler };
-    finish_infallible(replay_fixed_tiles(tiled, &mut compositor))
-}
-
-/// Composites retained fixed tiles and no-FPU paint through a rectangle clip.
-#[cfg(feature = "fixed")] pub fn composite_native_paint_fixed_tiles_clipped<
-    S: crate::sampler::FixedPaintSampler>(tiled: FixedCoverageTiles<'_>,
-    sampler: &S, clip: Rect, target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(tiled.width(), tiled.height(), target)?;
-    let mut compositor = FixedPaintCompositor { target, sampler };
-    finish_infallible(replay_fixed_tiles(
-        tiled, &mut RectClipSink::new(clip, &mut compositor)))
-}
-
-/// Composites retained fixed tiles and no-FPU paint through a path mask.
-#[cfg(feature = "fixed")] pub fn composite_native_paint_fixed_tiles_masked<
-    S: crate::sampler::FixedPaintSampler>(tiled: FixedCoverageTiles<'_>,
-    sampler: &S, mask: CoverageMask<'_>,
-    target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(tiled.width(), tiled.height(), target)?;
-    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
-    let mut compositor = FixedPaintCompositor { target, sampler };
-    finish_infallible(replay_fixed_tiles(
-        tiled, &mut MaskClipSink::new(mask, &mut compositor)))
-}
-
-/// Composites retained fixed tiles through an antialiased rectangle clip.
-#[cfg(feature = "fixed")] pub fn composite_paint_fixed_tiles_clipped<S: PaintSampler>(
-    tiled: FixedCoverageTiles<'_>, sampler: &S, clip: Rect,
-    target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(tiled.width(), tiled.height(), target)?;
-    let mut compositor = PaintCompositor { target, sampler };
-    finish_infallible(replay_fixed_tiles(
-        tiled, &mut RectClipSink::new(clip, &mut compositor)))
-}
-
-/// Composites retained fixed tiles multiplied by a borrowed path mask.
-#[cfg(feature = "fixed")] pub fn composite_paint_fixed_tiles_masked<S: PaintSampler>(
-    tiled: FixedCoverageTiles<'_>, sampler: &S, mask: CoverageMask<'_>,
-    target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(tiled.width(), tiled.height(), target)?;
-    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
-    let mut compositor = PaintCompositor { target, sampler };
-    finish_infallible(replay_fixed_tiles(
-        tiled, &mut MaskClipSink::new(mask, &mut compositor)))
-}
-
-#[cfg(feature = "fixed")] fn replay_fixed_tiles<S: CoverageSink>(
-    tiled: FixedCoverageTiles<'_>, sink: &mut S) -> Result<(), S::Error> {
-    for tile in tiled.tiles() {
-        match tile.kind {
-            FixedTileKind::Full => {
-                let (width, height) = tiled.tile_extent(*tile);
-                for row in 0..height {
-                    sink.span(tile.x, tile.y + row, width, u8::MAX)?;
-                }
-            }
-            FixedTileKind::Boundary => {
-                let start = tile.run_start as usize;
-                for run in &tiled.runs()[start..start + tile.run_count as usize] {
-                    sink.span(tile.x + run.x as u32, tile.y + run.row as u32,
-                        run.len as _, run.coverage)?;
-                }
-            }
-        }
-    }   Ok(())
-}
-
-#[cfg(feature = "fixed")] fn finish_infallible(result: Result<(), Infallible>) ->
-    Result<(), RenderError> {
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) => match error {},
-    }
-}
-
-fn validate_coverage_dimensions(width: u32, height: u32, target: &PixmapMut<'_>) ->
+pub(crate) fn validate_coverage_dimensions(width: u32, height: u32, target: &PixmapMut<'_>) ->
     Result<(), RenderError> {
     if (width, height) != (target.width, target.height) {
         return Err(RenderError::CoverageDimensionsMismatch {
@@ -996,10 +580,11 @@ fn map_analytic_bin_error(error: AnalyticBinError) -> RenderError {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)] struct EdgeCapacity { needed_at_least: usize }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct EdgeCapacity { needed_at_least: usize }
 
-struct EdgeSliceSink<'a, T = crate::geometry::Scalar> {
-    edges: &'a mut [Edge<T>], len: usize,
+pub(crate) struct EdgeSliceSink<'a, T = crate::geometry::Scalar> {
+    pub(crate) edges: &'a mut [Edge<T>], pub(crate) len: usize,
 }
 
 impl<T> EdgeSink<T> for EdgeSliceSink<'_, T> {
@@ -1011,7 +596,8 @@ impl<T> EdgeSink<T> for EdgeSliceSink<'_, T> {
 }
 
 #[cfg(feature = "fixed")]
-fn map_fixed_stroke_expand_error(error: FixedStrokeExpandError<EdgeCapacity>) -> RenderError {
+pub(crate) fn map_fixed_stroke_expand_error(
+    error: FixedStrokeExpandError<EdgeCapacity>) -> RenderError {
     match error {
         FixedStrokeExpandError::CoordinateOutOfRange =>
             RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
@@ -1021,7 +607,8 @@ fn map_fixed_stroke_expand_error(error: FixedStrokeExpandError<EdgeCapacity>) ->
 }
 
 #[cfg(feature = "fixed")]
-fn map_fixed_flatten_error(error: FixedFlattenError<EdgeCapacity>) -> RenderError {
+pub(crate) fn map_fixed_flatten_error(
+    error: FixedFlattenError<EdgeCapacity>) -> RenderError {
     match error {
         FixedFlattenError::NonPositiveTolerance => RenderError::InvalidTolerance,
         FixedFlattenError::InvalidDepth => RenderError::InvalidDepth,
@@ -1035,7 +622,7 @@ fn map_fixed_flatten_error(error: FixedFlattenError<EdgeCapacity>) -> RenderErro
 }
 
 #[cfg(feature = "fixed")]
-fn map_fixed_stroke_flatten_error(
+pub(crate) fn map_fixed_stroke_flatten_error(
     error: FixedFlattenError<StrokeWorkspaceError>) -> RenderError {
     match error {
         FixedFlattenError::NonPositiveTolerance => RenderError::InvalidTolerance,
@@ -1053,12 +640,12 @@ fn map_fixed_stroke_flatten_error(
     }
 }
 
-struct PaintCompositor<'a, 'b, S> {
-    target: &'a mut PixmapMut<'b>, sampler: &'a S,
+pub(crate) struct PaintCompositor<'a, 'b, S> {
+    pub(crate) target: &'a mut PixmapMut<'b>, pub(crate) sampler: &'a S,
 }
 
-#[cfg(feature = "fixed")] struct FixedPaintCompositor<'a, 'b, S> {
-    target: &'a mut PixmapMut<'b>, sampler: &'a S,
+#[cfg(feature = "fixed")] pub(crate) struct FixedPaintCompositor<'a, 'b, S> {
+    pub(crate) target: &'a mut PixmapMut<'b>, pub(crate) sampler: &'a S,
 }
 
 #[cfg(feature = "fixed")] impl<S: crate::sampler::FixedPaintSampler> CoverageSink
@@ -1115,7 +702,7 @@ fn map_stroke_expand_error(error: StrokeExpandError<EdgeCapacity>) -> RenderErro
     }
 }
 
-fn map_dash_error(error: DashError) -> RenderError {
+pub(crate) fn map_dash_error(error: DashError) -> RenderError {
     match error {
         DashError::NonFinitePoint => RenderError::NonFiniteCoordinate,
         DashError::PrecisionExhausted => RenderError::DashPrecisionExhausted,
@@ -1143,7 +730,8 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
 }
 
 #[cfg(feature = "fixed")]
-fn map_fixed_render_error(error: FixedRenderError<Infallible>) -> RenderError {
+pub(crate) fn map_fixed_render_error(
+    error: FixedRenderError<Infallible>) -> RenderError {
     match error {
         FixedRenderError::Raster(error) => RenderError::FixedRaster(error),
         FixedRenderError::Sink(error) => match error {},
