@@ -4,7 +4,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWorkspace,
         analytic_bin_requirements, build_analytic_row_bins, rasterize_edges_analytic_binned},
     color::{EncodedPremulSRGBA8, LinearPremulRGBA, Srgb8Encoder,
-        SRGB8_ENCODE_LUT_SIZE, SRGBA, RGBA},
+        SRGB8_ENCODE_LUT_SIZE, SRGBA, SRGBA as RGBA},
     dash::{dash_polyline, DashContour, DashPattern, DashWorkspace},
     edge::{Edge, build_fill_edges}, flatten::FlattenOptions,
     raster::{CoverageSink, FillRule, Intersection},

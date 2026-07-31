@@ -1,5 +1,6 @@
 
-use ugl_rs::{analytic::AnalyticIntersection, color::{LinearPremulRGBA, PremulRGBA, SRGBA, RGBA},
+use ugl_rs::{analytic::AnalyticIntersection,
+    color::{LinearPremulRGBA, PremulRGBA, SRGBA, SRGBA as RGBA},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,
         render_stroke_solid_analytic,
@@ -197,9 +198,9 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
             render_analytic_paint(rectangle(), sampler));
     }
 
-    let stops = [GradientStop::from_srgba(0.0, SRGBA::new(240, 20, 80, 32)),
-                 GradientStop::from_srgba(0.4, SRGBA::new(10, 220, 40, 160)),
-                 GradientStop::from_srgba(1.0, SRGBA::new(30, 60, 250, 224))];
+    let stops = [GradientStop::new(0.0, SRGBA::new(240, 20, 80, 32)),
+                 GradientStop::new(0.4, SRGBA::new(10, 220, 40, 160)),
+                 GradientStop::new(1.0, SRGBA::new(30, 60, 250, 224))];
     let stops = GradientStops::new(&stops).unwrap();
     let linear = LinearGradient::new((0.0, 0.0), (4.0, 3.0),
         stops, SpreadMode::Reflect).unwrap();

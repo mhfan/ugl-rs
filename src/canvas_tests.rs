@@ -1,7 +1,8 @@
 
 use super::*;
 use crate::{analytic::AnalyticIntersection,
-    color::{EncodedPremulSRGBA8, PremulRGBA, RGBA}, edge::Edge,
+    color::{EncodedPremulSRGBA8, PremulRGBA, RGBA as GenericRGBA, SRGBA as RGBA},
+    edge::Edge,
     geometry::{Affine, PathBuilder}, raster::Intersection,
     sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient, SpreadMode},
     stroke::{LineCap, LineJoin},
@@ -46,18 +47,20 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(PixmapMut::new(&mut data, 2, 1, 7).unwrap_err(),
         PixmapError::StrideTooSmall { minimum: 8, actual: 7 });
     let mut target = PixmapMut::new(&mut data, 2, 1, 11).unwrap();
-    target.blend_solid_span(0, 0, 2, RGBA::<u8>::red().premul(), 255);
-    assert_eq!(target.pixel(1, 0), Some(RGBA::<u8>::red().premul()));
+    target.blend_solid_span(0, 0, 2, GenericRGBA::<u8>::red().premul(), 255);
+    assert_eq!(target.pixel(1, 0), Some(GenericRGBA::<u8>::red().premul()));
     assert_eq!(&target.data[8..], &[0, 0, 0]);
 }
 
 #[test] fn source_over_combines_coverage_alpha_and_premultiplied_destination() {
     let mut data = [0, 0, 255, 255];
     let mut target = PixmapMut::new(&mut data, 1, 1, 4).unwrap();
-    target.blend_solid_span(0, 0, 1, RGBA::<u8>::new(255, 0, 0, 128).premul(), 255);
+    target.blend_solid_span(
+        0, 0, 1, GenericRGBA::<u8>::new(255, 0, 0, 128).premul(), 255);
     assert_eq!(target.pixel(0, 0), Some((128, 0, 127, 255).into()));
     let before = target.pixel(0, 0);
-    target.blend_solid_span(0, 0, 1, RGBA::<u8>::new(1, 2, 3, 0).premul(), 255);
+    target.blend_solid_span(0, 0, 1,
+        GenericRGBA::<u8>::new(1, 2, 3, 0).premul(), 255);
     assert_eq!(target.pixel(0, 0), before);
 }
 
@@ -829,15 +832,15 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             strip_indices: &mut strip_indices,
         }).unwrap();
     let target = PixmapMut::new(&mut pixels, 4, 4, 16).unwrap();
-    assert_eq!(target.pixel(1, 1), Some(RGBA::<u8>::white().premul()));
-    assert_eq!(target.pixel(2, 2), Some(RGBA::<u8>::white().premul()));
+    assert_eq!(target.pixel(1, 1), Some(GenericRGBA::<u8>::white().premul()));
+    assert_eq!(target.pixel(2, 2), Some(GenericRGBA::<u8>::white().premul()));
     assert_eq!(target.pixel(0, 0), Some(PremulRGBA::zeroed()));
 }
 
 #[cfg(feature = "fixed")]
 #[test] fn full_tile_blending_matches_row_spans() {
     let (mut tiled, mut spanned) = ([17; 16 * 16 * 4], [17; 16 * 16 * 4]);
-    let color = RGBA::<u8>::new(40, 120, 220, 192).premul();
+    let color = GenericRGBA::<u8>::new(40, 120, 220, 192).premul();
     PixmapMut::new(&mut tiled, 16, 16, 64).unwrap().blend_solid_tile(0, 0, 16, 16, color);
     let mut target = PixmapMut::new(&mut spanned, 16, 16, 64).unwrap();
     for y in 0..16 { target.blend_solid_span(0, y, 16, color, u8::MAX); }

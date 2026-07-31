@@ -155,8 +155,9 @@ binary-turn angle and a fixed 16-step integer CORDIC.
 
 Pending architectural work includes:
 
-- audit all `RGBA` uses so alpha representation, color space, component width,
-  packing, and byte layout are explicit at every API boundary;
+- finish the framebuffer boundary audit: solid paints and gradient stops now
+  accept explicit straight encoded `SRGBA<u8>`, while pixel readback and raw
+  target validation still need an explicit encoded-premultiplied contract;
 - design a `Canvas`/`Context` facade that consolidates target, transform, paint,
   clipping, drawing options, and workspace reuse without removing the bounded,
   allocation-free low-level APIs;

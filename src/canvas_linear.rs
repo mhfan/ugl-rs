@@ -232,7 +232,7 @@ impl<'a> LinearPixmapMut<'a> {
 pub fn render_solid_analytic(path: &Path, transform: Affine, color: SRGBA<u8>,
     options: AnalyticRenderOptions, target: &mut LinearPixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint_analytic(path, transform, &SolidPaint::from_srgba(color),
+    render_paint_analytic(path, transform, &SolidPaint::new(color),
         options, target, workspace)
 }
 
@@ -249,7 +249,7 @@ pub fn render_paint_analytic<S: LinearPaintSampler>(path: &Path, transform: Affi
 pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
     clip: Rect, options: AnalyticRenderOptions, target: &mut LinearPixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint_analytic_clipped(path, transform, &SolidPaint::from_srgba(color),
+    render_paint_analytic_clipped(path, transform, &SolidPaint::new(color),
         clip, options, target, workspace)
 }
 
@@ -265,7 +265,7 @@ pub fn render_paint_analytic_clipped<S: LinearPaintSampler>(path: &Path, transfo
 pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
     mask: CoverageMask<'_>, options: AnalyticRenderOptions, target: &mut LinearPixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint_analytic_masked(path, transform, &SolidPaint::from_srgba(color),
+    render_paint_analytic_masked(path, transform, &SolidPaint::new(color),
         mask, options, target, workspace)
 }
 
@@ -283,7 +283,7 @@ pub fn render_paint_analytic_masked<S: LinearPaintSampler>(path: &Path,
 pub fn render_stroke_solid_analytic(path: &Path, transform: Affine, color: SRGBA<u8>,
     options: AnalyticStrokeOptions, target: &mut LinearPixmapMut<'_>,
     workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
-    render_stroke_paint_analytic(path, transform, &SolidPaint::from_srgba(color),
+    render_stroke_paint_analytic(path, transform, &SolidPaint::new(color),
         options, target, workspace)
 }
 
@@ -300,7 +300,7 @@ pub fn render_stroke_solid_analytic_dashed(path: &Path, transform: Affine,
     color: SRGBA<u8>, options: AnalyticDashedStrokeOptions<'_>,
     target: &mut LinearPixmapMut<'_>, workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
-    render_stroke_paint_analytic_dashed(path, transform, &SolidPaint::from_srgba(color),
+    render_stroke_paint_analytic_dashed(path, transform, &SolidPaint::new(color),
         options, target, workspace)
 }
 
@@ -318,7 +318,7 @@ pub fn render_stroke_solid_analytic_clipped(path: &Path, transform: Affine,
     color: SRGBA<u8>, clip: Rect, options: AnalyticStrokeOptions,
     target: &mut LinearPixmapMut<'_>, workspace: &mut AnalyticStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
-    render_stroke_paint_analytic_clipped(path, transform, &SolidPaint::from_srgba(color),
+    render_stroke_paint_analytic_clipped(path, transform, &SolidPaint::new(color),
         clip, options, target, workspace)
 }
 
@@ -336,7 +336,7 @@ pub fn render_stroke_solid_analytic_masked(path: &Path, transform: Affine,
     color: SRGBA<u8>, mask: CoverageMask<'_>, options: AnalyticStrokeOptions,
     target: &mut LinearPixmapMut<'_>, workspace: &mut AnalyticStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
-    render_stroke_paint_analytic_masked(path, transform, &SolidPaint::from_srgba(color),
+    render_stroke_paint_analytic_masked(path, transform, &SolidPaint::new(color),
         mask, options, target, workspace)
 }
 
@@ -527,7 +527,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
             let color = SRGBA::new(
                 next(&mut state), next(&mut state), next(&mut state), next(&mut state));
             let coverage = next(&mut state);
-            let paint = SolidPaint::from_srgba(color);
+            let paint = SolidPaint::new(color);
             target.blend_sampled_span(0, 0, 1, &paint, coverage);
 
             let source = paint.linear_color().to_array().map(f64::from);
@@ -546,7 +546,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
     }
 
     #[test] fn opaque_sampler_fast_path_matches_source_over_at_full_and_partial_coverage() {
-        use crate::{color::RGBA,
+        use crate::{color::SRGBA as RGBA,
             sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode}};
 
         struct Composite<'a, S>(&'a S);
@@ -566,7 +566,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
             GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
         assert!(gradient.is_opaque_linear());
         for coverage in [u8::MAX, 128] {
-            let initial = SolidPaint::from_srgba(SRGBA::new(20, 200, 40, 160)).linear_color();
+            let initial = SolidPaint::new(SRGBA::new(20, 200, 40, 160)).linear_color();
             let (mut fast, mut reference) = ([initial; 8], [initial; 8]);
             LinearPixmapMut::new(&mut fast, 8, 1, 8).unwrap()
                 .blend_sampled_span(0, 0, 8, &gradient, coverage);

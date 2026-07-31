@@ -15,7 +15,7 @@
       a texture (image)
  */
 
-use crate::{color::{EncodedPremulSRGBA8, LinearPremulRGBA, SRGBA, RGBA},
+use crate::{color::{EncodedPremulSRGBA8, LinearPremulRGBA, SRGBA},
     geometry::{Affine, Point}};
 #[cfg(feature = "fixed")]
 use crate::geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar};
@@ -158,8 +158,7 @@ pub struct SolidPaint {
 }
 
 impl SolidPaint {
-    pub fn new(color: RGBA<u8>) -> Self { Self::from_srgba(color.into()) }
-    pub fn from_srgba(color: SRGBA<u8>) -> Self {
+    pub fn new(color: SRGBA<u8>) -> Self {
         Self { encoded: color.premul_encoded(), linear: color.to_linear().premul() }
     }
     pub fn premultiplied(color: EncodedPremulSRGBA8) -> Self {
@@ -169,8 +168,7 @@ impl SolidPaint {
     pub fn linear_color(&self) -> LinearPremulRGBA<f32> { self.linear }
 }
 
-impl From<RGBA<u8>> for SolidPaint { fn from(color: RGBA<u8>) -> Self { Self::new(color) } }
-impl From<SRGBA<u8>> for SolidPaint { fn from(color: SRGBA<u8>) -> Self { Self::from_srgba(color) } }
+impl From<SRGBA<u8>> for SolidPaint { fn from(color: SRGBA<u8>) -> Self { Self::new(color) } }
 
 impl PaintSampler for SolidPaint {
     fn sample(&self, _x: f32, _y: f32) -> EncodedPremulSRGBA8 { self.encoded }
@@ -192,11 +190,7 @@ impl LinearPaintSampler for SolidPaint {
 pub struct GradientStop { offset: f32, color: LinearPremulRGBA<f32> }
 
 impl GradientStop {
-    pub fn new(offset: f32, color: RGBA<u8>) -> Self {
-        Self::from_srgba(offset, color.into())
-    }
-
-    pub fn from_srgba(offset: f32, color: SRGBA<u8>) -> Self {
+    pub fn new(offset: f32, color: SRGBA<u8>) -> Self {
         Self { offset, color: color.to_linear().premul() }
     }
 
@@ -856,9 +850,8 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
 }
 
 #[cfg(test)] mod tests { use super::*;
-    fn encoded(color: RGBA<u8>) -> EncodedPremulSRGBA8 {
-        SRGBA::from(color).premul_encoded()
-    }
+    use crate::color::SRGBA as RGBA;
+    fn encoded(color: SRGBA<u8>) -> EncodedPremulSRGBA8 { color.premul_encoded() }
 
     fn linear(r: f32, g: f32, b: f32, a: f32) -> EncodedPremulSRGBA8 {
         crate::color::LinearRGBA::new(r, g, b, a).premul().to_encoded_srgba8()
@@ -1338,9 +1331,9 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
             }
         }
 
-        let stops = [GradientStop::from_srgba(0.0, SRGBA::new(240, 20, 80, 32)),
-                     GradientStop::from_srgba(0.35, SRGBA::new(10, 220, 40, 160)),
-                     GradientStop::from_srgba(1.0, SRGBA::new(30, 60, 250, 224))];
+        let stops = [GradientStop::new(0.0, SRGBA::new(240, 20, 80, 32)),
+                     GradientStop::new(0.35, SRGBA::new(10, 220, 40, 160)),
+                     GradientStop::new(1.0, SRGBA::new(30, 60, 250, 224))];
         let stops = GradientStops::new(&stops).unwrap();
         let points = [(-4.25, -2.5), (-0.25, 0.75), (0.5, 0.5), (2.25, 3.75), (8.0, 4.0)];
         for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {

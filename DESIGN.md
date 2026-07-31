@@ -499,11 +499,11 @@ and consumption remain allocation-free and no-FPU.
 
 Two cross-cutting API reviews also remain:
 
-- Audit every public and internal `RGBA` use. Each boundary must make
-  straight versus premultiplied alpha, encoded sRGB versus linear light,
-  component width, and packed-value versus byte-layout semantics unambiguous.
-  Replace bare `RGBA` where its contract relies on convention, and add focused
-  conversion/boundary tests before removing compatibility aliases.
+- Finish the framebuffer boundary audit. Solid paint and gradient-stop inputs
+  now use explicit straight encoded `SRGBA<u8>`; generic `RGBA<T>` remains only
+  a transfer-neutral arithmetic building block. Pixel readback and raw target
+  validation still need to state whether invalid premultiplied input bytes are
+  rejected, exposed unchanged, or normalized.
 - Design a stateful `Canvas`/`Context` facade over the low-level rendering
   functions. It should own or borrow target state, current transform, paint,
   clip stack, fill/stroke options, and reusable workspaces where appropriate,

@@ -1,7 +1,7 @@
 //! Borrowed pixel targets and the first complete reference rendering path.
 
 use core::convert::Infallible;
-use crate::{color::{PremulRGBA, RGBA},
+use crate::{color::{PremulRGBA, SRGBA},
     dash::{dash_polyline, DashContour, DashError, DashPattern, DashWorkspace},
     edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticBinError, AnalyticBinWorkspace, AnalyticIntersection,
@@ -275,7 +275,7 @@ pub struct AnalyticStrokeOptions {
 ///
 /// The destination is premultiplied RGBA8888. This function performs no
 /// allocation; all geometry and raster storage comes from `workspace`.
-pub fn render_solid(path: &Path, transform: Affine, color: RGBA<u8>, options: RenderOptions,
+pub fn render_solid(path: &Path, transform: Affine, color: SRGBA<u8>, options: RenderOptions,
     target: &mut PixmapMut<'_>, workspace: &mut RenderWorkspace<'_>) ->
     Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
@@ -290,7 +290,7 @@ pub fn render_solid(path: &Path, transform: Affine, color: RGBA<u8>, options: Re
 }
 
 /// Renders through the sampled reference rasterizer and an antialiased rectangle clip.
-pub fn render_solid_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
+pub fn render_solid_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
     clip: Rect, options: RenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
@@ -305,7 +305,7 @@ pub fn render_solid_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
 }
 
 /// Renders a solid color through the exact-area `f32` rasterizer.
-pub fn render_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
+pub fn render_solid_analytic(path: &Path, transform: Affine, color: SRGBA<u8>,
     options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
     render_paint_analytic(path, transform, &SolidPaint::new(color), options, target, workspace)
@@ -325,7 +325,7 @@ pub fn render_paint_analytic<S: PaintSampler>(path: &Path, transform: Affine, sa
 }
 
 /// Renders a solid analytic stroke without allocating intermediate geometry.
-pub fn render_stroke_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
+pub fn render_stroke_solid_analytic(path: &Path, transform: Affine, color: SRGBA<u8>,
     options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
     render_stroke_paint_analytic(
@@ -344,7 +344,7 @@ pub fn render_stroke_paint_analytic<S: PaintSampler>(path: &Path, transform: Aff
 
 /// Renders a dashed analytic stroke without allocating intermediate geometry.
 pub fn render_stroke_solid_analytic_dashed(path: &Path, transform: Affine,
-    color: RGBA<u8>, options: AnalyticDashedStrokeOptions<'_>,
+    color: SRGBA<u8>, options: AnalyticDashedStrokeOptions<'_>,
     target: &mut PixmapMut<'_>, workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     render_stroke_paint_analytic_dashed(path, transform, &SolidPaint::new(color),
@@ -383,7 +383,7 @@ pub fn render_stroke_paint_analytic_dashed_masked<S: PaintSampler>(path: &Path,
 }
 
 /// Renders a solid analytic stroke through an antialiased rectangle clip.
-pub fn render_stroke_solid_analytic_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
+pub fn render_stroke_solid_analytic_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
     clip: Rect, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
     render_stroke_paint_analytic_clipped(path, transform,
@@ -401,7 +401,7 @@ pub fn render_stroke_paint_analytic_clipped<S: PaintSampler>(path: &Path, transf
 }
 
 /// Renders a solid analytic stroke multiplied by a borrowed path clip mask.
-pub fn render_stroke_solid_analytic_masked(path: &Path, transform: Affine, color: RGBA<u8>,
+pub fn render_stroke_solid_analytic_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
     mask: CoverageMask<'_>, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
     render_stroke_paint_analytic_masked(
@@ -421,7 +421,7 @@ pub fn render_stroke_paint_analytic_masked<S: PaintSampler>(path: &Path, transfo
 }
 
 /// Renders through the analytic reference rasterizer and an antialiased rectangle clip.
-pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: RGBA<u8>,
+pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
     clip: Rect, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
     render_paint_analytic_clipped(path, transform,
@@ -474,7 +474,7 @@ pub fn rasterize_path_clip_analytic(path: &Path, transform: Affine,
 }
 
 /// Renders analytic solid coverage multiplied by a borrowed path clip mask.
-pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: RGBA<u8>,
+pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
     mask: CoverageMask<'_>, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
     render_paint_analytic_masked(path, transform, &SolidPaint::new(color), mask,
@@ -495,7 +495,7 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
 
 /// Renders prepared Q24.8 lines through the allocation-free fixed backend.
 #[cfg(feature = "fixed")] pub fn render_solid_fixed(lines: &[FixedLine],
-    color: RGBA<u8>, fill_rule: FillRule, target: &mut PixmapMut<'_>,
+    color: SRGBA<u8>, fill_rule: FillRule, target: &mut PixmapMut<'_>,
     workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
     render_paint_fixed(lines, &SolidPaint::new(color), fill_rule, target, workspace)
 }
@@ -514,7 +514,7 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
 
 /// Renders fixed coverage and solid paint through an antialiased rectangle clip.
 #[cfg(feature = "fixed")] pub fn render_solid_fixed_clipped(lines: &[FixedLine],
-    color: RGBA<u8>, clip: Rect, fill_rule: FillRule, target: &mut PixmapMut<'_>,
+    color: SRGBA<u8>, clip: Rect, fill_rule: FillRule, target: &mut PixmapMut<'_>,
     workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
     render_paint_fixed_clipped(
         lines, &SolidPaint::new(color), clip, fill_rule, target, workspace)
@@ -533,7 +533,7 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
 
 /// Renders fixed coverage and solid paint multiplied by a borrowed path mask.
 #[cfg(feature = "fixed")] pub fn render_solid_fixed_masked(lines: &[FixedLine],
-    color: RGBA<u8>, mask: CoverageMask<'_>, fill_rule: FillRule,
+    color: SRGBA<u8>, mask: CoverageMask<'_>, fill_rule: FillRule,
     target: &mut PixmapMut<'_>, workspace: &mut FixedRasterWorkspace<'_>) ->
     Result<(), RenderError> {
     render_paint_fixed_masked(
@@ -665,7 +665,7 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
 
 #[cfg(feature = "fixed")]
 /// Renders prepared Q24.8 lines through direct sparse tiles.
-pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule: FillRule,
+pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: SRGBA<u8>, fill_rule: FillRule,
     target: &mut PixmapMut<'_>, raster_workspace: &mut FixedRasterWorkspace<'_>,
     tile_workspace: FixedDirectTileWorkspace<'_, '_>) -> Result<(), RenderError> {
     let tiled = rasterize_lines_to_tiles(lines, target.width, target.height, fill_rule,
@@ -751,7 +751,7 @@ pub fn render_solid_fixed_tiled(lines: &[FixedLine], color: RGBA<u8>, fill_rule:
 
 /// Composites retained fixed coverage without rasterizing its geometry again.
 #[cfg(feature = "fixed")] pub fn composite_solid_fixed_tiles(tiled: FixedCoverageTiles<'_>,
-    color: RGBA<u8>, target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
+    color: SRGBA<u8>, target: &mut PixmapMut<'_>) -> Result<(), RenderError> {
     validate_coverage_dimensions(tiled.width(), tiled.height(), target)?;
     let paint = SolidPaint::new(color);
     let compositor = PaintCompositor { target, sampler: &paint };
