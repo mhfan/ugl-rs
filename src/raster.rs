@@ -4,7 +4,7 @@
 //! It uses stratified vertical samples and exact horizontal span overlap.
 
 use core::convert::Infallible;
-use crate::{edge::Edge, geometry::Rect};
+use crate::{edge::Edge, float::{ceil, floor}, geometry::Rect};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FillRule { NonZero, EvenOdd }
 
@@ -68,8 +68,8 @@ impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
         };
         let vertical = overlap(self.rect.top(), self.rect.bottom(), y);
         if  vertical == 0.0 { return Ok(()); }
-        let (start, end) = (x.max(libm::floorf(self.rect. left()).max(0.0) as _),
-                    (x + len).min(libm:: ceilf(self.rect.right()).max(0.0) as _));
+        let (start, end) = (x.max(floor(self.rect. left()).max(0.0) as _),
+                    (x + len).min(ceil(self.rect.right()).max(0.0) as _));
         if start >= end { return Ok(()); }
         let combined = |x| {
             let clip = overlap(self.rect.left(), self.rect.right(), x) * vertical;
@@ -281,8 +281,8 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
     let end = to.clamp(0.0, width as _);
     if  end <= start { return; }
 
-    let first = libm::floorf(start) as _;
-    let last = (libm::ceilf(end) as usize).min(width);
+    let first = floor(start) as _;
+    let last = (ceil(end) as usize).min(width);
     for (x, coverage) in row.iter_mut().enumerate().take(last).skip(first) {
         let overlap = end.min(x as f32 + 1.0) - start.max(x as f32);
         *coverage += overlap * weight;

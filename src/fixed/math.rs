@@ -144,7 +144,7 @@ pub(crate) fn scaled_integer_sqrt(value: u128) -> (u128, u128) {
     (root, 1 << fraction_bits)
 }
 
-#[cfg(test)] mod tests { use super::*;
+#[cfg(test)] mod tests { use super::*; use crate::float::{cos, sin};
     #[test] fn rotation_cordic_tracks_unit_circle() {
         let mut maximum_error = 0.0_f32;
         for step in 0..65_536_u32 {
@@ -152,8 +152,8 @@ pub(crate) fn scaled_integer_sqrt(value: u128) -> (u128, u128) {
             let (x, y) = cordic_unit_vector(angle);
             let radians = step as f32 / 65_536.0 * core::f32::consts::TAU;
             maximum_error = maximum_error
-                .max((x as f32 / (1_u32 << 30) as f32 - libm::cosf(radians)).abs())
-                .max((y as f32 / (1_u32 << 30) as f32 - libm::sinf(radians)).abs());
+                .max((x as f32 / (1_u32 << 30) as f32 - cos(radians)).abs())
+                .max((y as f32 / (1_u32 << 30) as f32 - sin(radians)).abs());
         }
         assert!(maximum_error <= 4e-5, "maximum unit-vector error={maximum_error}");
     }

@@ -1,3 +1,4 @@
+use crate::float::{floor, sqrt};
 
 /** Porter-Duff Compositing Operators & Blending Modes
 ```text
@@ -268,7 +269,7 @@ impl RGBA<f32> {    #![allow(unused)]
     pub fn soft_light(self, drop: Self) -> Self {
         self.blend(drop, |cb, cs|
             if cs <= 0.5 { cb * (1. - cb) } else {
-                (if cb <= 0.25 { ((cb * 16. - 12.) * cb + 4.) * cb } else { libm::sqrtf(cb) }) - cb
+                (if cb <= 0.25 { ((cb * 16. - 12.) * cb + 4.) * cb } else { sqrt(cb) }) - cb
             } * (cs * 2. - 1.) + cb)
     }
 
@@ -405,7 +406,7 @@ impl RGBA<f32> {    #![allow(unused)]
 
     fn from_hsv(h: f32, s: f32, v: f32, a: f32) -> Self {
         let h = h % 1.0;
-        let i = libm::floorf(h * 6.0);
+        let i = floor(h * 6.0);
         let f =  h * 6.0 - i;
         let p = v * (1.0 - s);
         let q = v * (1.0 - f * s);

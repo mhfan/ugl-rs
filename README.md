@@ -136,11 +136,19 @@ workspace arrays only for static-memory systems, custom allocators, retained
 coverage integration, and renderer development; they are not required for
 ordinary drawing.
 
-The crate is `no_std` by default and currently uses `alloc`. The default
-feature enables the Q24.8 fixed backend; use `--no-default-features` for the
-floating-point core alone. Desktop applications may enable `std` to use native
-floating-point floor/ceil instructions in the analytic rasterizer; the
-`no_std` path retains deterministic software `libm` operations.
+The core supports `no_std` and currently uses `alloc`. Default desktop builds
+enable `std` plus the Q24.8 fixed backend. Use `--no-default-features` for the
+smallest floating-point core, or add `fixed` explicitly for a no_std fixed
+build. Analytic rounding selects the backend independently: `std` uses native
+platform floor/ceil, Arm hard-float (`eabihf`) targets automatically use an
+FPU-friendly no_std implementation, and other no_std FPU targets can enable
+`native-float`. Remaining soft-float builds retain deterministic `libm`
+operations. All floating math is routed through one internal backend:
+`floor`, `ceil`, `sqrt`, remainder, power, and trigonometric calls no longer
+select `libm` independently in rendering modules. MCU FPUs generally do not
+implement transcendental functions, so no_std sin/cos/atan2/acos/pow—and
+currently portable sqrt—still use `libm`; a target-specific native backend
+must demonstrate correct code generation before replacing them.
 
 The fixed raster APIs can feed any existing `PaintSampler` through streaming,
 retained-strip, or retained-tile coverage, with rectangle or borrowed path-mask
@@ -373,9 +381,10 @@ randomized and self-intersecting paths proved that ordering is part of the
 numeric event contract, so that experiment was rejected.
 
 Release profiling then found software `libm` floor/ceil expansion inside both
-event discovery and span integration. The optional `std` feature uses native
-platform rounding while the default embedded build keeps the no_std software
-path. On the same stroke scene, native rounding measured 212.66 µs, another
+event discovery and span integration. Desktop `std` builds use native platform
+rounding; hard-float MCUs select a no_std arithmetic implementation by ABI,
+without coupling FPU policy to standard-library availability. On the same
+stroke scene, native desktop rounding measured 212.66 µs, another
 19.0% below the fused no_std result and 23.6% below a fresh saved software
 baseline. A whole-row difference accumulator was also rejected: short stroke
 interiors did not amortize its extra boundary writes and prefix scan.

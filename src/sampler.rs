@@ -16,7 +16,7 @@
  */
 
 use crate::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA},
-    geometry::{Affine, Point}};
+    float::{atan2, floor, sqrt}, geometry::{Affine, Point}};
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
 /// Implementations should be small values borrowed by the compositor. Calls are
@@ -269,9 +269,9 @@ impl SpreadMode {
     fn map(self, t: f32) -> f32 {
         match self {
             Self::Pad => t.clamp(0.0, 1.0),
-            Self::Repeat  => t - libm::floorf(t),
+            Self::Repeat  => t - floor(t),
             Self::Reflect => {
-                let period = t - libm::floorf(t * 0.5) * 2.0;
+                let period = t - floor(t * 0.5) * 2.0;
                 if  period <= 1.0 { period } else { 2.0 - period }
             }
         }
@@ -390,7 +390,7 @@ impl<'a> RadialGradient<'a> {
         }
         let discriminant = linear * linear - 4.0 * self.quadratic * constant;
         if  discriminant < 0.0 || !discriminant.is_finite() { return None; }
-        let root = libm::sqrtf(discriminant);
+        let root = sqrt(discriminant);
         let q = -0.5 * (linear + root.copysign(linear));
         let (first, second) = if q == 0.0 {
             let root = -linear / (2.0 * self.quadratic);
@@ -407,7 +407,7 @@ impl<'a> RadialGradient<'a> {
 
     fn concentric_parameter(&self, distance_squared: f32) -> Option<f32> {
         if !distance_squared.is_finite() { return None; }
-        let distance = libm::sqrtf(distance_squared.max(0.0));
+        let distance = sqrt(distance_squared.max(0.0));
         let parameter = (distance - self.start_radius) / self.radius_delta;
         parameter.is_finite().then_some(parameter)
     }
@@ -486,7 +486,7 @@ impl<'a> ConicGradient<'a> {
     fn turn(&self, x: f32, y: f32) -> f32 {
         let (x, y) = (x - self.center.x, y - self.center.y);
         match self.angle_mode {
-            ConicAngleMode::Exact => libm::atan2f(y, x) / TAU,
+            ConicAngleMode::Exact => atan2(y, x) / TAU,
             ConicAngleMode::Fast => unit_angle_approx(x, y),
         }
     }
@@ -525,7 +525,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
 }
 
 #[cfg(test)] mod tests { use super::*;
-    use crate::color::SRGBA as RGBA;
+    use crate::{color::SRGBA as RGBA, float::{cos, sin}};
     fn encoded(color: SRGBA<u8>) -> PremulSRGBA8 { color.premul_encoded() }
 
     fn linear(r: f32, g: f32, b: f32, a: f32) -> PremulSRGBA8 {
@@ -677,7 +677,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         let (mut maximum_error, mut maximum_color_error) = (0.0_f32, 0.0_f32);
         for step in 0..65_536 {
             let angle = step as f32 / 65_536.0 * TAU - core::f32::consts::PI;
-            let (x, y) = (libm::cosf(angle) * 17.0, libm::sinf(angle) * 17.0);
+            let (x, y) = (cos(angle) * 17.0, sin(angle) * 17.0);
             let (exact_turn, fast_turn) = (
                 SpreadMode::Repeat.map(exact.turn(x, y)),
                 SpreadMode::Repeat.map(fast.turn(x, y)),

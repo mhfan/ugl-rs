@@ -1,6 +1,6 @@
 //! Allocation-free dash decomposition for flattened `f32` contours.
 
-use crate::geometry::{Point, Scalar};
+use crate::{float::{fmod, sqrt}, geometry::{Point, Scalar}};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum DashPatternError {
     Empty, NonFiniteLength, NonPositiveLength, NonFinitePhase,
@@ -40,7 +40,7 @@ impl<'a> DashPattern<'a> {
         };
         if slots != lengths.len() { cycle *= 2.0; }
         if !cycle.is_finite() { return Err(DashPatternError::CycleOverflow); }
-        let phase = libm::fmodf(phase, cycle);
+        let phase = fmod(phase, cycle);
         Ok(Self { lengths, phase: if phase < 0.0 { phase + cycle } else { phase },
             cycle, slots })
     }
@@ -167,7 +167,7 @@ fn dash_polyline_to<W: DashOutput<Point>>(points: &[Point], closed: bool,
 fn dash_segment<W: DashOutput<Point>>(from: Point, to: Point, pattern: DashPattern<'_>,
     state: &mut DashState, writer: &mut W) -> Result<(), DashError> {
     let (dx, dy) = (to.x - from.x, to.y - from.y);
-    let length = libm::sqrtf(dx * dx + dy * dy);
+    let length = sqrt(dx * dx + dy * dy);
     if !length.is_finite() { return Err(DashError::NonFinitePoint); }
     if length == 0.0 { return Ok(()); }
     let (unit_x, unit_y) = (dx / length, dy / length);

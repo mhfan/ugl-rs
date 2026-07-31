@@ -15,7 +15,8 @@ keywords = [ "ugl", "microgl", "vector-graphic" ]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = [ "fixed" ]
+default = [ "fixed", "std" ]
+native-float = []
 std = []
 
 [dependencies]

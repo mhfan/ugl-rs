@@ -9,18 +9,9 @@
 //! boundaries. Only adjacent pairs need crossing checks because the first
 //! future ordering change must occur between neighbors.
 
-use crate::{edge::Edge,
+use crate::{edge::Edge, float::{ceil, floor},
     raster::{checked_width, emit_coverage_runs, CoverageSink, FillRule, RasterError}
 };
-
-#[cfg(feature = "std")]
-fn floor(value: f32) -> f32 { value.floor() }
-#[cfg(not(feature = "std"))]
-fn floor(value: f32) -> f32 { libm::floorf(value) }
-#[cfg(feature = "std")]
-fn ceil(value: f32) -> f32 { value.ceil() }
-#[cfg(not(feature = "std"))]
-fn ceil(value: f32) -> f32 { libm::ceilf(value) }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Intersection { x0: f32, x1: f32, slope: f32, y_end: f32, winding: i8 }

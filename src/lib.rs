@@ -3,6 +3,8 @@
 
 extern crate alloc;
 
+mod float;
+
 pub mod color;      // rgba/rgb, intensity & quantization
 pub mod blend;      // color blending & alpha compositing, gamma correction
 

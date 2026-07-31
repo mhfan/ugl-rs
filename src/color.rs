@@ -58,6 +58,8 @@
 //! building blocks; prefer [`SRGBA`], [`LinearRGBA`], [`LinearPremulRGBA`], or
 //! [`PremulSRGBA8`] in new APIs whenever the interpretation is known.
 
+use crate::float::pow;
+
 /** ```
     use ugl_rs::color::RGBA;
     let cha = [0x11, 0x22, 0x33, 0xFF];
@@ -319,12 +321,12 @@ impl RGBA<f32> {
 // https://en.wikipedia.org/wiki/Gamma_correction
 fn srgb_decode(value: f32) -> f32 {
     if value <= 0.04045 { value / 12.92 }
-    else { libm::powf((value + 0.055) / 1.055, 2.4) }
+    else { pow((value + 0.055) / 1.055, 2.4) }
 }
 
 fn srgb_encode(value: f32) -> f32 {
     if value <= 0.003_130_8 { value * 12.92 }
-    else { 1.055 * libm::powf(value, 1. / 2.4) - 0.055 }
+    else { 1.055 * pow(value, 1. / 2.4) - 0.055 }
 }
 
 impl SRGBA<u8> {

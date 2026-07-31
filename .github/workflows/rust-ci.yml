@@ -23,9 +23,9 @@ jobs:
           - name: stable no default features
             toolchain: stable
             command: cargo test --no-default-features
-          - name: stable serde without fixed
+          - name: stable native float without fixed
             toolchain: stable
-            command: cargo test --no-default-features --features serde
+            command: cargo test --no-default-features --features native-float
           - name: MSRV all features
             toolchain: "1.93"
             command: cargo test --all-features
@@ -49,6 +49,9 @@ jobs:
             features: --all-features
           - name: Cortex-M no FPU
             target: thumbv7em-none-eabi
+            features: --no-default-features
+          - name: Cortex-M hard float
+            target: thumbv7em-none-eabihf
             features: --no-default-features
     name: ${{ matrix.name }}
     steps:

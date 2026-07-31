@@ -1,7 +1,6 @@
 //! Paint sampling contracts for the fixed-point rendering backend.
 
-use crate::{color::PremulSRGBA8, fixed::{DEVICE_RAW_LIMIT, Scalar},
-    geometry::Point,
+use crate::{color::PremulSRGBA8, fixed::{DEVICE_RAW_LIMIT, Scalar}, geometry::Point,
     sampler::{GradientError, SolidPaint, SpreadMode}};
 use super::math::{cordic_turn, integer_sqrt_u64, scaled_integer_sqrt};
 
@@ -317,7 +316,7 @@ impl PaintSampler for ConicGradient<'_> {
 #[cfg(test)] mod tests {
     use super::*;
     use super::super::math::{cordic_turn, integer_sqrt};
-    use crate::{color::SRGBA, sampler::{
+    use crate::{color::SRGBA, float::{atan2, floor}, sampler::{
         ConicGradient as ReferenceConicGradient, GradientStop, GradientStops,
         LinearGradient as ReferenceLinearGradient, PaintSampler as ReferencePaintSampler,
         RadialGradient as ReferenceRadialGradient,
@@ -515,8 +514,8 @@ impl PaintSampler for ConicGradient<'_> {
             for x in -64_i64..=64 {
                 if x == 0 && y == 0 { continue; }
                 let actual = cordic_turn(x, y) as f32 / 4_294_967_296.0;
-                let turn = libm::atan2f(y as _, x as _) / TAU;
-                let expected = turn - libm::floorf(turn);
+                let turn = atan2(y as _, x as _) / TAU;
+                let expected = turn - floor(turn);
                 let difference = (actual - expected).abs();
                 maximum_error = maximum_error.max(difference.min(1.0 - difference));
             }

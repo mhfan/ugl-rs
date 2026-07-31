@@ -1,7 +1,8 @@
 //! Stroke expansion options and scalar reference implementation.
 
 use core::f32::consts::{FRAC_PI_2, PI};
-use crate::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point, Scalar},
+use crate::{edge::{Edge, EdgeSink}, float::{acos, atan2, ceil, cos, sin, sqrt},
+    geometry::{Affine, Path, Point, Scalar},
     flatten::{flatten_path, FlattenError, FlattenOptions, LineSink},
 };
 
@@ -280,15 +281,15 @@ fn segment_at(points: &[Point], index: usize) -> (Point, Point) {
 
 fn unit_vector(from: Point, to: Point) -> Result<Option<Point>, ()> {
     let (dx, dy) = (to.x - from.x, to.y - from.y);
-    let length = libm::sqrtf(dx * dx + dy * dy);
+    let length = sqrt(dx * dx + dy * dy);
     if !length.is_finite() { return Err(()); }
     Ok((length != 0.0).then(|| (dx / length, dy / length).into()))
 }
 
 fn arc_segments(radius: f32, options: StrokeOptions) -> Result<usize, (usize, u16)> {
     let tolerance = options.tolerance().min(radius);
-    let maximum_angle = 2.0 * libm::acosf((1.0 - tolerance / radius).clamp(-1.0, 1.0));
-    let needed = libm::ceilf(PI / maximum_angle).max(2.0) as usize;
+    let maximum_angle = 2.0 * acos((1.0 - tolerance / radius).clamp(-1.0, 1.0));
+    let needed = ceil(PI / maximum_angle).max(2.0) as usize;
     if  needed > options.max_arc_segments() as usize {
         Err((needed, options.max_arc_segments()))
     } else { Ok(needed) }
@@ -317,14 +318,14 @@ fn emit_cap<S: EdgeSink>(point: Point, unit: Point, start: bool, options: Stroke
         LineCap::Round => {
             let segments = arc_segments(radius, options).map_err(|(needed, maximum)|
                 StrokeExpandError::ArcSegmentLimit { needed, maximum })?;
-            let angle = libm::atan2f(unit.y, unit.x);
+            let angle = atan2(unit.y, unit.x);
             let (start_angle, sweep) = if start {
                 (angle - FRAC_PI_2, -PI)
             } else { (angle - FRAC_PI_2, PI) };
             let mut contour = EdgeContour::new(sink);
             contour.point(point)?;
-            contour.point((point.x + radius * libm::cosf(start_angle),
-                           point.y + radius * libm::sinf(start_angle)).into())?;
+            contour.point((point.x + radius * cos(start_angle),
+                           point.y + radius * sin(start_angle)).into())?;
             contour.arc(point, radius, start_angle, sweep, segments)?;
             contour.close()
         }
@@ -350,12 +351,12 @@ fn emit_join<S: EdgeSink>(point: Point, before: Point, after: Point,
         LineJoin::Round => {
             let base_segments = arc_segments(radius, options).map_err(|(needed, maximum)|
                 StrokeExpandError::ArcSegmentLimit { needed, maximum })?;
-            let start = libm::atan2f(before_outer.y - point.y, before_outer.x - point.x);
-            let   end = libm::atan2f( after_outer.y - point.y,  after_outer.x - point.x);
+            let start = atan2(before_outer.y - point.y, before_outer.x - point.x);
+            let   end = atan2( after_outer.y - point.y,  after_outer.x - point.x);
             let mut sweep = end - start;
             if cross > 0.0 && sweep < 0.0 { sweep += PI * 2.0; }
             if cross < 0.0 && sweep > 0.0 { sweep -= PI * 2.0; }
-            let segments = libm::ceilf(base_segments as f32 * sweep.abs() / PI)
+            let segments = ceil(base_segments as f32 * sweep.abs() / PI)
                 .max(1.0) as usize;
             let mut contour = EdgeContour::new(sink);
             contour.point(point)?;
@@ -407,8 +408,8 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
         segments: usize) -> Result<(), StrokeExpandError<S::Error>> {
         for index in 1..=segments {
             let angle = start + sweep * index as f32 / segments as f32;
-            self.point((center.x + radius * libm::cosf(angle),
-                        center.y + radius * libm::sinf(angle)).into())?;
+            self.point((center.x + radius * cos(angle),
+                        center.y + radius * sin(angle)).into())?;
         }   Ok(())
     }
 
