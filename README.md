@@ -117,6 +117,15 @@ Criterion settings measured the 2026-07-31 working tree as:
 the timed loop. Its nearest-entry sampling keeps tested smooth-gradient output
 within one RGBA8 code value per channel of the exact path.
 
+Linear framebuffers have a separate `GradientStops::with_linear_ramp` path.
+Its caller-owned entries remain premultiplied linear `f32`, so it removes
+per-sample stop lookup without an encoded round trip. A 1024-entry ramp costs
+16 KiB, versus 4 KiB for the encoded RGBA8 ramp; `GradientStops::new` remains
+the smaller exact path for MCU/reference use. A short Criterion diagnostic on
+2026-07-31 measured the linear-gradient sampler at about 212.6 µs with the
+linear ramp versus 627.4 µs with exact stop lookup over 65,536 samples
+(approximately 3.0× faster).
+
 These are scalar reference costs, not optimized paint targets. In particular,
 the general radial sampler performs stable two-circle root solving per pixel;
 future specialized concentric/span-stepping paths must retain byte-equivalent

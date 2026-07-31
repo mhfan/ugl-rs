@@ -3,10 +3,12 @@ use ugl_rs::{analytic::AnalyticIntersection, color::{LinearPremulRGBA, PremulRGB
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,
         render_stroke_solid_analytic,
-    }, canvas_linear::{LinearPixmapMut, render_solid_analytic as render_solid_linear_analytic},
+    }, canvas_linear::{LinearPixmapMut, render_paint_analytic as render_paint_linear_analytic,
+        render_solid_analytic as render_solid_linear_analytic},
     edge::Edge, geometry::{Affine, PathBuilder}, raster::FillRule,
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions},
-    sampler::{GradientStop, GradientStops, LinearGradient, PaintSampler, SpreadMode},
+    sampler::{ConicGradient, GradientStop, GradientStops, LinearGradient, LinearPaintSampler,
+        PaintSampler, RadialGradient, SpreadMode, TransformedPaint},
 };
 
 const  WIDTH: u32 = 4;
@@ -97,6 +99,27 @@ fn render_linear_layers(builder: PathBuilder, colors: &[SRGBA<u8>]) ->
         encoded.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
 }
 
+fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) ->
+    [PremulRGBA<u8>; 16] {
+    let mut linear = [LinearPremulRGBA::default(); 16];
+    let mut target = LinearPixmapMut::new(&mut linear, WIDTH, HEIGHT, WIDTH).unwrap();
+    let (mut edges, mut intersections, mut row_coverage) = (
+        [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
+    );
+    let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
+    render_paint_linear_analytic(&builder.build(), Affine::identity(), sampler,
+        AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+            edges: &mut edges, intersections: &mut intersections,
+            row_coverage: &mut row_coverage,
+            row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
+        }).unwrap();
+    let mut bytes = [0; 16 * 4];
+    let mut encoded = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+    target.encode_into(&mut encoded).unwrap();
+    core::array::from_fn(|index|
+        encoded.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
+}
+
 #[test] fn aligned_rectangle_rgba_golden() {
     let mut path = PathBuilder::new();
     path.move_to((1.0, 1.0)).line_to((3.0, 1.0))
@@ -160,6 +183,35 @@ fn render_linear_layers(builder: PathBuilder, colors: &[SRGBA<u8>]) ->
     ];
     assert_eq!(render_analytic_paint(path, &gradient),
         core::array::from_fn(|index| row[index % row.len()]));
+}
+
+#[test] fn linear_gradient_family_preserves_the_exact_presentation_boundary() {
+    fn rectangle() -> PathBuilder {
+        let mut path = PathBuilder::new();
+        path.move_to((0.0, 0.0)).line_to((4.0, 0.0))
+            .line_to((4.0, 4.0)).line_to((0.0, 4.0));
+        path
+    }
+    fn assert_boundary<S: PaintSampler + LinearPaintSampler>(sampler: &S) {
+        assert_eq!(render_linear_paint(rectangle(), sampler),
+            render_analytic_paint(rectangle(), sampler));
+    }
+
+    let stops = [GradientStop::from_srgba(0.0, SRGBA::new(240, 20, 80, 32)),
+                 GradientStop::from_srgba(0.4, SRGBA::new(10, 220, 40, 160)),
+                 GradientStop::from_srgba(1.0, SRGBA::new(30, 60, 250, 224))];
+    let stops = GradientStops::new(&stops).unwrap();
+    let linear = LinearGradient::new((0.0, 0.0), (4.0, 3.0),
+        stops, SpreadMode::Reflect).unwrap();
+    let radial = RadialGradient::two_circle((0.5, 0.5), 0.25,
+        (2.0, 2.0), 3.0, stops, SpreadMode::Repeat).unwrap();
+    let conic = ConicGradient::new((2.0, 2.0), 0.37, stops).unwrap();
+    let transformed = TransformedPaint::new(conic,
+        Affine::new(1.25, 0.2, -0.3, 1.5, 0.5, -0.75)).unwrap();
+    assert_boundary(&linear);
+    assert_boundary(&radial);
+    assert_boundary(&conic);
+    assert_boundary(&transformed);
 }
 
 #[test] fn fractional_butt_stroke_rgba_golden() {

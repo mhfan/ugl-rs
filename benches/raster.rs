@@ -11,8 +11,8 @@ use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWork
         render_solid, render_solid_analytic, render_stroke_solid_analytic,
     }, canvas_linear::{LinearPixmapMut, render_solid_analytic as render_solid_linear_analytic},
     geometry::{Affine, Path, PathBuilder},
-    sampler::{ConicGradient, GradientStop, GradientStops, LinearGradient, PaintSampler,
-        RadialGradient, SolidPaint, SpreadMode},
+    sampler::{ConicGradient, GradientStop, GradientStops, LinearGradient, LinearPaintSampler,
+        PaintSampler, RadialGradient, SolidPaint, SpreadMode},
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions, StrokePathWorkspace,
         flatten_stroke_path, stroke_polyline},
 };
@@ -391,15 +391,26 @@ fn sample_checksum(sampler: &impl PaintSampler) -> u64 {
             checksum = color.to_array().into_iter().fold(checksum,
                 |checksum, channel| checksum.wrapping_mul(257).wrapping_add(channel as _));
         }
+}       checksum
+}
+
+fn sample_linear_checksum(sampler: &impl LinearPaintSampler) -> u64 {
+    let mut checksum = 0_u64;
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let color = sampler.sample_linear(x as f32 + 0.5, y as f32 + 0.5);
+            checksum = color.to_array().into_iter().fold(checksum,
+                |checksum, channel| checksum.rotate_left(7) ^ channel.to_bits() as u64);
+        }
     }       checksum
 }
 
 fn benchmark_paint(c: &mut Criterion) {
-    let stops = [GradientStop::new( 0.0, RGBA::new(240, 20, 80,  32)),
-                 GradientStop::new(0.35, RGBA::new(10, 220, 40, 160)),
-                 GradientStop::new( 1.0, RGBA::new(30, 60, 250, 224)) ];
+    let stop_values = [GradientStop::new( 0.0, RGBA::new(240, 20, 80,  32)),
+                       GradientStop::new(0.35, RGBA::new(10, 220, 40, 160)),
+                       GradientStop::new( 1.0, RGBA::new(30, 60, 250, 224)) ];
     let mut ramp = vec![EncodedPremulSRGBA8::zeroed(); 1024];
-    let stops = GradientStops::with_ramp(&stops, &mut ramp).unwrap();
+    let stops = GradientStops::with_ramp(&stop_values, &mut ramp).unwrap();
     let solid = SolidPaint::new(RGBA::new(40, 120, 220, 192));
     let linear = LinearGradient::new((0.0, 0.0), (WIDTH as _, HEIGHT as _),
         stops, SpreadMode::Pad).unwrap();
@@ -413,6 +424,28 @@ fn benchmark_paint(c: &mut Criterion) {
     group.bench_function("radial", |b| b.iter(|| black_box(sample_checksum(&radial))));
     group.bench_function("conic",  |b| b.iter(|| black_box(sample_checksum(&conic))));
     group.finish();
+
+    let exact_stops = GradientStops::new(&stop_values).unwrap();
+    let mut linear_ramp = vec![LinearPremulRGBA::default(); 1024];
+    let linear_stops =
+        GradientStops::with_linear_ramp(&stop_values, &mut linear_ramp).unwrap();
+    let linear = LinearGradient::new((0.0, 0.0), (WIDTH as _, HEIGHT as _),
+        linear_stops, SpreadMode::Pad).unwrap();
+    let radial = RadialGradient::two_circle((96.0, 112.0), 8.0,
+        (128.0, 128.0), 180.0, linear_stops, SpreadMode::Pad).unwrap();
+    let conic = ConicGradient::new((128.0, 128.0), 0.37, linear_stops).unwrap();
+    let mut group = c.benchmark_group("paint_sample_linear");
+    group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
+    group.bench_function("solid",  |b| b.iter(|| black_box(sample_linear_checksum(&solid))));
+    group.bench_function("linear", |b| b.iter(|| black_box(sample_linear_checksum(&linear))));
+    group.bench_function("radial", |b| b.iter(|| black_box(sample_linear_checksum(&radial))));
+    group.bench_function("conic",  |b| b.iter(|| black_box(sample_linear_checksum(&conic))));
+    group.finish();
+
+    let exact = LinearGradient::new((0.0, 0.0), (WIDTH as _, HEIGHT as _),
+        exact_stops, SpreadMode::Pad).unwrap();
+    c.bench_function("paint_sample_linear_exact/linear",
+        |b| b.iter(|| black_box(sample_linear_checksum(&exact))));
 }
 
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {

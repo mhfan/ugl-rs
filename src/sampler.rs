@@ -3,8 +3,8 @@
 //!
 //! Sampling currently uses device-space `f32` pixel centers as the reference
 //! implementation. Gradient stops are decoded to linear-light premultiplied
-//! colors and interpolated there. Samples are encoded to premultiplied sRGB
-//! bytes at the current framebuffer boundary.
+//! colors and interpolated there. The compatibility sampler encodes at its
+//! RGBA8 boundary; the linear sampler retains `f32` through compositing.
 
 /*  Samplers can be though of as 2D shaders. Sampler is a first class citizen in *ugl-rs*,
     think of them as an object, that can be sampled in the normalized unit square.
@@ -145,7 +145,9 @@ impl GradientStop {
 
 /// Validated, caller-owned gradient stops.
 #[derive(Clone, Copy, Debug)] pub struct GradientStops<'a> {
-    stops: &'a [GradientStop], ramp: Option<&'a [EncodedPremulSRGBA8]>,
+    stops: &'a [GradientStop],
+    encoded_ramp: Option<&'a [EncodedPremulSRGBA8]>,
+    linear_ramp: Option<&'a [LinearPremulRGBA<f32>]>,
 }
 
 impl<'a> GradientStops<'a> {
@@ -160,7 +162,7 @@ impl<'a> GradientStops<'a> {
             if index != 0 && stop.offset < previous {
                 return Err(GradientError::UnorderedStops);
             }   previous =   stop.offset;
-        }   Ok(Self { stops, ramp: None })
+        }   Ok(Self { stops, encoded_ramp: None, linear_ramp: None })
     }
 
     /// Builds an encoded lookup ramp once for the high-throughput sampling path.
@@ -176,13 +178,28 @@ impl<'a> GradientStops<'a> {
         for (index, color) in ramp.iter_mut().enumerate() {
             *color = Self::sample_stops(stops, index as f32 / scale);
         }
-        Ok(Self { stops, ramp: Some(ramp) })
+        Ok(Self { stops, encoded_ramp: Some(ramp), linear_ramp: None })
+    }
+
+    /// Builds a premultiplied linear-light lookup ramp for linear framebuffers.
+    ///
+    /// Each entry occupies 16 bytes. This avoids both stop lookup and transfer
+    /// conversion while retaining a fully linear sampling and compositing path.
+    pub fn with_linear_ramp(stops: &'a [GradientStop],
+        ramp: &'a mut [LinearPremulRGBA<f32>]) -> Result<Self, GradientError> {
+        Self::new(stops)?;
+        if ramp.len() < 2 { return Err(GradientError::RampTooSmall); }
+        let scale = (ramp.len() - 1) as f32;
+        for (index, color) in ramp.iter_mut().enumerate() {
+            *color = Self::sample_linear_stops(stops, index as f32 / scale);
+        }
+        Ok(Self { stops, encoded_ramp: None, linear_ramp: Some(ramp) })
     }
 
     pub fn as_slice(&self) -> &'a [GradientStop] { self.stops }
 
     fn sample(&self, t: f32) -> EncodedPremulSRGBA8 {
-        let Some(ramp) = self.ramp else { return Self::sample_stops(self.stops, t); };
+        let Some(ramp) = self.encoded_ramp else { return Self::sample_stops(self.stops, t); };
         let index = (t.clamp(0.0, 1.0) * (ramp.len() - 1) as f32 + 0.5) as usize;
         ramp[index]
     }
@@ -192,7 +209,11 @@ impl<'a> GradientStops<'a> {
     }
 
     fn sample_linear(&self, t: f32) -> LinearPremulRGBA<f32> {
-        Self::sample_linear_stops(self.stops, t)
+        let Some(ramp) = self.linear_ramp else {
+            return Self::sample_linear_stops(self.stops, t);
+        };
+        let index = (t.clamp(0.0, 1.0) * (ramp.len() - 1) as f32 + 0.5) as usize;
+        ramp[index]
     }
 
     fn sample_linear_stops(stops: &[GradientStop], t: f32) -> LinearPremulRGBA<f32> {
@@ -440,7 +461,23 @@ impl LinearPaintSampler for ConicGradient<'_> {
                     "t={t}, actual={actual:?}, expected={expected:?}");
             }
         }
-        assert_eq!(ramp.sample_linear(0.5).to_array(), [0.5, 0.0, 0.5, 1.0]);
+        for step in 0..=256 {
+            let t = step as f32 / 256.0;
+            assert_eq!(ramp.sample_linear(t), exact.sample_linear(t));
+        }
+
+        let mut linear_storage = [LinearPremulRGBA::default(); 1024];
+        let ramp = GradientStops::with_linear_ramp(&stops, &mut linear_storage).unwrap();
+        for step in 0..=256 {
+            let t = step as f32 / 256.0;
+            let (actual, expected) =
+                (ramp.sample_linear(t).to_array(), exact.sample_linear(t).to_array());
+            for channel in 0..4 {
+                assert!((actual[channel] - expected[channel]).abs() <= 1.0 / 1023.0,
+                    "t={t}, actual={actual:?}, expected={expected:?}");
+            }
+            assert_eq!(ramp.sample(t), exact.sample(t));
+        }
     }
 
     #[test] fn linear_gradient_projects_device_coordinates_and_spreads() {
@@ -522,6 +559,34 @@ impl LinearPaintSampler for ConicGradient<'_> {
         let ellipse = TransformedPaint::new(radial,
             Affine::new(2.0, 0.0, 0.0, 1.0, 0.0, 0.0)).unwrap();
         assert_eq!(ellipse.sample(2.0, 0.0), ellipse.sample(0.0, 1.0));
+    }
+
+    #[test] fn exact_gradient_samplers_encode_only_at_the_compatibility_boundary() {
+        fn assert_boundary<S: PaintSampler + LinearPaintSampler>(sampler: &S,
+            points: &[(f32, f32)]) {
+            for &(x, y) in points {
+                assert_eq!(sampler.sample(x, y),
+                    sampler.sample_linear(x, y).to_encoded_srgba8(), "point=({x}, {y})");
+            }
+        }
+
+        let stops = [GradientStop::from_srgba(0.0, SRGBA::new(240, 20, 80, 32)),
+                     GradientStop::from_srgba(0.35, SRGBA::new(10, 220, 40, 160)),
+                     GradientStop::from_srgba(1.0, SRGBA::new(30, 60, 250, 224))];
+        let stops = GradientStops::new(&stops).unwrap();
+        let points = [(-4.25, -2.5), (-0.25, 0.75), (0.5, 0.5), (2.25, 3.75), (8.0, 4.0)];
+        for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {
+            let linear = LinearGradient::new((-1.0, 0.5), (4.0, 3.0), stops, spread).unwrap();
+            let radial = RadialGradient::two_circle((0.5, -0.5), 0.25,
+                (1.0, 1.5), 4.0, stops, spread).unwrap();
+            assert_boundary(&linear, &points);
+            assert_boundary(&radial, &points);
+        }
+        let conic = ConicGradient::new((-1.0, 2.0), 0.37, stops).unwrap();
+        assert_boundary(&conic, &points);
+        let transformed = TransformedPaint::new(conic,
+            Affine::new(1.5, 0.25, -0.5, 2.0, 3.0, -4.0)).unwrap();
+        assert_boundary(&transformed, &points);
     }
 
     #[test] fn randomized_gradient_samples_remain_valid_premultiplied_colors() {

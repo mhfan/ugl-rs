@@ -198,9 +198,11 @@ and SIMD layouts do not enter the common `Edge` representation.
   reference: smooth-gradient error decreases with ramp size, while hard
   transitions are quantized to one ramp interval. A 1024-entry ramp is the
   current performance baseline.
-- The encoded ramp is intentionally bypassed by `LinearPaintSampler`: stops are
-  already stored in linear premultiplied form, so the linear framebuffer path
-  interpolates them directly without transfer-function calls or quantization.
+- The encoded ramp is intentionally bypassed by `LinearPaintSampler`.
+  `GradientStops::with_linear_ramp` instead builds a caller-owned
+  `LinearPremulRGBA<f32>` ramp, avoiding transfer conversion and quantization.
+  A 1024-entry linear ramp costs 16 KiB; `GradientStops::new` retains exact
+  direct interpolation with no ramp storage for reference and MCU use.
 
 ## Strokes
 
