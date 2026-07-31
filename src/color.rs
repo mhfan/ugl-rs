@@ -354,12 +354,10 @@ impl SRGBA<u8> {
     /// Decodes sRGB RGB channels to linear light. Alpha remains a linear opacity.
     pub fn to_linear(self) -> LinearRGBA<f32> {
         const SCALE: f32 = 1.0 / u8::MAX as f32;
-        LinearRGBA(RGBA::new(
-            srgb_decode(self.0.r as f32 * SCALE),
-            srgb_decode(self.0.g as f32 * SCALE),
-            srgb_decode(self.0.b as f32 * SCALE),
-            self.0.a as f32 * SCALE,
-        ))
+        LinearRGBA(RGBA::new(srgb_decode(self.0.r as f32 * SCALE),
+                             srgb_decode(self.0.g as f32 * SCALE),
+                             srgb_decode(self.0.b as f32 * SCALE),
+            self.0.a as f32 * SCALE))
     }
 }
 
@@ -396,12 +394,9 @@ impl LinearRGBA<f32> {
 
     /// Encodes linear-light RGB as straight-alpha 8-bit sRGB.
     pub fn to_srgba8(self) -> SRGBA<u8> {
-        let quantize = |value: f32|
-            (value.clamp(0.0, 1.0) * u8::MAX as f32 + 0.5) as u8;
-        SRGBA::new(
-            quantize(srgb_encode(self.0.r)), quantize(srgb_encode(self.0.g)),
-            quantize(srgb_encode(self.0.b)), quantize(self.0.a),
-        )
+        let quantize = |value: f32| (value.clamp(0.0, 1.0) * u8::MAX as f32 + 0.5) as u8;
+        SRGBA::new(quantize(srgb_encode(self.0.r)), quantize(srgb_encode(self.0.g)),
+                   quantize(srgb_encode(self.0.b)), quantize(self.0.a))
     }
 }
 
