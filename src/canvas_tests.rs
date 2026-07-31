@@ -629,8 +629,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 
 #[cfg(feature = "fixed")]
 #[test] fn native_fixed_curved_path_renders_end_to_end() {
-    use crate::{flatten_fixed::FixedFlattenOptions,
-        geometry::{FixedScalar, PathBuilder},
+    use crate::{geometry::{FixedScalar, PathBuilder},
         raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid},
     };
 
@@ -645,8 +644,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         ([FixedSegment::default(); 64], [FixedTrapezoid::default(); 32], [0; 5]);
     let (mut strip_offsets, mut strip_indices) = ([0; 5], [0; 64]);
     let mut pixels = [0; 4 * 4 * 4];
-    render_native_path_fixed(&builder.build(), FixedFlattenOptions::default(),
-        &SolidPaint::new(RGBA::white()), FillRule::NonZero,
+    render_native_path_fixed(&builder.build(), &SolidPaint::new(RGBA::white()),
+        FixedRenderOptions::default(),
         &mut PixmapMut::new(&mut pixels, 4, 4, 16).unwrap(),
         &mut FixedGeometryWorkspace {
             edges: &mut edge_storage, lines: &mut line_storage,

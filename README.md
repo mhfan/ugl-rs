@@ -36,8 +36,9 @@ storage. The project also has an early Q24.8 fixed-point backend. Production
 fixed edge binning and persistent active edges now operate on caller-owned
 sparse strip storage. The fixed backend can optionally retain compact sparse
 coverage strips for batching or caching while keeping the lower-memory
-streaming sink as its default. Device-space Q24.8 paths can now be adaptively
-flattened and filled without an FPU. An optional 16 × 16 tile prototype now
+streaming sink as its default. Q24.8 paths can now be transformed with checked
+widened arithmetic, adaptively flattened, and filled without an FPU. An
+optional 16 × 16 tile prototype now
 classifies empty, full, and boundary regions, supports direct tile-major
 output, and can composite a retained tile mask without rasterizing it again.
 External fuzzing and broader golden/benchmark scenes are still under
@@ -54,7 +55,7 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Undashed caps/joins reference implemented; reliability work continues |
 | Fixed point | Q24.8 path flattening/raster, sparse strips/tiles, clipping, native fixed gradients, and all fixed stroke caps/joins implemented |
-| Production readiness | Pre-release: broader fuzzing, golden scenes, fixed transforms/dashes, and real-device validation remain |
+| Production readiness | Pre-release: broader fuzzing, golden scenes, fixed path strokes/dashes, and real-device validation remain |
 
 ## Architecture at a glance
 

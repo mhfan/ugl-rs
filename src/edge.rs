@@ -63,10 +63,10 @@ pub fn build_fill_edges<S>(path: &Path, transform: Affine, options: FlattenOptio
 
 /// Flattens a device-space fixed path and emits fixed fill edges.
 #[cfg(feature = "fixed")]
-pub fn build_fill_edges_fixed<S>(path: &Path<FixedScalar>, options: FixedFlattenOptions,
-    sink: &mut S) -> Result<(), FixedFlattenError<S::Error>>
+pub fn build_fill_edges_fixed<S>(path: &Path<FixedScalar>, transform: Affine<FixedScalar>,
+    options: FixedFlattenOptions, sink: &mut S) -> Result<(), FixedFlattenError<S::Error>>
     where S: EdgeSink<FixedScalar> {
-    flatten_path_fixed(path, options, &mut FillEdgeBuilder::new(sink))
+    flatten_path_fixed(path, transform, options, &mut FillEdgeBuilder::new(sink))
 }
 
 struct FillEdgeBuilder<'a, S, T = Scalar> {
@@ -177,7 +177,8 @@ impl<S, T> FillEdgeBuilder<'_, S, T> where S: EdgeSink<T>, T: Copy + PartialOrd 
         let mut builder = PathBuilder::new();
         builder.move_to((zero, zero)).quad_to((one, two), (two, zero));
         let mut edges = Vec::new();
-        build_fill_edges_fixed(&builder.build(), FixedFlattenOptions::default(),
+        build_fill_edges_fixed(&builder.build(), Affine::identity(),
+            FixedFlattenOptions::default(),
             &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
         assert!(!edges.is_empty());
         assert_eq!(edges.iter().map(|edge| edge.winding as i32).sum::<i32>(), 0);

@@ -190,6 +190,18 @@ impl Default for RenderOptions { fn default() -> Self {
         }
 } }
 
+#[cfg(feature = "fixed")]
+#[derive(Clone, Copy, Debug, PartialEq)] pub struct FixedRenderOptions {
+    pub transform: Affine<FixedScalar>,
+    pub flatten: FixedFlattenOptions,
+    pub fill_rule: FillRule,
+}
+
+#[cfg(feature = "fixed")] impl Default for FixedRenderOptions { fn default() -> Self {
+    Self { transform: Affine::identity(), flatten: FixedFlattenOptions::default(),
+        fill_rule: FillRule::NonZero }
+} }
+
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct AnalyticRenderOptions {
     pub fill_rule: FillRule, pub flatten: FlattenOptions,
 }
@@ -451,18 +463,19 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
         fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
 }
 
-/// Flattens and fills a device-space Q24.8 path without floating-point operations.
+/// Transforms, flattens, and fills a Q24.8 path without floating-point operations.
 #[cfg(feature = "fixed")] pub fn render_native_path_fixed<
     S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>,
-    flatten: FixedFlattenOptions, sampler: &S, fill_rule: FillRule,
+    sampler: &S, options: FixedRenderOptions,
     target: &mut PixmapMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
     raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
     let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
-    build_fill_edges_fixed(path, flatten, &mut sink).map_err(map_fixed_flatten_error)?;
+    build_fill_edges_fixed(path, options.transform, options.flatten, &mut sink)
+        .map_err(map_fixed_flatten_error)?;
     let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
         .map_err(RenderError::FixedRaster)?;
     render_native_paint_fixed(&geometry.lines[..line_count], sampler,
-        fill_rule, target, raster_workspace)
+        options.fill_rule, target, raster_workspace)
 }
 
 /// Expands and renders a Q24.8 polyline with no floating-point operations.

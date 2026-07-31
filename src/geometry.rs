@@ -9,7 +9,6 @@
 //  Fill(solid/linear/radial/conic/texture)/Stroke(width/cap/join/dash)
 
 use alloc::vec::Vec;
-use core::ops::{Add, Mul};
 
 /// Coordinate type used by the reference renderer.
 pub type Scalar = f32;
@@ -21,6 +20,8 @@ pub type Scalar = f32;
 #[cfg(feature = "fixed")] pub type FixedScalar = fixed::types::I24F8;
 /// Raw Q24.8 coordinate magnitude supported by the bounded fixed render path.
 #[cfg(feature = "fixed")] pub const FIXED_DEVICE_RAW_LIMIT: i32 = 1 << 29;
+#[cfg(feature = "fixed")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FixedTransformError { Overflow }
 
 pub trait ScalarConstants { const ZERO: Self; const ONE: Self; }
 impl ScalarConstants for f32 { const ZERO: Self = 0.0; const ONE: Self = 1.0; }
@@ -80,18 +81,6 @@ impl<T> Affine<T> {
     pub const fn new(a: T, b: T, c: T, d: T, e: T, f: T) -> Self {
         Self { a, b, c, d, e, f }
     }
-
-    pub fn transform_point(&self, point: Point<T>) -> Point<T>
-        where T: Copy + Add<Output = T> + Mul<Output = T> {
-        (self.a * point.x + self.c * point.y + self.e,
-         self.b * point.x + self.d * point.y + self.f).into()
-    }
-
-    pub fn transform_vector(&self, vector: Point<T>) -> Point<T>
-        where T: Copy + Add<Output = T> + Mul<Output = T> {
-        (self.a * vector.x + self.c * vector.y,
-         self.b * vector.x + self.d * vector.y).into()
-    }
 }
 
 impl<T> Affine<T> where T: Copy + ScalarConstants {
@@ -105,6 +94,16 @@ impl<T> Affine<T> where T: Copy + ScalarConstants {
 }
 
 impl Affine<f32> {
+    pub fn transform_point(&self, point: Point) -> Point {
+        (self.a * point.x + self.c * point.y + self.e,
+         self.b * point.x + self.d * point.y + self.f).into()
+    }
+
+    pub fn transform_vector(&self, vector: Point) -> Point {
+        (self.a * vector.x + self.c * vector.y,
+         self.b * vector.x + self.d * vector.y).into()
+    }
+
     /// Returns the inverse transform, or `None` for non-finite or singular matrices.
     pub fn inverse(self) -> Option<Self> {
         if ![self.a, self.b, self.c, self.d, self.e, self.f]
@@ -119,6 +118,32 @@ impl Affine<f32> {
         };
         [inverse.a, inverse.b, inverse.c, inverse.d, inverse.e, inverse.f]
             .into_iter().all(f32::is_finite).then_some(inverse)
+    }
+}
+
+#[cfg(feature = "fixed")] impl Affine<FixedScalar> {
+    /// Transforms a Q24.8 point with widened multiply-add and checked conversion.
+    ///
+    /// The result is rounded to the nearest Q24.8 value, with exact half units
+    /// rounded away from zero. Renderer-specific device limits are checked by
+    /// the consuming backend.
+    pub fn try_transform_point(&self, point: Point<FixedScalar>) ->
+        Result<Point<FixedScalar>, FixedTransformError> {
+        let transform = |first: FixedScalar, x: FixedScalar,
+            second: FixedScalar, y: FixedScalar, translation: FixedScalar| {
+            const FRACTION_BITS: u32 = 8;
+            const SCALE: i128 = 1 << FRACTION_BITS;
+            let value = first.to_bits() as i128 * x.to_bits() as i128
+                + second.to_bits() as i128 * y.to_bits() as i128
+                + ((translation.to_bits() as i128) << FRACTION_BITS);
+            let rounded = if value < 0 {
+                (value - SCALE / 2) / SCALE
+            } else { (value + SCALE / 2) / SCALE };
+            i32::try_from(rounded).map(FixedScalar::from_bits)
+                .map_err(|_| FixedTransformError::Overflow)
+        };
+        Ok((transform(self.a, point.x, self.c, point.y, self.e)?,
+            transform(self.b, point.x, self.d, point.y, self.f)?).into())
     }
 }
 
@@ -312,12 +337,26 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
     #[test] fn fixed_geometry_reuses_generic_point_path_and_affine_types() {
         let (one, half) = (FixedScalar::from_num(1), FixedScalar::from_num(0.5));
         let transform = Affine::<FixedScalar>::translate(half, one);
-        assert_eq!(transform.transform_point((one, half).into()),
+        assert_eq!(transform.try_transform_point((one, half).into()).unwrap(),
             (FixedScalar::from_num(1.5), FixedScalar::from_num(1.5)).into());
 
         let mut builder = PathBuilder::<FixedScalar>::new();
         builder.move_to((FixedScalar::ZERO, FixedScalar::ZERO))
             .line_to((one, half));
         assert_eq!(builder.build().len(), 2);
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_affine_widens_rounds_symmetrically_and_checks_output() {
+        let raw = FixedScalar::from_bits;
+        let half_scale = Affine::new(raw(128), raw(0), raw(0), raw(128), raw(0), raw(0));
+        assert_eq!(half_scale.try_transform_point((raw(1), raw(-1)).into()).unwrap(),
+            (raw(1), raw(-1)).into());
+
+        let maximum = FixedScalar::MAX;
+        let overflow = Affine::new(maximum, FixedScalar::ZERO, FixedScalar::ZERO,
+            maximum, maximum, maximum);
+        assert_eq!(overflow.try_transform_point((maximum, maximum).into()),
+            Err(FixedTransformError::Overflow));
     }
 }

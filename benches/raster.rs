@@ -731,7 +731,8 @@ fn benchmark_paint(c: &mut Criterion) {
     flatten_group.throughput(Throughput::Elements(8));
     flatten_group.bench_function("cubic_8", |b| b.iter(|| {
         let mut line_count = 0_u32;
-        flatten_path_fixed(&curve_path, FixedFlattenOptions::default(), &mut |_, _| {
+        flatten_path_fixed(&curve_path, Affine::identity(),
+            FixedFlattenOptions::default(), &mut |_, _| {
             line_count += 1; Ok::<_, core::convert::Infallible>(())
         }).unwrap();
         black_box(line_count);
