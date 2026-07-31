@@ -19,15 +19,19 @@ use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
     FixedRenderError, prepare_lines, rasterize_lines,
 };
 #[cfg(feature = "fixed")] use crate::{
-    dash::{FixedDashPattern, dash_polyline_fixed},
+    dash::dash_polyline_fixed,
     edge::build_fill_edges_fixed,
-    flatten_fixed::{FixedFlattenError, FixedFlattenOptions},
+    flatten_fixed::FixedFlattenError,
     geometry::FixedScalar,
     stroke::flatten_stroke_path_fixed,
     stroke_fixed::{FixedStrokeExpandError, FixedStrokeOptions, stroke_polyline_fixed},
 };
 #[cfg(feature = "fixed")] use crate::tile_fixed::{
     FixedCoverageTiles, FixedDirectTileWorkspace, FixedTileKind, rasterize_lines_to_tiles,
+};
+#[cfg(feature = "fixed")] pub use crate::fixed::canvas::{
+    FixedDashedStrokePathOptions, FixedDashedStrokeWorkspace, FixedGeometryWorkspace,
+    FixedRenderOptions, FixedStrokePathOptions,
 };
 
 const BYTES_PER_PIXEL: u32 = 4;
@@ -196,20 +200,6 @@ pub struct AnalyticDashedStrokeWorkspace<'a> {
     pub dash_contours: &'a mut [DashContour],
 }
 
-#[cfg(feature = "fixed")]
-pub struct FixedGeometryWorkspace<'a> {
-    pub edges: &'a mut [Edge<FixedScalar>],
-    pub lines: &'a mut [FixedLine],
-}
-
-#[cfg(feature = "fixed")]
-pub struct FixedDashedStrokeWorkspace<'a> {
-    pub path: StrokePathWorkspace<'a, FixedScalar>,
-    pub dash_points: &'a mut [Point<FixedScalar>],
-    pub dash_contours: &'a mut [DashContour],
-    pub geometry: FixedGeometryWorkspace<'a>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct RenderOptions {
     pub fill_rule: FillRule,
     pub flatten: FlattenOptions,
@@ -222,31 +212,6 @@ impl Default for RenderOptions { fn default() -> Self {
              raster:  RasterOptions::default(),
         }
 } }
-
-#[cfg(feature = "fixed")]
-#[derive(Clone, Copy, Debug, PartialEq)] pub struct FixedRenderOptions {
-    pub transform: Affine<FixedScalar>,
-    pub flatten: FixedFlattenOptions,
-    pub fill_rule: FillRule,
-}
-
-#[cfg(feature = "fixed")] impl Default for FixedRenderOptions { fn default() -> Self {
-    Self { transform: Affine::identity(), flatten: FixedFlattenOptions::default(),
-        fill_rule: FillRule::NonZero }
-} }
-
-#[cfg(feature = "fixed")]
-#[derive(Clone, Copy, Debug, Default, PartialEq)] pub struct FixedStrokePathOptions {
-    pub transform: Affine<FixedScalar>,
-    pub flatten: FixedFlattenOptions,
-    pub stroke: FixedStrokeOptions,
-}
-
-#[cfg(feature = "fixed")]
-#[derive(Clone, Copy, Debug)] pub struct FixedDashedStrokePathOptions<'a> {
-    pub path: FixedStrokePathOptions,
-    pub dash: FixedDashPattern<'a>,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct AnalyticRenderOptions {
     pub fill_rule: FillRule, pub flatten: FlattenOptions,
