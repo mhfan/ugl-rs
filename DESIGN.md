@@ -376,6 +376,11 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   edges by x. Vertical edges cannot cross pixel boundaries or one another, so
   crossing-event and midpoint-order passes are unnecessary. Sloped sets retain
   the numerically coalesced event algorithm and both ordering passes.
+- The matched 8-cubic stroke expands to 65 centerline points and 480 edges.
+  Stage benchmarks put flatten, outline expansion, and row binning near 10 µs
+  combined versus roughly 320 µs for coverage and 367 µs end to end. Prepared
+  stroke remains useful for retained content, but active-edge/slab integration
+  is the first optimization target for the measured desktop gap.
 
 ## Implementation rules
 

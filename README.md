@@ -335,6 +335,34 @@ and constructs a polygonal outline on every draw, while Blend2D uses its
 production stroker and JIT raster pipeline. Gradients, clipping, memory, and
 cold-start/JIT cost require separate matched scenes.
 
+#### f32 stroke stage profile
+
+The matched gentle cubic stroke expands to 65 centerline points, one contour,
+and 480 directed outline edges. Run its internal stage profile with:
+
+```text
+cargo bench --bench raster --all-features -- stroke_stages_f32
+```
+
+On the same host, a 20-sample diagnostic with 2-second warm-up and 3-second
+measurement produced these central estimates:
+
+| Stage | Time |
+| --- | ---: |
+| centerline curve flatten | 1.72 µs |
+| stroke outline expansion | 1.77 µs |
+| sparse row bin construction | 6.88 µs |
+| analytic coverage integration and run emission | 320.32 µs |
+| complete clear + stroke + encoded composite | 366.58 µs |
+
+The independently measured stages are not strictly additive, but they locate
+the dominant cost: flatten, outline, and binning total only about 10.4 µs,
+whereas coverage consumes roughly 87% of the complete draw. A prepared-stroke
+API can still remove repeated geometry work for retained content, but it cannot
+close the measured Blend2D gap by itself. Active-edge processing, slab event
+handling, area integration, and emitted-run cost therefore take priority;
+compositing and clear account for most of the remaining residual.
+
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the
 complete harness binaries, not the incremental library contribution, and must
