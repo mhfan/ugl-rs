@@ -1,5 +1,62 @@
 
-pub type Color = SRGBA<u8>;
+//! Color representations and transfer boundaries.
+//!
+//! # Architecture
+//!
+//! The type system tracks three independent properties which a raw four-channel
+//! tuple cannot express:
+//!
+//! - **transfer**: [`SRGBA`] contains sRGB-encoded RGB, while [`LinearRGBA`]
+//!   contains linear-light sRGB primaries; alpha is always linear opacity;
+//! - **alpha association**: [`RGBA`] and the two straight wrappers keep RGB
+//!   independent of alpha, while [`PremulRGBA`] and [`LinearPremulRGBA`] require
+//!   each RGB channel to be no greater than alpha;
+//! - **storage boundary**: [`EncodedPremulSRGBA8`] is the logical color returned
+//!   by the current paint samplers; canvas owns the conversion to its raw
+//!   premultiplied RGBA8888 framebuffer bytes.
+//!
+//! The color-correct reference path is:
+//!
+//! ```text
+//! SRGBA<u8> (straight, encoded input)
+//!     -> LinearRGBA<f32> (decode)
+//!     -> LinearPremulRGBA<f32> (premultiply, interpolate)
+//!     -> EncodedPremulSRGBA8 (encode and quantize at the framebuffer boundary)
+//! ```
+//!
+//! Gradient interpolation follows this path. The current RGBA8888 canvas then
+//! uses an explicitly marked compatibility bridge to composite those bytes in
+//! the encoded domain. That last step is retained for the existing compact
+//! integer framebuffer and is not colorimetrically equivalent to compositing
+//! in linear light. A future linear framebuffer should keep
+//! [`LinearPremulRGBA`] through compositing and encode only for presentation.
+//! Generic [`PremulRGBA`] remains the low-level alpha-association primitive used
+//! by the existing integer compositor; it does not itself identify a transfer
+//! function.
+//!
+//! # Conventions and references
+//!
+//! [`RGBA::packed`] defines an endian-independent integer value such as
+//! `0xAARRGGBB`; it does not define that integer's in-memory byte order or a
+//! framebuffer pixel layout. Use explicit channel arrays for RGBA byte storage,
+//! and `to_be_bytes`/`to_le_bytes` only when an external format specifies that
+//! byte order.
+//!
+//! - [IEC 61966-2-1](https://webstore.iec.ch/en/publication/6169) defines sRGB
+//!   and its encoding transformations.
+//! - [CSS Color 4](https://www.w3.org/TR/css-color-4/#color-interpolation)
+//!   distinguishes sRGB from linear-light sRGB and specifies interpolation
+//!   after conversion to the chosen space and alpha premultiplication.
+//! - [Compositing and Blending Level 1](https://www.w3.org/TR/compositing-1/#porterduffcompositingoperators)
+//!   specifies Porter-Duff compositing, including source-over in premultiplied
+//!   form and the separation between blending and compositing.
+//! - Porter and Duff, [“Compositing Digital Images”](https://doi.org/10.1145/800031.808606),
+//!   is the original four-channel compositing model.
+//!
+//! Names intentionally include transfer and alpha association at semantic
+//! boundaries. The legacy [`RGBA`] and [`PremulRGBA`] names are transfer-neutral
+//! building blocks; prefer [`SRGBA`], [`LinearRGBA`], [`LinearPremulRGBA`], or
+//! [`EncodedPremulSRGBA8`] in new APIs whenever the interpretation is known.
 
 /** ```
     use ugl_rs::color::RGBA;
@@ -21,7 +78,7 @@ pub type Color = SRGBA<u8>;
 #[repr(C)] pub struct RGBA<T: ColorChannel> { pub r: T, pub g: T, pub b: T, pub a: T, }
 
 /// A straight-alpha color encoded with the sRGB transfer function.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)] #[allow(non_camel_case_types)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)] pub struct SRGBA<T: ColorChannel = u8>(RGBA<T>);
 
@@ -54,8 +111,7 @@ impl<T: ColorChannel> RGBA<T> {
     pub fn new(r: T, g: T, b: T, a: T) -> Self { Self { r, g, b, a } }
 
     pub fn to_array3(self) -> [T; 3] { [self.r, self.g, self.b] }
-    pub fn to_array(self) -> [T; 4] { [self.r, self.g, self.b, self.a] }
-        //unsafe { core::mem::transmute(self) }   // [b, g, r, a] or [a, r, g, b]
+    pub fn to_array(self)  -> [T; 4] { [self.r, self.g, self.b, self.a] }
 
     pub fn zeroed() -> Self { Self { r: T::MIN, g: T::MIN, b: T::MIN, a: T::MIN } }
     pub fn white()  -> Self { Self { r: T::MAX, g: T::MAX, b: T::MAX, a: T::MAX } }
@@ -79,8 +135,7 @@ impl<T: ColorChannel> Default for PremulRGBA<T> { fn default() -> Self { Self::z
 impl<T: ColorChannel + PartialOrd> PremulRGBA<T> {
     /// Constructs a premultiplied color, rejecting RGB channels above alpha.
     pub fn new(r: T, g: T, b: T, a: T) -> Option<Self> {
-        ([r, g, b, a].into_iter().all(|channel|
-            channel >= T::MIN && channel <= T::MAX) &&
+        ([r, g, b, a].into_iter().all(|channel| channel >= T::MIN && channel <= T::MAX) &&
             r <= a && g <= a && b <= a).then(|| Self(RGBA::new(r, g, b, a)))
     }
 
@@ -109,12 +164,10 @@ impl<T: ColorChannel> Default for RGBA<T> { fn default() -> Self { Self::black()
 
 impl<T: ColorChannel> From<(T, T, T, T)> for RGBA<T> {
     fn from((r, g, b,  a): (T, T, T, T)) -> Self { Self { r, g, b, a } }
-        //unsafe { core::mem::transmute(rgba) }   // (b, g, r, a) or (a, r, g, b)
 }
 
 impl<T: ColorChannel> From<[T; 4]> for RGBA<T> {
-    fn from([r, g, b, a]: [T; 4]) -> Self { Self { r, g, b, a } }
-        //unsafe { core::mem::transmute(rgba) }   // [b, g, r, a] or [a, r, g, b]
+    fn from([r, g, b, a]:  [T; 4]) -> Self { Self { r, g, b, a } }
 }
 
 impl<T: ColorChannel> From<(T, T, T)> for RGBA<T> {
@@ -126,13 +179,11 @@ impl<T: ColorChannel> From<[T; 3]>    for RGBA<T> {
 }
 
 impl<T: ColorChannel>  TryFrom<&[T]> for RGBA<T> {
-    fn try_from(rgb: &[T]) -> Result<Self, Self::Error> {
-        match rgb {
+    fn try_from(rgb: &[T]) -> Result<Self, Self::Error> { match rgb {
             [r, g, b] => Ok(Self::new(*r, *g, *b, T::MAX)),
             [r, g, b, a, ..] => Ok(Self::new(*r, *g, *b, *a)),
             _ => Err("an RGB(A) slice requires at least three channels"),
-        }
-    }   type Error = &'static str;
+    } } type Error = &'static str;
 }
 
 impl From<RGBA<f32>> for RGBA<u8> {     // quantization
@@ -197,7 +248,7 @@ impl RGBA<u8> {
     /// Returns the endian-independent numeric representation `0xAARRGGBB`.
     pub fn packed(&self) -> u32 {
         (self.a as u32) << 24 | (self.r as u32) << 16 |
-        (self.g as u32) << 8 | self.b as u32
+        (self.g as u32) <<  8 |  self.b as u32
     }
     pub fn premul(self) -> PremulRGBA<u8> {
         let (half, alpha) = ((u8::MAX / 2) as u16, self.a as u16);
@@ -223,7 +274,7 @@ impl RGBA<u16> {
     /// Returns the endian-independent numeric representation `0xAAAARRRRGGGGBBBB`.
     pub fn packed(&self) -> u64 {
         (self.a as u64) << 48 | (self.r as u64) << 32 |
-        (self.g as u64) << 16 | self.b as u64
+        (self.g as u64) << 16 |  self.b as u64
     }
     pub fn premul(self) -> PremulRGBA<u16> {
         let (half, alpha) = ((u16::MAX / 2) as u32, self.a as u32);
@@ -251,6 +302,11 @@ impl RGBA<f32> {
     }
 }
 
+// IEC 61966-2-1 sRGB transfer pair for normalized RGB channels. The linear
+// near-black segment avoids the power curve's steep slope at zero; above the
+// paired 0.04045/0.0031308 breakpoints, decoding uses gamma 2.4 and encoding
+// uses its reciprocal. Alpha is linear opacity and must not pass through these.
+// https://en.wikipedia.org/wiki/Gamma_correction
 fn srgb_decode(value: f32) -> f32 {
     if value <= 0.04045 { value / 12.92 }
     else { libm::powf((value + 0.055) / 1.055, 2.4) }
@@ -305,24 +361,21 @@ impl From<RGBA<u8>> for SRGBA<u8> { fn from(color: RGBA<u8>) -> Self { Self(colo
 impl From<SRGBA<u8>> for RGBA<u8> { fn from(color: SRGBA<u8>) -> Self { color.0 } }
 
 impl EncodedPremulSRGBA8 {
+    /// Constructs encoded premultiplied bytes, rejecting RGB above alpha.
+    pub fn new(r: u8, g: u8, b: u8, a: u8) -> Option<Self> {
+        PremulRGBA::new(r, g, b, a).map(Self)
+    }
     pub fn zeroed() -> Self { Self(PremulRGBA::zeroed()) }
     pub fn to_array(self) -> [u8; 4] { self.0.to_array() }
-    pub fn into_legacy(self) -> PremulRGBA<u8> { self.0 }
+    pub(crate) fn into_legacy(self) -> PremulRGBA<u8> { self.0 }
 }
 
 impl Default for EncodedPremulSRGBA8 { fn default() -> Self { Self::zeroed() } }
-impl From<(u8, u8, u8, u8)> for EncodedPremulSRGBA8 {
-    fn from(channels: (u8, u8, u8, u8)) -> Self { Self(channels.into()) }
-}
 
 impl LinearRGBA<f32> {
-    pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
-        Self(RGBA::new(r, g, b, a))
-    }
+    pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self { Self(RGBA::new(r, g, b, a)) }
+    pub fn premul(self) -> LinearPremulRGBA<f32> { LinearPremulRGBA(self.0.premul()) }
     pub fn to_array(self) -> [f32; 4] { self.0.to_array() }
-    pub fn premul(self) -> LinearPremulRGBA<f32> {
-        LinearPremulRGBA(self.0.premul())
-    }
 
     /// Encodes linear-light RGB as straight-alpha 8-bit sRGB.
     pub fn to_srgba8(self) -> SRGBA<u8> {
@@ -345,7 +398,7 @@ impl LinearPremulRGBA<f32> {
         self.unpremul().to_srgba8().premul_encoded()
     }
 
-    pub fn lerp(self, other: Self, t: f32) -> Self {
+    pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
         let (from, to) = (self.to_array(), other.to_array());
         let channel = |index| from[index] + (to[index] - from[index]) * t;
         Self(PremulRGBA::new_clamped(channel(0), channel(1), channel(2), channel(3)))
@@ -358,32 +411,6 @@ impl From<SRGBA<u8>> for LinearRGBA<f32> {
 
 impl From<LinearRGBA<f32>> for SRGBA<u8> {
     fn from(color: LinearRGBA<f32>) -> Self { color.to_srgba8() }
-}
-
-/// Explicit RGBA byte storage for a premultiplied 8-bit render target.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[repr(transparent)] pub struct Rgba8Premul([u8; 4]);
-
-impl Rgba8Premul {
-    pub fn from_bytes(bytes: [u8; 4]) -> Option<Self> {
-        PremulRGBA::new(bytes[0], bytes[1], bytes[2], bytes[3]).map(|_| Self(bytes))
-    }
-    pub fn to_bytes(self) -> [u8; 4] { self.0 }
-}
-
-impl From<PremulRGBA<u8>> for Rgba8Premul {
-    fn from(color: PremulRGBA<u8>) -> Self { Self(color.to_array()) }
-}
-
-impl From<EncodedPremulSRGBA8> for Rgba8Premul {
-    fn from(color: EncodedPremulSRGBA8) -> Self { Self(color.to_array()) }
-}
-
-impl From<Rgba8Premul> for PremulRGBA<u8> {
-    fn from(pixel: Rgba8Premul) -> Self {
-        let [r, g, b, a] = pixel.0;
-        Self::new(r, g, b, a).expect("Rgba8Premul maintains the premultiplied invariant")
-    }
 }
 
 impl PremulRGBA<f32> {
@@ -470,6 +497,9 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
         assert_eq!(PremulRGBA::new(100_u8, 50, 25, 100).unwrap().to_array(),
                    [100, 50, 25, 100]);
         assert_eq!(PremulRGBA::new(101_u8, 50, 25, 100), None);
+        assert_eq!(EncodedPremulSRGBA8::new(100, 50, 25, 100).unwrap().to_array(),
+                   [100, 50, 25, 100]);
+        assert_eq!(EncodedPremulSRGBA8::new(101, 50, 25, 100), None);
         let clamped: PremulRGBA<u8> = (200, 100, 50, 80).into();
         assert_eq!(clamped.to_array(), [80, 80, 50, 80]);
         assert_eq!(PremulRGBA::new(f32::NAN, 0.0, 0.0, 1.0), None);
@@ -491,13 +521,5 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
 
         let half_linear = LinearRGBA::new(0.5, 0.5, 0.5, 1.0).to_srgba8();
         assert_eq!(half_linear.to_array(), [188, 188, 188, 255]);
-    }
-
-    #[test] fn pixel_storage_is_explicit_and_validated() {
-        assert_eq!(Rgba8Premul::from_bytes([20, 10, 5, 20]).unwrap().to_bytes(),
-                   [20, 10, 5, 20]);
-        assert_eq!(Rgba8Premul::from_bytes([21, 10, 5, 20]), None);
-        let color = PremulRGBA::new(20, 10, 5, 20).unwrap();
-        assert_eq!(PremulRGBA::from(Rgba8Premul::from(color)), color);
     }
 }

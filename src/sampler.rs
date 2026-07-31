@@ -320,7 +320,8 @@ impl PaintSampler for ConicGradient<'_> {
 
     #[test] fn solid_paint_is_position_independent_and_premultiplied() {
         let paint = SolidPaint::new(RGBA::new(200, 100, 50, 128));
-        assert_eq!(paint.sample(0.5, 0.5), (100, 50, 25, 128).into());
+        assert_eq!(paint.sample(0.5, 0.5),
+            EncodedPremulSRGBA8::new(100, 50, 25, 128).unwrap());
         assert_eq!(paint.sample(-100.0, 200.0), paint.solid_color().unwrap());
     }
 
@@ -340,7 +341,8 @@ impl PaintSampler for ConicGradient<'_> {
 
         let stops = [GradientStop::new(0.0, RGBA::new(255, 0, 0, 0)),
                      GradientStop::new(1.0, RGBA::new(0, 0, 255, 255))];
-        assert_eq!(GradientStops::new(&stops).unwrap().sample(0.5), (0, 0, 128, 128).into());
+        assert_eq!(GradientStops::new(&stops).unwrap().sample(0.5),
+            EncodedPremulSRGBA8::new(0, 0, 128, 128).unwrap());
 
         let single = [GradientStop::new(0.4, RGBA::green())];
         let single = GradientStops::new(&single).unwrap();

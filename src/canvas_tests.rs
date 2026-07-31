@@ -110,7 +110,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     struct CoordinatePaint;
     impl PaintSampler for CoordinatePaint {
         fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
-            ((x * 40.0) as u8, (y * 40.0) as u8, 0, u8::MAX).into()
+            EncodedPremulSRGBA8::new((x * 40.0) as _, (y * 40.0) as _, 0, u8::MAX).unwrap()
         }
     }
 
