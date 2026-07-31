@@ -559,8 +559,7 @@ Workspace requirement helpers should be added before any convenience allocator.
 
 ### Fixed source layout
 
-Backend-specific implementation moves under `src/fixed/` in a separate
-mechanical stage:
+Backend-specific implementation lives under `src/fixed/`:
 
 ```text
 src/fixed/
@@ -574,7 +573,7 @@ src/fixed/
 Shared `geometry`, `edge`, `coverage`, `color`, `sampler` traits, and compositor
 adapters remain outside that directory. Existing public paths
 (`raster_fixed`, `stroke_fixed`, `flatten_fixed`, and `tile_fixed`) are
-preserved initially by thin re-export modules, so source organization does not
+remain preserved by thin re-export modules, so source organization does not
 silently become an unrelated API break. Once the facade is established, a
 pre-1.0 cleanup may expose a coherent `fixed` module and deprecate the old
 paths deliberately.

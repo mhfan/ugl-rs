@@ -153,12 +153,11 @@ both concentric and general two-circle/focal geometry with integer root solving
 and exact integer spread/ramp mapping. `FixedConicGradient` uses a compact
 binary-turn angle and a fixed 16-step integer CORDIC.
 
-Pending architectural work includes:
-
-- evaluate moving fixed-only implementation into `src/fixed/` as part of the
-  API cleanup. The layout should strengthen feature and backend boundaries
-  without duplicating shared abstractions or accidentally changing public
-  module paths.
+Fixed-only flattening, rasterization, stroking, tiling, and their focused tests
+live under `src/fixed/`. The coherent `fixed::*` paths are available directly;
+thin re-export modules preserve the existing `flatten_fixed`,
+`raster_fixed`, `stroke_fixed`, and `tile_fixed` public paths during the
+pre-1.0 API transition.
 
 Both f32 analytic and Q24.8 fixed paths can rasterize arbitrary path clips into
 caller-owned `CoverageMaskMut` storage. Fixed compositors can therefore produce

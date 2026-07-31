@@ -14,12 +14,21 @@ pub mod geometry;   // shape, curve, free path
 pub mod raster;
 pub mod stroke;
 pub mod dash;
-#[cfg(feature = "fixed")] pub mod stroke_fixed;
 pub mod flatten;
-#[cfg(feature = "fixed")] pub mod flatten_fixed;
 pub mod analytic;
-#[cfg(feature = "fixed")] pub mod raster_fixed;
-#[cfg(feature = "fixed")] pub mod tile_fixed;
+#[cfg(feature = "fixed")] pub mod fixed;
+#[cfg(feature = "fixed")] pub mod flatten_fixed {
+    pub use crate::fixed::flatten::*;
+}
+#[cfg(feature = "fixed")] pub mod raster_fixed {
+    pub use crate::fixed::raster::*;
+}
+#[cfg(feature = "fixed")] pub mod stroke_fixed {
+    pub use crate::fixed::stroke::*;
+}
+#[cfg(feature = "fixed")] pub mod tile_fixed {
+    pub use crate::fixed::tile::*;
+}
 pub mod canvas;
 pub mod canvas_linear;
 pub mod context;
