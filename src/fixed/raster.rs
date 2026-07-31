@@ -929,4 +929,4 @@ fn walk_spans<F>(intersections: &[FixedIntersection], fill_rule: FillRule,
     }       winding
 }
 
-#[cfg(test)] #[path = "tests.rs"] mod tests;
+#[cfg(test)] #[path = "raster_tests.rs"] mod tests;
