@@ -22,4 +22,8 @@ for scene in fill_rectangles_64 fill_cubics_8 stroke_cubics_8; do
   target/release/examples/compare_blend2d --scene "$scene" \
     --output "$output_dir/ugl-rs-$scene.rgba" \
     --compare "$output_dir/blend2d-$scene.rgba"
+  target/release/examples/compare_blend2d --backend fixed --scene "$scene" \
+    --output "$output_dir/ugl-rs-fixed-$scene.rgba" \
+    --compare "$output_dir/blend2d-$scene.rgba" \
+    --compare-f32 "$output_dir/ugl-rs-$scene.rgba"
 done

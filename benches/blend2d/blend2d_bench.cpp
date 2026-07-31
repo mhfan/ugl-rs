@@ -60,9 +60,8 @@ BLPath curves() {
   path.move_to(8.0, 128.0);
   for (uint32_t index = 0; index < 8; ++index) {
     double x = 8.0 + double(index) * 30.0;
-    double high = (index & 1) == 0 ? 24.0 : 232.0;
-    double low = (index & 1) == 0 ? 232.0 : 24.0;
-    path.cubic_to(x + 10.0, high, x + 20.0, low, x + 30.0, 128.0);
+    double y = (index & 1) == 0 ? 112.0 : 144.0;
+    path.cubic_to(x + 10.0, y, x + 20.0, y, x + 30.0, 128.0);
   }
   return path;
 }

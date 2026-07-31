@@ -35,8 +35,8 @@ fn curves() -> Path {
     path.move_to((8.0, 128.0));
     for index in 0..8 {
         let x = 8.0 + index as f32 * 30.0;
-        let (high, low) = if index & 1 == 0 { (24.0, 232.0) } else { (232.0, 24.0) };
-        path.cubic_to((x + 10.0, high), (x + 20.0, low), (x + 30.0, 128.0));
+        let y = if index & 1 == 0 { 112.0 } else { 144.0 };
+        path.cubic_to((x + 10.0, y), (x + 20.0, y), (x + 30.0, 128.0));
     }
     path.build()
 }
@@ -71,7 +71,7 @@ fn path_argument(name: &str) -> Result<Option<String>, String> {
         .ok_or_else(|| format!("missing value after {name}"))
 }
 
-fn compare(scene: &str, reference: &[u8], actual: &[u8]) -> Result<(), String> {
+fn compare(label: &str, scene: &str, reference: &[u8], actual: &[u8]) -> Result<(), String> {
     if reference.len() != actual.len() {
         return Err(format!("image sizes differ: {} != {}", reference.len(), actual.len()));
     }
@@ -89,13 +89,13 @@ fn compare(scene: &str, reference: &[u8], actual: &[u8]) -> Result<(), String> {
     }
     println!("image_diff,changed_pixels,total_pixels,changed_percent,mean_abs_channel_error,\
         max_abs_channel_error");
-    println!("{scene},{changed_pixels},{},{:.6},{:.6},{maximum_error}",
+    println!("{label}:{scene},{changed_pixels},{},{:.6},{:.6},{maximum_error}",
         actual.len() / 4, changed_pixels as f64 * 400.0 / actual.len() as f64,
         total_error as f64 / actual.len() as f64);
     Ok(())
 }
 
-fn run() -> Result<(), String> {
+fn run_f32() -> Result<(), String> {
     let warmup = argument("--warmup", 200)?;
     let iterations = argument("--iterations", 2_000)?;
     let samples = argument("--samples", 9)?;
@@ -160,9 +160,125 @@ fn run() -> Result<(), String> {
         timings[timings.len() - 1], checksum(&pixels));
     if let Some(path) = path_argument("--compare")? {
         let reference = fs::read(path).map_err(|error| format!("read reference: {error}"))?;
-        compare(scene, &reference, &pixels)?;
+        compare("Blend2D_vs_ugl-rs-f32", scene, &reference, &pixels)?;
     }
     Ok(())
+}
+
+#[cfg(feature = "fixed")]
+fn fixed_path(scene: &str) -> Path<ugl_rs::fixed::Scalar> {
+    use ugl_rs::fixed::Scalar;
+    let fixed = Scalar::from_num;
+    let mut path = PathBuilder::new();
+    if scene == "fill_rectangles_64" {
+        for index in 0..SHAPES {
+            let x = fixed((index % 8) as f32 * 30.0 + 4.25);
+            let y = fixed((index / 8) as f32 * 30.0 + 4.5);
+            path.move_to((x, y)).line_to((x + fixed(22.5), y))
+                .line_to((x + fixed(22.5), y + fixed(21.75)))
+                .line_to((x, y + fixed(21.75)));
+        }
+    } else {
+        path.move_to((fixed(8.0), fixed(128.0)));
+        for index in 0..8 {
+            let x = fixed((8 + index * 30) as f32);
+            let y = if index & 1 == 0 { fixed(112.0) } else { fixed(144.0) };
+            path.cubic_to((x + fixed(10.0), y), (x + fixed(20.0), y),
+                (x + fixed(30.0), fixed(128.0)));
+        }
+    }
+    path.build()
+}
+
+#[cfg(feature = "fixed")]
+fn run_fixed() -> Result<(), String> {
+    use ugl_rs::{
+        fixed::{Scalar,
+            canvas::{GeometryWorkspace, RenderOptions, StrokePathOptions, render_path,
+                render_stroke_path},
+            raster::{Line, Segment, Trapezoid, Workspace},
+            stroke::Options as FixedStrokeOptions,
+        },
+        sampler::SolidPaint,
+        stroke::{StrokeContour, StrokePathWorkspace},
+    };
+
+    let warmup = argument("--warmup", 200)?;
+    let iterations = argument("--iterations", 2_000)?;
+    let samples = argument("--samples", 9)?;
+    if iterations == 0 || samples == 0 {
+        return Err("--iterations and --samples must be positive".into());
+    }
+    let (scene, _, operation) = scene()?;
+    let path = fixed_path(scene);
+    let paint = SolidPaint::new(SRGBA::new(40, 120, 220, 192));
+    let mut pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
+    let (mut edges, mut lines) = (
+        vec![Default::default(); EDGE_CAPACITY], vec![Line::default(); EDGE_CAPACITY]);
+    let (mut segments, mut trapezoids) = (
+        vec![Segment::default(); EDGE_CAPACITY], vec![Trapezoid::default(); EDGE_CAPACITY]);
+    let (mut row_area, mut strip_offsets, mut strip_indices) = (
+        vec![0; WIDTH as usize], vec![0; HEIGHT as usize + 1],
+        vec![0; EDGE_CAPACITY]);
+    let mut stroke_points = vec![Default::default(); 2048];
+    let mut stroke_contours = vec![StrokeContour::default(); 16];
+
+    let mut timings = {
+        let mut render = || -> Result<(), String> {
+            pixels.fill(0);
+            let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4)
+                .map_err(|error| format!("target: {error:?}"))?;
+            let mut geometry = GeometryWorkspace { edges: &mut edges, lines: &mut lines };
+            let mut raster = Workspace {
+                segments: &mut segments, trapezoids: &mut trapezoids,
+                row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+                strip_indices: &mut strip_indices,
+            };
+            match operation {
+                Operation::Fill => render_path(&path, &paint, RenderOptions::default(),
+                    &mut target, &mut geometry, &mut raster),
+                Operation::Stroke => render_stroke_path(&path, &paint, StrokePathOptions {
+                    stroke: FixedStrokeOptions::new(Scalar::from_num(6))
+                        .expect("valid comparison stroke"), ..Default::default()
+                }, &mut target, &mut StrokePathWorkspace {
+                    points: &mut stroke_points, contours: &mut stroke_contours,
+                }, &mut geometry, &mut raster),
+            }.map_err(|error| format!("render: {error:?}"))
+        };
+        for _ in 0..warmup { render()?; }
+        let mut timings = Vec::with_capacity(samples as usize);
+        for _ in 0..samples {
+            let started = Instant::now();
+            for _ in 0..iterations { render()?; black_box(()); }
+            timings.push(started.elapsed().as_nanos() as f64 / f64::from(iterations));
+        }
+        timings
+    };
+    timings.sort_by(f64::total_cmp);
+
+    if let Some(path) = path_argument("--output")? {
+        fs::write(path, &pixels).map_err(|error| format!("write output: {error}"))?;
+    }
+    println!("renderer,scene,width,height,samples,iterations,min_ns,median_ns,max_ns,checksum");
+    println!("ugl-rs-fixed,{scene},{WIDTH},{HEIGHT},{samples},{iterations},\
+        {:.3},{:.3},{:.3},{}", timings[0], timings[timings.len() / 2],
+        timings[timings.len() - 1], checksum(&pixels));
+    for (argument, label) in [("--compare", "Blend2D_vs_ugl-rs-fixed"),
+                              ("--compare-f32", "ugl-rs-f32_vs_fixed")] {
+        if let Some(path) = path_argument(argument)? {
+            let reference = fs::read(path).map_err(|error| format!("read reference: {error}"))?;
+            compare(label, scene, &reference, &pixels)?;
+        }
+    }
+    Ok(())
+}
+
+fn run() -> Result<(), String> {
+    if path_argument("--backend")?.as_deref().unwrap_or("f32") == "fixed" {
+        #[cfg(feature = "fixed")] return run_fixed();
+        #[cfg(not(feature = "fixed"))] return Err("fixed feature is disabled".into());
+    }
+    run_f32()
 }
 
 fn main() -> ExitCode {
