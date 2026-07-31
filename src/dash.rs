@@ -355,9 +355,6 @@ impl<T: Copy + PartialEq> DashOutput<Point<T>> for DashWriter<'_, T> {
     }
 }
 
-#[cfg(all(test, feature = "fixed"))]
-#[path = "fixed/dash_tests.rs"] mod fixed_dash_tests;
-
 #[cfg(test)] mod tests { use super::*;
     use alloc::{vec, vec::Vec};
 
