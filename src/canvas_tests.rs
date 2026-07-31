@@ -367,6 +367,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines,
             rasterize_lines_to_strips,
         },
+        sampler::FixedLinearGradient,
         tile_fixed::{FixedCoverageTile, FixedCoverageTileRun, FixedDirectTilePiece,
             FixedDirectTileWorkspace, rasterize_lines_to_tiles,
         },
@@ -528,6 +529,49 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
         &mut PixmapMut::new(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(cached_pixels, masked_pixels);
+
+    let ramp = [EncodedPremulSRGBA8::new(255, 0, 0, 255).unwrap(),
+                EncodedPremulSRGBA8::new(0, 0, 255, 255).unwrap()];
+    let gradient = FixedLinearGradient::new(
+        (fixed(0.0), fixed(0.0)), (fixed(2.0), fixed(0.0)),
+        &ramp, SpreadMode::Pad).unwrap();
+    let mut native_pixels = [0; 8];
+    render_native_paint_fixed(&lines, &gradient, FillRule::NonZero,
+        &mut PixmapMut::new(&mut native_pixels, 2, 1, 8).unwrap(),
+        &mut FixedRasterWorkspace { segments: &mut segments,
+            trapezoids: &mut trapezoids, row_area: &mut row_area,
+            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+        }).unwrap();
+    assert_eq!(native_pixels, [128, 0, 0, 128, 0, 0, 128, 128]);
+
+    let mut native_retained = [0; 8];
+    composite_native_paint_fixed_strips(strips, &gradient,
+        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(native_retained, native_pixels);
+    native_retained.fill(0);
+    composite_native_paint_fixed_strips_clipped(strips, &gradient,
+        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
+        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 0, 0]);
+    native_retained.fill(0);
+    composite_native_paint_fixed_strips_masked(strips, &gradient,
+        CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
+        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 128, 128]);
+    native_retained.fill(0);
+    composite_native_paint_fixed_tiles(tiled, &gradient,
+        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(native_retained, native_pixels);
+    native_retained.fill(0);
+    composite_native_paint_fixed_tiles_clipped(tiled, &gradient,
+        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
+        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 0, 0]);
+    native_retained.fill(0);
+    composite_native_paint_fixed_tiles_masked(tiled, &gradient,
+        CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
+        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 128, 128]);
 
     let mut mismatched_pixels = [17; 4];
     let error = composite_solid_fixed_tiles(tiled, RGBA::white(),

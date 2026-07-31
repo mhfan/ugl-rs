@@ -179,9 +179,13 @@ and SIMD layouts do not enter the common `Edge` representation.
 - Fixed streaming, retained-strip, and retained-tile coverage share the encoded
   `PaintSampler` compositor and rectangle/path-mask adapters. This establishes
   functional backend parity without claiming FPU-free paint evaluation:
-  existing gradient samplers remain `f32`. Native fixed-point samplers require
-  a separate numeric contract, intermediate-width analysis, and differential
-  error bounds.
+  existing gradient samplers remain `f32`.
+- `FixedPaintSampler` is the explicit no-FPU contract. `FixedLinearGradient`
+  accepts Q24.8 endpoints and a caller-owned encoded ramp. It uses `i64`
+  coordinate deltas and exact `i128` projection, spread mapping, and nearest
+  ramp selection: the full Q24.8 endpoint difference squared reaches the edge
+  of `i64`, so `i128` is required before summing two axes. Static ramps need no
+  allocation or runtime color conversion on an MCU.
 - Solid paint reports its constant color so span and tile compositors retain
   their bulk fast paths.
 - `TransformedPaint` maps device samples into paint-local coordinates through
@@ -460,6 +464,11 @@ Status: planned.
 | `f32` fill | Sampled and analytic coverage, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
 | Stroke | Allocation-free undashed caps and joins | Dashes, fuzzing, and production reliability validation |
-| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, rectangle and path-mask clipping, shared encoded paint composition | Native fixed paint, fixed stroke, real-device and range validation |
+| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, rectangle and path-mask clipping, encoded composition, native fixed linear paint | Native fixed radial/conic paint, fixed stroke, real-device and range validation |
 | Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
+
+The fixed backlog includes `rasterize_path_clip_fixed`: it must convert
+prepared fixed path coverage directly into a caller-owned `CoverageMaskMut`.
+Fixed compositors already consume arbitrary masks, but current path-mask
+generation uses the analytic `f32` backend.

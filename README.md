@@ -52,8 +52,8 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | `f32` fill and clipping | Reference path implemented and allocation-free |
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Undashed caps/joins reference implemented; reliability work continues |
-| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, and shared encoded paint compositor implemented |
-| Production readiness | Pre-release: broader fuzzing, golden scenes, native fixed paint/stroke, and real-device validation remain |
+| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, encoded paint composition, and native fixed linear gradients implemented |
+| Production readiness | Pre-release: broader fuzzing, golden scenes, native fixed radial/conic paint and stroke, and real-device validation remain |
 
 ## Architecture at a glance
 
@@ -124,8 +124,17 @@ core alone. Optional `serde` support is independent.
 The fixed raster APIs can feed any existing `PaintSampler` through streaming,
 retained-strip, or retained-tile coverage, with rectangle or borrowed path-mask
 clipping. This gives functional parity on desktop, but does not claim a wholly
-integer pipeline: current gradient samplers use `f32`. Native fixed-point paint
-sampling is a separate MCU milestone.
+integer pipeline because those compatibility samplers use `f32`.
+`FixedPaintSampler` makes the no-FPU contract explicit. `FixedLinearGradient`
+projects Q24.8 endpoints with widened integer arithmetic and samples a
+caller-owned encoded ramp; streaming and retained strip/tile compositors support
+the same rectangle and path-mask adapters. Native fixed radial and conic
+gradients remain future MCU work.
+
+Pending: add `rasterize_path_clip_fixed` so arbitrary `FixedScalar` paths can
+produce caller-owned `CoverageMaskMut` data without using the analytic `f32`
+backend. Until then, all fixed compositors can consume arbitrary path masks,
+but generating those masks is not yet an end-to-end no-FPU operation.
 
 ## Benchmarking
 

@@ -17,6 +17,7 @@
 
 use crate::{color::{EncodedPremulSRGBA8, LinearPremulRGBA, SRGBA, RGBA},
     geometry::{Affine, Point}};
+#[cfg(feature = "fixed")] use crate::geometry::FixedScalar;
 
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
@@ -27,6 +28,16 @@ pub trait PaintSampler {
 
     /// Reports a position-independent color to enable span and tile fast paths.
     fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { None }
+}
+
+/// Produces encoded premultiplied sRGB at integer device-pixel coordinates.
+///
+/// Implementations sample the center of pixel `(x, y)` without requiring
+/// floating-point arithmetic. This is separate from [`PaintSampler`] so a
+/// fixed raster pipeline never silently calls an `f32` sampler.
+#[cfg(feature = "fixed")] pub trait FixedPaintSampler {
+    fn sample_fixed(&self, x: u32, y: u32) -> EncodedPremulSRGBA8;
+    fn solid_color_fixed(&self) -> Option<EncodedPremulSRGBA8> { None }
 }
 
 /// Produces premultiplied linear-light colors without an encoded round trip.
@@ -58,6 +69,15 @@ pub trait LinearPaintSampler {
 impl<S: PaintSampler + ?Sized> PaintSampler for &S {
     fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 { (**self).sample(x, y) }
     fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { (**self).solid_color() }
+}
+
+#[cfg(feature = "fixed")] impl<S: FixedPaintSampler + ?Sized> FixedPaintSampler for &S {
+    fn sample_fixed(&self, x: u32, y: u32) -> EncodedPremulSRGBA8 {
+        (**self).sample_fixed(x, y)
+    }
+    fn solid_color_fixed(&self) -> Option<EncodedPremulSRGBA8> {
+        (**self).solid_color_fixed()
+    }
 }
 
 impl<S: LinearPaintSampler + ?Sized> LinearPaintSampler for &S {
@@ -148,6 +168,11 @@ impl PaintSampler for SolidPaint {
     fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { Some(self.encoded) }
 }
 
+#[cfg(feature = "fixed")] impl FixedPaintSampler for SolidPaint {
+    fn sample_fixed(&self, _x: u32, _y: u32) -> EncodedPremulSRGBA8 { self.encoded }
+    fn solid_color_fixed(&self) -> Option<EncodedPremulSRGBA8> { Some(self.encoded) }
+}
+
 impl LinearPaintSampler for SolidPaint {
     fn sample_linear(&self, _x: f32, _y: f32) -> LinearPremulRGBA<f32> { self.linear }
     fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> { Some(self.linear) }
@@ -172,7 +197,7 @@ impl GradientStop {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum GradientError {
     EmptyStops, NonFiniteOffset, OffsetOutOfRange, UnorderedStops,
-    RampTooSmall, NonFiniteGeometry, NegativeRadius, DegenerateGeometry,
+    RampTooSmall, RampTooLarge, NonFiniteGeometry, NegativeRadius, DegenerateGeometry,
 }
 
 /// Validated, caller-owned gradient stops.
@@ -233,6 +258,8 @@ impl<'a> GradientStops<'a> {
     }
 
     pub fn as_slice(&self) -> &'a [GradientStop] { self.stops }
+    /// Returns the caller-owned encoded ramp when this is a ramp-backed sampler.
+    pub fn encoded_ramp(&self) -> Option<&'a [EncodedPremulSRGBA8]> { self.encoded_ramp }
     /// Returns whether every stop has alpha exactly one.
     pub fn is_opaque(&self) -> bool { self.opaque }
 
@@ -279,6 +306,69 @@ impl SpreadMode {
                 if  period <= 1.0 { period } else { 2.0 - period }
             }
         }
+    }
+}
+
+/// Allocation-free, no-FPU linear gradient over a caller-provided encoded ramp.
+///
+/// Geometry is Q24.8. Projection and ramp selection use exact widened integer
+/// arithmetic; the selected ramp entry is nearest to the mapped parameter.
+#[cfg(feature = "fixed")]
+#[derive(Clone, Copy, Debug)] pub struct FixedLinearGradient<'a> {
+    from: [i32; 2], delta: [i64; 2], length_squared: i128,
+    ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode,
+}
+
+#[cfg(feature = "fixed")] impl<'a> FixedLinearGradient<'a> {
+    pub fn new(from: impl Into<Point<FixedScalar>>, to: impl Into<Point<FixedScalar>>,
+        ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode) ->
+        Result<Self, GradientError> {
+        if ramp.len() < 2 { return Err(GradientError::RampTooSmall); }
+        if ramp.len() > u32::MAX as usize { return Err(GradientError::RampTooLarge); }
+        let (from, to) = (from.into(), to.into());
+        let from = [from.x.to_bits(), from.y.to_bits()];
+        let delta = [
+            to.x.to_bits() as i64 - from[0] as i64,
+            to.y.to_bits() as i64 - from[1] as i64,
+        ];
+        let length_squared = delta[0] as i128 * delta[0] as i128 +
+                             delta[1] as i128 * delta[1] as i128;
+        if length_squared == 0 { return Err(GradientError::DegenerateGeometry); }
+        Ok(Self { from, delta, length_squared, ramp, spread })
+    }
+
+    pub fn ramp(&self) -> &'a [EncodedPremulSRGBA8] { self.ramp }
+    pub fn spread(&self) -> SpreadMode { self.spread }
+
+    fn ramp_index(&self, x: u32, y: u32) -> usize {
+        const HALF_PIXEL_RAW: i128 = 1 << 7;
+        const SUBPIXEL_SCALE: i128 = 1 << 8;
+        let point = [
+            x as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW - self.from[0] as i128,
+            y as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW - self.from[1] as i128,
+        ];
+        let parameter = point[0] * self.delta[0] as i128 +
+                        point[1] * self.delta[1] as i128;
+        let mapped = match self.spread {
+            SpreadMode::Pad => parameter.clamp(0, self.length_squared),
+            SpreadMode::Repeat => parameter.rem_euclid(self.length_squared),
+            SpreadMode::Reflect => {
+                let period = parameter.rem_euclid(self.length_squared * 2);
+                if period <= self.length_squared {
+                    period
+                } else {
+                    self.length_squared * 2 - period
+                }
+            }
+        };
+        let scale = (self.ramp.len() - 1) as i128;
+        ((mapped * scale + self.length_squared / 2) / self.length_squared) as _
+    }
+}
+
+#[cfg(feature = "fixed")] impl FixedPaintSampler for FixedLinearGradient<'_> {
+    fn sample_fixed(&self, x: u32, y: u32) -> EncodedPremulSRGBA8 {
+        self.ramp[self.ramp_index(x, y)]
     }
 }
 
@@ -632,6 +722,44 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         assert_eq!(repeat.sample(1.25, 0.0), repeat.sample(0.25, 0.0));
         assert_eq!(reflect.sample(1.25, 0.0), reflect.sample(0.75, 0.0));
         assert_eq!(reflect.sample(-0.25, 0.0), reflect.sample(0.25, 0.0));
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_linear_gradient_matches_the_encoded_reference_ramp() {
+        let stops = red_blue_stops();
+        let mut storage = [EncodedPremulSRGBA8::zeroed(); 257];
+        let stops = GradientStops::with_ramp(&stops, &mut storage).unwrap();
+        let ramp = stops.encoded_ramp().unwrap();
+        let (from, to) = ((FixedScalar::from_num(2), FixedScalar::from_num(0)),
+                          (FixedScalar::from_num(10), FixedScalar::from_num(0)));
+        for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {
+            let fixed = FixedLinearGradient::new(from, to, ramp, spread).unwrap();
+            let reference =
+                LinearGradient::new((2.0, 0.0), (10.0, 0.0), stops, spread).unwrap();
+            for x in 0..32 {
+                assert_eq!(fixed.sample_fixed(x, 3),
+                    reference.sample(x as f32 + 0.5, 3.5), "spread={spread:?}, x={x}");
+            }
+        }
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_linear_gradient_validates_geometry_and_widens_extremes() {
+        let ramp = [encoded(RGBA::<u8>::red()), encoded(RGBA::<u8>::blue())];
+        assert_eq!(FixedLinearGradient::new(
+            (FixedScalar::from_num(0), FixedScalar::from_num(0)),
+            (FixedScalar::from_num(1), FixedScalar::from_num(0)),
+            &ramp[..1], SpreadMode::Pad).unwrap_err(), GradientError::RampTooSmall);
+        assert_eq!(FixedLinearGradient::new(
+            (FixedScalar::from_num(1), FixedScalar::from_num(2)),
+            (FixedScalar::from_num(1), FixedScalar::from_num(2)),
+            &ramp, SpreadMode::Pad).unwrap_err(), GradientError::DegenerateGeometry);
+
+        let extreme = FixedLinearGradient::new(
+            (FixedScalar::from_bits(i32::MIN), FixedScalar::from_bits(i32::MIN)),
+            (FixedScalar::from_bits(i32::MAX), FixedScalar::from_bits(i32::MAX)),
+            &ramp, SpreadMode::Reflect).unwrap();
+        assert!(ramp.contains(&extreme.sample_fixed(u32::MAX, u32::MAX)));
     }
 
     #[test] fn radial_gradient_supports_concentric_and_focal_circles() {
