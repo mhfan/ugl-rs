@@ -221,6 +221,19 @@ and SIMD layouts do not enter the common `Edge` representation.
   coverage never does. This store-only path is the first SIMD kernel boundary,
   while the trait default remains false for third-party samplers that cannot
   prove opacity over their complete domain.
+- Internal linear-premultiplied `scale`, source-over, and interpolation rely on
+  their closed-domain contract: colors are finite normalized premultiplied
+  values and coverage/interpolation factors are in `[0, 1]`. Debug assertions
+  and randomized invariant tests guard that contract, so release kernels do
+  not repeat the public constructor's per-channel validation and clamping.
+- SIMD remains measurement-gated. On the 64-rectangle translucent-solid
+  diagnostic, scalar invariant-closed arithmetic measured about 112.6 µs.
+  Packing each pixel's four channels into NEON measured about 116.6 µs, while
+  a four-pixel interleaved load/store kernel measured about 124.5 µs. Both
+  experiments were rejected: the current array-of-structures target and short
+  spans do not amortize packing or deinterleaving. Revisit SIMD with long
+  batches or a structure-of-arrays tile working buffer, not as a per-pixel
+  substitution.
 
 ## Strokes
 

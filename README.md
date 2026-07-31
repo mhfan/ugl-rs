@@ -165,6 +165,17 @@ This store-only span is also the first SIMD-ready kernel boundary: future
 platform backends can batch sampling and stores without coupling paint
 evaluation to destination loads.
 
+Linear-premultiplied arithmetic now uses its closed-domain invariant instead of
+revalidating and clamping all four channels after every scale, interpolation,
+and source-over operation. In short diagnostics this reduced the translucent
+solid 64-rectangle render from about 156.7 µs to 112.6 µs (approximately 28%)
+and its translucent linear-gradient counterpart from about 409.2 µs to
+198.5 µs (approximately 51%). Two arm64 NEON experiments were slower than this
+scalar kernel (about 116.6 µs for channel-vector packing and 124.5 µs for four
+interleaved pixels), so neither was retained. SIMD is deferred until spans are
+long enough to amortize layout conversion or a tile-local structure-of-arrays
+working buffer exists.
+
 These are scalar reference costs, not optimized paint targets. In particular,
 the general radial sampler performs stable two-circle root solving per pixel;
 future specialized concentric/span-stepping paths must retain byte-equivalent

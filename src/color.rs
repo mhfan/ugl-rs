@@ -413,22 +413,28 @@ impl LinearPremulRGBA<f32> {
 
     pub(crate) fn scale(self, factor: f32) -> Self {
         let [r, g, b, a] = self.to_array();
-        Self(PremulRGBA::new_clamped(
-            r * factor, g * factor, b * factor, a * factor))
+        Self::from_valid(r * factor, g * factor, b * factor, a * factor)
     }
 
     pub(crate) fn src_over(self, dest: Self) -> Self {
         let ([sr, sg, sb, sa], [dr, dg, db, da]) = (self.to_array(), dest.to_array());
         let inverse = 1.0 - sa;
-        Self(PremulRGBA::new_clamped(
+        Self::from_valid(
             sr + dr * inverse, sg + dg * inverse, sb + db * inverse,
-            sa + da * inverse))
+            sa + da * inverse)
     }
 
     pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
         let (from, to) = (self.to_array(), other.to_array());
         let channel = |index| from[index] + (to[index] - from[index]) * t;
-        Self(PremulRGBA::new_clamped(channel(0), channel(1), channel(2), channel(3)))
+        Self::from_valid(channel(0), channel(1), channel(2), channel(3))
+    }
+
+    fn from_valid(r: f32, g: f32, b: f32, a: f32) -> Self {
+        debug_assert!([r, g, b, a].into_iter().all(|channel|
+            channel.is_finite() && (0.0..=1.0).contains(&channel)));
+        debug_assert!(r <= a && g <= a && b <= a);
+        Self(PremulRGBA(RGBA::new(r, g, b, a)))
     }
 }
 
@@ -577,6 +583,30 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
 
         let half_linear = LinearRGBA::new(0.5, 0.5, 0.5, 1.0).to_srgba8();
         assert_eq!(half_linear.to_array(), [188, 188, 188, 255]);
+    }
+
+    #[test] fn linear_premultiplied_arithmetic_preserves_its_invariant() {
+        let mut state = 0x243F_6A88_u32;
+        let mut next = || {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (state >> 8) as f32 / 0x00FF_FFFF_u32 as f32
+        };
+        let valid = |color: LinearPremulRGBA<f32>| {
+            let [r, g, b, a] = color.to_array();
+            [r, g, b, a].into_iter().all(|channel|
+                channel.is_finite() && (0.0..=1.0).contains(&channel))
+                && r <= a && g <= a && b <= a
+        };
+
+        for _ in 0..4096 {
+            let (a, b) = (next(), next());
+            let lhs = LinearPremulRGBA::new(next() * a, next() * a, next() * a, a).unwrap();
+            let rhs = LinearPremulRGBA::new(next() * b, next() * b, next() * b, b).unwrap();
+            let (factor, t) = (next(), next());
+            assert!(valid(lhs.scale(factor)));
+            assert!(valid(lhs.src_over(rhs)));
+            assert!(valid(lhs.lerp(rhs, t)));
+        }
     }
 
     #[test] fn srgb8_encoder_lut_tracks_the_exact_transfer_boundary() {
