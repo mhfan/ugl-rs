@@ -2,8 +2,9 @@
 use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ugl_rs::{analytic::{BinWorkspace as AnalyticBinWorkspace,
+        Cell as AnalyticCell, CellWorkspace as AnalyticCellWorkspace,
         Intersection as AnalyticIntersection, Workspace as AnalyticWorkspace,
-        bin_requirements, build_row_bins, rasterize_edges_binned},
+        bin_requirements, build_row_bins, rasterize_edges_binned, rasterize_edges_cells},
     color::{PremulSRGBA8, LinearPremulRGBA, Srgb8Encoder,
         SRGB8_ENCODE_LUT_SIZE, SRGBA, SRGBA as RGBA},
     dash::{dash_polyline, DashContour, DashPattern, DashWorkspace},
@@ -443,11 +444,24 @@ fn benchmark_active(c: &mut Criterion) {
         }).unwrap();
         let (mut active, mut row) =
             (vec![AnalyticIntersection::default(); edges.len()], vec![0.0; WIDTH as usize]);
-        group.bench_function(name, |b| b.iter(|| {
+        group.bench_function(&name, |b| b.iter(|| {
             let mut sink = RunCounter::default();
             rasterize_edges_binned(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
                 &mut AnalyticWorkspace {
                     intersections: &mut active, row_coverage: &mut row,
+                }, &mut sink,
+            ).unwrap();
+            black_box((sink.runs, sink.pixels));
+        }));
+        let (mut cell_active, mut cells) = (
+            vec![AnalyticIntersection::default(); edges.len()],
+            vec![AnalyticCell::default(); WIDTH as usize],
+        );
+        group.bench_function(format!("{name}_cells"), |b| b.iter(|| {
+            let mut sink = RunCounter::default();
+            rasterize_edges_cells(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+                &mut AnalyticCellWorkspace {
+                    intersections: &mut cell_active, cells: &mut cells,
                 }, &mut sink,
             ).unwrap();
             black_box((sink.runs, sink.pixels));
@@ -637,6 +651,18 @@ fn benchmark_stroke(c: &mut Criterion) {
         rasterize_edges_binned(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
             &mut AnalyticWorkspace {
                 intersections: &mut active, row_coverage: &mut row,
+            }, &mut sink).unwrap();
+        black_box((sink.runs, sink.pixels));
+    }));
+    let (mut cell_active, mut cells) = (
+        vec![AnalyticIntersection::default(); edge_count],
+        vec![AnalyticCell::default(); WIDTH as usize],
+    );
+    stages.bench_function(BenchmarkId::new("coverage_cells", &scratch), |b| b.iter(|| {
+        let mut sink = RunCounter::default();
+        rasterize_edges_cells(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+            &mut AnalyticCellWorkspace {
+                intersections: &mut cell_active, cells: &mut cells,
             }, &mut sink).unwrap();
         black_box((sink.runs, sink.pixels));
     }));

@@ -398,6 +398,17 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   combined versus roughly 320 µs for coverage and 367 µs end to end. Prepared
   stroke remains useful for retained content, but active-edge/slab integration
   is the first optimization target for the measured desktop gap.
+- An independent analytic-cell prototype now stops slabs only at edge starts,
+  ends, and real crossings; clips each boundary trapezoid analytically; records
+  guaranteed-full intervals with two range deltas; and combines the prefix scan
+  with run emission. Random, coincident-crossing, NonZero, and EvenOdd tests
+  agree with the primary analytic path to its 8-bit quantization tolerance.
+  This establishes the intended sparse accumulation semantics, but the generic
+  polygon clip is not production-fast: on the current Apple Silicon baseline,
+  stable 16-edge rows measured about 148 us versus 104 us and stable 64-edge
+  rows about 498 us versus 232 us. Keep this path experimental. Its next gate
+  is a closed-form boundary-cell integral that beats the existing integer-event
+  slabs before any Canvas integration or replacement of the primary backend.
 
 ## Implementation rules
 
@@ -492,6 +503,8 @@ Status: prototype implemented; production validation remains.
 - Proven intermediate widths and explicit rounding/overflow policy.
 - Differential tests against the `f32` reference.
 - Representative targets that build without hardware floating point.
+- A future backend feature split must permit a pure fixed build that compiles
+  no f32 renderer, floating sampler, or `libm` dependency.
 
 ### M5 — Fixed-memory rendering
 
@@ -534,6 +547,31 @@ Both analytic f32 and Q24.8 fixed paths can convert arbitrary path coverage
 directly into caller-owned `CoverageMaskMut` storage. The fixed path-mask route
 uses the existing bounded geometry and raster workspaces, so mask production
 and consumption remain allocation-free and no-FPU.
+
+### Planned backend feature split
+
+The current f32 backend is unconditional, so even a fixed-only application
+builds its floating modules and keeps `libm` in the dependency graph. Once the
+public facade and shared geometry boundaries have stabilized, introduce an
+explicit backend split with these requirements:
+
+- an f32 feature gates the analytic rasterizer, floating stroke/dash/paint
+  implementations, their public entry points, tests, examples, and benchmarks;
+- `fixed` alone provides a complete renderer and compiles without floating
+  rendering code or `libm`;
+- `libm` becomes optional with the no_std f32 math backend that requires it,
+  while hosted f32 builds continue to use `std` platform math;
+- shared geometry, color, target, coverage, and facade code must not regain
+  duplicated f32/fixed implementations merely to satisfy feature boundaries;
+- CI checks hosted f32, no_std f32, hosted fixed, pure no_std fixed, and the
+  combined configuration, including representative no-FPU targets;
+- binary-size and compile-time measurements must demonstrate that pure fixed
+  builds actually omit the floating backend and `libm`.
+
+Cargo cannot activate an optional dependency from the absence of `std`, so the
+no_std f32 math backend will need an explicit positive feature or an equivalent
+additive feature design. Do not make `libm` optional before that complete split:
+`--no-default-features` must remain a valid, unsurprising build in the meantime.
 
 ### Planned clip/mask bounds optimization
 
