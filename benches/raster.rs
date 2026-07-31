@@ -105,12 +105,13 @@ fn benchmark_f32(c: &mut Criterion) {
                 }).unwrap();
             black_box(&linear_pixels);
         }));
-    let gradient_stops = [GradientStop::new(0.0, RGBA::new(240, 20, 80, 32)),
-                          GradientStop::new(1.0, RGBA::new(30, 60, 250, 224))];
+    let gradient_stop_values = [GradientStop::new(0.0, RGBA::new(240, 20, 80, 32)),
+                                GradientStop::new(1.0, RGBA::new(30, 60, 250, 224))];
     let mut gradient_ramp = vec![LinearPremulRGBA::default(); 1024];
+    let gradient_stops =
+        GradientStops::with_linear_ramp(&gradient_stop_values, &mut gradient_ramp).unwrap();
     let gradient = LinearGradient::new((0.0, 0.0), (WIDTH as _, HEIGHT as _),
-        GradientStops::with_linear_ramp(&gradient_stops, &mut gradient_ramp).unwrap(),
-        SpreadMode::Pad).unwrap();
+        gradient_stops, SpreadMode::Pad).unwrap();
     group.bench_function(BenchmarkId::new("analytic_linear_gradient_point", "64_rectangles"),
         |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());
@@ -125,6 +126,34 @@ fn benchmark_f32(c: &mut Criterion) {
                 }).unwrap();
             black_box(&linear_pixels);
         }));
+    let radial = RadialGradient::new((WIDTH as f32 * 0.5, HEIGHT as f32 * 0.5),
+        WIDTH as f32 * 0.7, gradient_stops, SpreadMode::Pad).unwrap();
+    group.bench_function(BenchmarkId::new(
+        "analytic_linear_radial_concentric_point", "64_rectangles"), |b| b.iter(|| {
+        linear_pixels.fill(LinearPremulRGBA::default());
+        let mut target =
+            LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+        render_paint_linear_analytic(&path, Affine::identity(), &PointLinearSampler(&radial),
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut analytic_intersections,
+                row_coverage: &mut row_coverage,
+                row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+            }).unwrap();
+        black_box(&linear_pixels);
+    }));
+    group.bench_function(BenchmarkId::new(
+        "analytic_linear_radial_concentric", "64_rectangles"), |b| b.iter(|| {
+        linear_pixels.fill(LinearPremulRGBA::default());
+        let mut target =
+            LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+        render_paint_linear_analytic(&path, Affine::identity(), &radial,
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut analytic_intersections,
+                row_coverage: &mut row_coverage,
+                row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+            }).unwrap();
+        black_box(&linear_pixels);
+    }));
     group.bench_function(BenchmarkId::new("analytic_linear_gradient", "64_rectangles"),
         |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());
@@ -485,6 +514,8 @@ fn benchmark_paint(c: &mut Criterion) {
         linear_stops, SpreadMode::Pad).unwrap();
     let radial = RadialGradient::two_circle((96.0, 112.0), 8.0,
         (128.0, 128.0), 180.0, linear_stops, SpreadMode::Pad).unwrap();
+    let concentric = RadialGradient::new(
+        (128.0, 128.0), 180.0, linear_stops, SpreadMode::Pad).unwrap();
     let conic = ConicGradient::new((128.0, 128.0), 0.37, linear_stops).unwrap();
     let mut group = c.benchmark_group("paint_sample_linear");
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
@@ -494,6 +525,10 @@ fn benchmark_paint(c: &mut Criterion) {
     group.bench_function("linear_span",
         |b| b.iter(|| black_box(sample_linear_span_checksum(&linear))));
     group.bench_function("radial", |b| b.iter(|| black_box(sample_linear_checksum(&radial))));
+    group.bench_function("radial_concentric_point", |b| b.iter(||
+        black_box(sample_linear_checksum(&PointLinearSampler(&concentric)))));
+    group.bench_function("radial_concentric_span", |b| b.iter(||
+        black_box(sample_linear_span_checksum(&concentric))));
     group.bench_function("conic",  |b| b.iter(|| black_box(sample_linear_checksum(&conic))));
     group.finish();
 

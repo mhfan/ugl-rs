@@ -206,8 +206,11 @@ and SIMD layouts do not enter the common `Edge` representation.
 - `LinearPaintSampler::sample_linear_span` is the zero-allocation stepping
   boundary. Its default preserves point sampling; linear gradients specialize
   affine parameter stepping, and transformed paints map the span origin and
-  direction once. Radial/conic specializations require separate recurrences
-  and must remain equivalent to the general point sampler.
+  direction once. Concentric radial gradients use a second-difference recurrence
+  for squared distance, then one square root per sample; non-concentric radial
+  and conic gradients retain the general point fallback. Specializations must
+  remain equivalent to the general sampler within a documented linear-light
+  tolerance.
 
 ## Strokes
 

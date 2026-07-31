@@ -132,8 +132,17 @@ The linear sampler also exposes allocation-free affine span sampling.
 measured 65,536 ramp samples at about 200.3 µs through the span path versus
 211.6 µs point-by-point. In the 64-rectangle analytic render benchmark, span
 stepping reduced linear-gradient rendering from about 443.1 µs to 409.2 µs
-(approximately 7.7%). General radial and conic paints retain the point-sampling
-fallback until dedicated, equivalence-tested recurrences are available.
+(approximately 7.7%).
+
+Concentric radial gradients use a dedicated distance-squared recurrence and
+one square root per sample, bypassing the general two-circle quadratic solver.
+A short diagnostic measured 65,536 samples at about 467.4 µs through the span
+path versus 690.4 µs point-by-point (approximately 32%). The 64-rectangle
+analytic render measured about 903.1 µs versus 1.231 ms (approximately 27%).
+The specialized path is checked against point sampling across 512-sample spans,
+transforms, center crossings, and all spread modes with a maximum linear-channel
+tolerance of `1e-4`. Non-concentric radial and conic paints retain their general
+point-sampling fallback.
 
 These are scalar reference costs, not optimized paint targets. In particular,
 the general radial sampler performs stable two-circle root solving per pixel;

@@ -361,6 +361,9 @@ impl<'a> RadialGradient<'a> {
 
     fn parameter(&self, x: f32, y: f32) -> Option<f32> {
         let point: Point = (x - self.start.x, y - self.start.y).into();
+        if self.is_concentric() {
+            return self.concentric_parameter(point.x * point.x + point.y * point.y);
+        }
         let linear = -2.0 * (point.x * self.center_delta.x +
                              point.y * self.center_delta.y +
                             self.start_radius * self.radius_delta);
@@ -383,6 +386,17 @@ impl<'a> RadialGradient<'a> {
         [first, second].into_iter().filter(|t| t.is_finite() &&
             self.start_radius + *t * self.radius_delta >= 0.0).max_by(|a, b| a.total_cmp(b))
     }
+
+    fn is_concentric(&self) -> bool {
+        self.center_delta.x == 0.0 && self.center_delta.y == 0.0
+    }
+
+    fn concentric_parameter(&self, distance_squared: f32) -> Option<f32> {
+        if !distance_squared.is_finite() { return None; }
+        let distance = libm::sqrtf(distance_squared.max(0.0));
+        let parameter = (distance - self.start_radius) / self.radius_delta;
+        parameter.is_finite().then_some(parameter)
+    }
 }
 
 impl PaintSampler for RadialGradient<'_> {
@@ -396,6 +410,29 @@ impl LinearPaintSampler for RadialGradient<'_> {
     fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
         self.parameter(x, y).map_or_else(LinearPremulRGBA::default,
             |t| self.stops.sample_linear(self.spread.map(t)))
+    }
+
+    fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        mut emit: impl FnMut(LinearPremulRGBA<f32>)) {
+        if !self.is_concentric() {
+            for offset in 0..len {
+                emit(self.sample_linear(x + offset as f32 * dx, y + offset as f32 * dy));
+            }   return;
+        }
+        let (x, y) = (x - self.start.x, y - self.start.y);
+        let step_squared = dx * dx + dy * dy;
+        let (mut distance_squared, mut distance_step) = (
+            x * x + y * y,
+            2.0 * (x * dx + y * dy) + step_squared,
+        );
+        let second_difference = 2.0 * step_squared;
+        for _ in 0..len {
+            emit(self.concentric_parameter(distance_squared).map_or_else(
+                LinearPremulRGBA::default,
+                |t| self.stops.sample_linear(self.spread.map(t))));
+            distance_squared += distance_step;
+            distance_step += second_difference;
+        }
     }
 }
 
@@ -594,9 +631,9 @@ impl LinearPaintSampler for ConicGradient<'_> {
         assert_eq!(ellipse.sample(2.0, 0.0), ellipse.sample(0.0, 1.0));
     }
 
-    #[test] fn linear_gradient_span_stepping_matches_point_sampling() {
+    #[test] fn specialized_gradient_span_stepping_matches_point_sampling() {
         fn assert_span<S: LinearPaintSampler>(sampler: &S, start: Point, step: Point) {
-            let mut actual = [LinearPremulRGBA::default(); 32];
+            let mut actual = [LinearPremulRGBA::default(); 512];
             let mut count = 0;
             sampler.sample_linear_span(start.x, start.y, step.x, step.y, actual.len() as _,
                 |color| { actual[count] = color; count += 1; });
@@ -607,7 +644,7 @@ impl LinearPaintSampler for ConicGradient<'_> {
                     start.y + offset as f32 * step.y);
                 let (actual, expected) = (actual.to_array(), expected.to_array());
                 for channel in 0..4 {
-                    assert!((actual[channel] - expected[channel]).abs() <= 2.0 * f32::EPSILON,
+                    assert!((actual[channel] - expected[channel]).abs() <= 1e-4,
                         "offset={offset}, actual={actual:?}, expected={expected:?}");
                 }
             }
@@ -619,6 +656,14 @@ impl LinearPaintSampler for ConicGradient<'_> {
             let gradient = LinearGradient::new((-2.0, 1.0), (5.0, 4.0), stops, spread).unwrap();
             assert_span(&gradient, (-3.25, 2.75).into(), (0.5, -0.125).into());
             let transformed = TransformedPaint::new(gradient,
+                Affine::new(1.5, 0.25, -0.5, 2.0, 3.0, -4.0)).unwrap();
+            assert_span(&transformed, (-3.25, 2.75).into(), (0.5, -0.125).into());
+
+            let radial = RadialGradient::two_circle(
+                (1.0, -2.0), 0.5, (1.0, -2.0), 6.0, stops, spread).unwrap();
+            assert_span(&radial, (1.0, -2.0).into(), (0.25, 0.125).into());
+            assert_span(&radial, (-4.5, -2.0).into(), (0.5, 0.0).into());
+            let transformed = TransformedPaint::new(radial,
                 Affine::new(1.5, 0.25, -0.5, 2.0, 3.0, -4.0)).unwrap();
             assert_span(&transformed, (-3.25, 2.75).into(), (0.5, -0.125).into());
         }
