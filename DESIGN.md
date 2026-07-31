@@ -239,6 +239,12 @@ and SIMD layouts do not enter the common `Edge` representation.
   interiors; full-coverage runs contain about 83% of covered pixels. Future
   batching should leave boundary runs scalar and measure layout conversion
   only on full interior runs.
+- Pixel share alone is not sufficient evidence for another branch. A dedicated
+  translucent full-coverage source-over closure, intended to omit
+  `scale(1.0)`, regressed the solid diagnostic by about 6% and the gradient
+  diagnostic by about 49%; LLVM already eliminates the trivial scale in the
+  compact general expression, while duplicating closures harms code shape.
+  The specialization was rejected.
 
 ## Strokes
 
