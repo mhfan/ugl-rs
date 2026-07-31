@@ -505,7 +505,7 @@ Status: planned.
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
 | Stroke | Allocation-free f32/fixed dashes, caps, joins, and path stroke pipelines | Fuzzing and production reliability validation |
 | Fixed raster | Checked Q24.8 transformed path fill/stroke/dashing, rational crossings, sparse strips/tiles, clipping, and native fixed paint | Real-device and range validation |
-| Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
+| Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks; initial matched Blend2D solid-fill harness | More matched Blend2D scenes, incremental code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
 
 Both analytic f32 and Q24.8 fixed paths can convert arbitrary path coverage
