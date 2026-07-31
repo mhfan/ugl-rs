@@ -7,9 +7,10 @@
 
 use core::convert::Infallible;
 use crate::{
-    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
+    canvas::{AnalyticDashedStrokeOptions, AnalyticDashedStrokeWorkspace,
+        AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, RenderError, render_path_analytic_to,
-        render_stroke_analytic_to},
+        render_stroke_analytic_dashed_to, render_stroke_analytic_to},
     color::{LinearPremulRGBA, Srgb8Encoder, SRGBA}, geometry::{Affine, Path, Rect},
     raster::{CoverageMask, CoverageSink, MaskClipSink, RectClipSink},
     sampler::{LinearPaintSampler, SolidPaint},
@@ -292,6 +293,24 @@ pub fn render_stroke_paint_analytic<S: LinearPaintSampler>(path: &Path, transfor
     let (width, height) = (target.width, target.height);
     let mut compositor = LinearPaintCompositor { target, sampler };
     render_stroke_analytic_to(path, transform, options, width, height,
+        &mut compositor, workspace)
+}
+
+pub fn render_stroke_solid_analytic_dashed(path: &Path, transform: Affine,
+    color: SRGBA<u8>, options: AnalyticDashedStrokeOptions<'_>,
+    target: &mut LinearPixmapMut<'_>, workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
+    Result<(), RenderError> {
+    render_stroke_paint_analytic_dashed(path, transform, &SolidPaint::from_srgba(color),
+        options, target, workspace)
+}
+
+pub fn render_stroke_paint_analytic_dashed<S: LinearPaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, options: AnalyticDashedStrokeOptions<'_>,
+    target: &mut LinearPixmapMut<'_>, workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
+    Result<(), RenderError> {
+    let (width, height) = (target.width, target.height);
+    let mut compositor = LinearPaintCompositor { target, sampler };
+    render_stroke_analytic_dashed_to(path, transform, options, width, height,
         &mut compositor, workspace)
 }
 

@@ -1,7 +1,9 @@
 //! Borrowed pixel targets and the first complete reference rendering path.
 
 use core::convert::Infallible;
-use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
+use crate::{color::{PremulRGBA, RGBA},
+    dash::{dash_polyline, DashContour, DashError, DashPattern, DashWorkspace},
+    edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticBinError, AnalyticBinWorkspace, AnalyticIntersection,
         AnalyticWorkspace, build_analytic_row_bins, rasterize_edges_analytic_binned},
     flatten::{FlattenError, FlattenOptions}, sampler::{PaintSampler, SolidPaint},
@@ -172,6 +174,13 @@ pub struct AnalyticStrokeWorkspace<'a> {
     pub edge_indices: &'a mut [u32],
 }
 
+/// Caller-owned storage for flattened, dashed analytic strokes.
+pub struct AnalyticDashedStrokeWorkspace<'a> {
+    pub stroke: AnalyticStrokeWorkspace<'a>,
+    pub dash_points: &'a mut [Point],
+    pub dash_contours: &'a mut [DashContour],
+}
+
 #[cfg(feature = "fixed")]
 pub struct FixedGeometryWorkspace<'a> {
     pub edges: &'a mut [Edge<FixedScalar>],
@@ -224,12 +233,20 @@ pub struct AnalyticStrokeOptions {
     pub stroke: StrokeOptions,
 }
 
+#[derive(Clone, Copy, Debug)] pub struct AnalyticDashedStrokeOptions<'a> {
+    pub flatten: FlattenOptions,
+    pub stroke: StrokeOptions,
+    pub dash: DashPattern<'a>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RenderError {
     InvalidTolerance, InvalidDepth, NonFiniteCoordinate, FlattenDepthLimit,
     DimensionsOverflow, InvalidEdge, InvalidEdgeBins, InvalidSampleCount, InvalidPath(PathError),
     StrokeIndexOverflow, EdgeCapacity { needed_at_least: usize },
     StrokePointCapacity { needed_at_least: usize },
     StrokeContourCapacity { needed_at_least: usize },
+    DashPointCapacity { needed_at_least: usize },
+    DashContourCapacity { needed_at_least: usize },
     StrokeArcSegmentLimit { needed: usize, maximum: u16 },
     AnalyticBinOffsetCapacity { required: usize },
     AnalyticBinIndexCapacity { required: usize },
@@ -307,6 +324,46 @@ pub fn render_stroke_paint_analytic<S: PaintSampler>(path: &Path, transform: Aff
     let mut compositor = PaintCompositor { target, sampler };
     render_stroke_analytic_to(path, transform, options, width, height,
         &mut compositor, workspace)
+}
+
+/// Renders a dashed analytic stroke without allocating intermediate geometry.
+pub fn render_stroke_solid_analytic_dashed(path: &Path, transform: Affine,
+    color: RGBA<u8>, options: AnalyticDashedStrokeOptions<'_>,
+    target: &mut PixmapMut<'_>, workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
+    Result<(), RenderError> {
+    render_stroke_paint_analytic_dashed(path, transform, &SolidPaint::new(color),
+        options, target, workspace)
+}
+
+pub fn render_stroke_paint_analytic_dashed<S: PaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, options: AnalyticDashedStrokeOptions<'_>,
+    target: &mut PixmapMut<'_>, workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
+    Result<(), RenderError> {
+    let (width, height) = (target.width, target.height);
+    let mut compositor = PaintCompositor { target, sampler };
+    render_stroke_analytic_dashed_to(path, transform, options, width, height,
+        &mut compositor, workspace)
+}
+
+pub fn render_stroke_paint_analytic_dashed_clipped<S: PaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, clip: Rect, options: AnalyticDashedStrokeOptions<'_>,
+    target: &mut PixmapMut<'_>, workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
+    Result<(), RenderError> {
+    let (width, height) = (target.width, target.height);
+    let mut compositor = PaintCompositor { target, sampler };
+    render_stroke_analytic_dashed_to(path, transform, options, width, height,
+        &mut RectClipSink::new(clip, &mut compositor), workspace)
+}
+
+pub fn render_stroke_paint_analytic_dashed_masked<S: PaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, mask: CoverageMask<'_>,
+    options: AnalyticDashedStrokeOptions<'_>, target: &mut PixmapMut<'_>,
+    workspace: &mut AnalyticDashedStrokeWorkspace<'_>) -> Result<(), RenderError> {
+    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
+    let (width, height) = (target.width, target.height);
+    let mut compositor = PaintCompositor { target, sampler };
+    render_stroke_analytic_dashed_to(path, transform, options, width, height,
+        &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
 /// Renders a solid analytic stroke through an antialiased rectangle clip.
@@ -777,6 +834,25 @@ pub(crate) fn build_stroke_edges(path: &Path, transform: Affine,
     }   Ok(sink.len)
 }
 
+fn build_dashed_stroke_edges(path: &Path, transform: Affine,
+    options: AnalyticDashedStrokeOptions<'_>,
+    path_workspace: &mut StrokePathWorkspace<'_>,
+    dash_workspace: &mut DashWorkspace<'_>, edges: &mut [Edge]) ->
+    Result<usize, RenderError> {
+    let flattened = flatten_stroke_path(path, transform, options.flatten,
+        path_workspace).map_err(map_stroke_flatten_error)?;
+    let mut sink = EdgeSliceSink { edges, len: 0 };
+    for (points, closed) in flattened.contours() {
+        let dashed = dash_polyline(points, closed, options.dash, dash_workspace)
+            .map_err(map_dash_error)?;
+        for (points, closed) in dashed.contours() {
+            stroke_polyline(points, closed, options.stroke, &mut sink)
+                .map_err(map_stroke_expand_error)?;
+        }
+    }
+    Ok(sink.len)
+}
+
 pub(crate) fn rasterize_analytic<S>(edges: &[Edge], width: u32, height: u32,
     fill_rule: FillRule,
     mut workspace: AnalyticWorkspace<'_>, bin_workspace: AnalyticBinWorkspace<'_>,
@@ -809,6 +885,26 @@ pub(crate) fn render_stroke_analytic_to<S>(path: &Path, transform: Affine,
         points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
     } = workspace;
     let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
+    rasterize_analytic(&edges[..edge_count], width, height, FillRule::NonZero,
+        AnalyticWorkspace { intersections, row_coverage },
+        AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
+}
+
+pub(crate) fn render_stroke_analytic_dashed_to<S>(path: &Path, transform: Affine,
+    options: AnalyticDashedStrokeOptions<'_>, width: u32, height: u32, sink: &mut S,
+    workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
+    Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
+    let AnalyticDashedStrokeWorkspace {
+        stroke: AnalyticStrokeWorkspace {
+            points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
+        }, dash_points, dash_contours,
+    } = workspace;
+    let mut path_workspace = StrokePathWorkspace { points, contours };
+    let mut dash_workspace = DashWorkspace {
+        points: dash_points, contours: dash_contours,
+    };
+    let edge_count = build_dashed_stroke_edges(path, transform, options,
+        &mut path_workspace, &mut dash_workspace, edges)?;
     rasterize_analytic(&edges[..edge_count], width, height, FillRule::NonZero,
         AnalyticWorkspace { intersections, row_coverage },
         AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
@@ -940,6 +1036,17 @@ fn map_stroke_expand_error(error: StrokeExpandError<EdgeCapacity>) -> RenderErro
             RenderError::StrokeArcSegmentLimit { needed, maximum },
         StrokeExpandError::Sink(error) =>
             RenderError::EdgeCapacity { needed_at_least: error.needed_at_least },
+    }
+}
+
+fn map_dash_error(error: DashError) -> RenderError {
+    match error {
+        DashError::NonFinitePoint => RenderError::NonFiniteCoordinate,
+        DashError::PointCapacity { needed_at_least } =>
+            RenderError::DashPointCapacity { needed_at_least },
+        DashError::ContourCapacity { needed_at_least } =>
+            RenderError::DashContourCapacity { needed_at_least },
+        DashError::IndexOverflow => RenderError::StrokeIndexOverflow,
     }
 }
 

@@ -140,6 +140,34 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(pixels, [128, 128, 128, 128, 255, 255, 255, 255, 128, 128, 128, 128]);
 }
 
+#[test] fn analytic_dashed_stroke_renders_alternating_on_intervals() {
+    use crate::dash::{DashContour, DashPattern};
+
+    let mut builder = PathBuilder::new();
+    builder.move_to((0.5, 0.5)).line_to((4.5, 0.5));
+    let mut pixels = [0; 20];
+    let (mut points, mut dash_points) = ([Point::default(); 2], [Point::default(); 8]);
+    let (mut contours, mut dash_contours) =
+        ([StrokeContour::default(); 1], [DashContour::default(); 4]);
+    let (mut edges, mut intersections, mut row_coverage) =
+        ([Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; 5]);
+    render_stroke_paint_analytic_dashed(&builder.build(), Affine::identity(),
+        &SolidPaint::new(RGBA::white()), AnalyticDashedStrokeOptions {
+            flatten: FlattenOptions::default(), stroke: StrokeOptions::default(),
+            dash: DashPattern::new(&[1.0, 1.0], 0.0).unwrap(),
+        }, &mut PixmapMut::new(&mut pixels, 5, 1, 20).unwrap(),
+        &mut AnalyticDashedStrokeWorkspace {
+            stroke: AnalyticStrokeWorkspace {
+                points: &mut points, contours: &mut contours, edges: &mut edges,
+                intersections: &mut intersections, row_coverage: &mut row_coverage,
+                row_offsets: &mut [0; 2], edge_indices: &mut [0; 8],
+            },
+            dash_points: &mut dash_points, dash_contours: &mut dash_contours,
+        }).unwrap();
+    let alpha: alloc::vec::Vec<_> = pixels.chunks_exact(4).map(|pixel| pixel[3]).collect();
+    assert_eq!(alpha, [128, 128, 128, 128, 0]);
+}
+
 #[test] fn analytic_stroke_capacity_errors_leave_the_target_unchanged() {
     let mut builder = PathBuilder::new();
     builder.move_to((0.5, 0.5)).line_to((2.5, 0.5));

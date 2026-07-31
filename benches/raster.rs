@@ -5,6 +5,7 @@ use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWork
         analytic_bin_requirements, build_analytic_row_bins, rasterize_edges_analytic_binned},
     color::{EncodedPremulSRGBA8, LinearPremulRGBA, Srgb8Encoder,
         SRGB8_ENCODE_LUT_SIZE, SRGBA, RGBA},
+    dash::{dash_polyline, DashContour, DashPattern, DashWorkspace},
     edge::{Edge, build_fill_edges}, flatten::FlattenOptions,
     raster::{CoverageSink, FillRule, Intersection},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
@@ -13,7 +14,7 @@ use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWork
     }, canvas_linear::{LinearPixmapMut,
         render_paint_analytic as render_paint_linear_analytic,
         render_solid_analytic as render_solid_linear_analytic},
-    geometry::{Affine, Path, PathBuilder},
+    geometry::{Affine, Path, PathBuilder, Point},
     sampler::{ConicAngleMode, ConicGradient, GradientStop, GradientStops, LinearGradient,
         LinearPaintSampler, PaintSampler, RadialGradient, SolidPaint, SpreadMode},
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions, StrokePathWorkspace,
@@ -574,6 +575,29 @@ fn benchmark_stroke(c: &mut Criterion) {
         }));
     }
     expand_group.finish();
+
+    let dash_points: Vec<_> = (0..64).map(|index|
+        (index as f32 * 3.0 + 8.0,
+         if index & 1 == 0 { 96.0 } else { 112.0 }).into()).collect();
+    let pattern = DashPattern::new(&[6.0, 3.0, 1.5, 3.0], 2.0).unwrap();
+    let (mut output, mut contours) =
+        (vec![Point::default(); 512], vec![DashContour::default(); 256]);
+    let mut dash_group = c.benchmark_group("stroke_dash");
+    dash_group.throughput(Throughput::Elements(dash_points.len() as _));
+    dash_group.bench_function("polyline_64", |b| b.iter(|| {
+        let mut workspace = DashWorkspace {
+            points: &mut output, contours: &mut contours,
+        };
+        let dashed = dash_polyline(&dash_points, false, pattern, &mut workspace).unwrap();
+        let mut emitted = 0;
+        for (points, closed) in dashed.contours() {
+            stroke_polyline(points, closed, base, &mut |_| {
+                emitted += 1; Ok::<_, core::convert::Infallible>(())
+            }).unwrap();
+        }
+        black_box(emitted);
+    }));
+    dash_group.finish();
 }
 
 fn sample_checksum(sampler: &impl PaintSampler) -> u64 {

@@ -53,9 +53,16 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | --- | --- |
 | `f32` fill and clipping | Reference path implemented and allocation-free |
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
-| Stroke | Undashed caps/joins and fixed path stroke pipeline implemented; reliability work continues |
+| Stroke | f32 dash decomposition, caps/joins, and fixed path stroke pipeline implemented |
 | Fixed point | Q24.8 transformed path fill/stroke, sparse strips/tiles, clipping, native fixed gradients, and all fixed caps/joins implemented |
 | Production readiness | Pre-release: broader fuzzing, golden scenes, fixed dashes, and real-device validation remain |
+
+The f32 dash reference accepts finite, strictly positive alternating on/off
+lengths and a finite phase. Odd-length arrays repeat twice before the parity
+cycle restarts. Each path contour restarts the normalized phase, and a dash
+crossing a closed-contour seam is merged so that the seam receives a join
+rather than two caps. Decomposition and stroke expansion use caller-owned
+point, contour, and edge storage.
 
 ## Architecture at a glance
 

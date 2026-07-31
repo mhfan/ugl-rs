@@ -431,15 +431,16 @@ Status: complete (2026-07-30).
 
 ### M3 — Stroke
 
-Status: undashed scalar reference implemented; reliability validation ongoing
-(2026-07-30).
+Status: scalar dash/cap/join reference implemented; reliability validation
+ongoing (2026-07-31).
 
 - Width, cap, join, and miter behavior.
 - Degenerate subpaths and self-intersections.
 - Allocation-free `Path -> flatten -> stroke expansion -> analytic coverage ->
   paint/composite` using caller-owned point, contour, edge, intersection, and
   row storage.
-- Dash patterns only after the base stroke contract is stable.
+- Allocation-free dash decomposition with normalized phase, repeated odd
+  patterns, and closed-contour seam merging.
 
 ### M4 — Fixed-point backend
 
@@ -482,7 +483,7 @@ Status: planned.
 | --- | --- | --- |
 | `f32` fill | Sampled and analytic coverage, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
-| Stroke | Allocation-free undashed caps/joins and fixed path stroke pipeline | Dashes, fuzzing, and production reliability validation |
+| Stroke | Allocation-free f32 dashes/caps/joins and fixed path stroke pipeline | Fixed dashes, fuzzing, and production reliability validation |
 | Fixed raster | Checked Q24.8 transformed path fill/stroke, rational crossings, sparse strips/tiles, clipping, native fixed paint and all fixed caps/joins | Fixed dashes, real-device and range validation |
 | Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
