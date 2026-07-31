@@ -212,6 +212,13 @@ fn integrate_binned_row(edges: &[Edge], row_edges: &[u32], row_y: f32,
 fn prepare_binned_slab(y0: f32, limit: f32, active: &mut [AnalyticIntersection]) -> f32 {
     let mut next = active.iter().map(|edge| edge.y_end)
         .filter(|&end| end > y0).fold(limit, f32::min);
+    // Vertical edges never cross x boundaries or each other. The initial x
+    // ordering is still required when a newly activated batch is unordered.
+    if active.iter().all(|edge| edge.slope == 0.0) {
+        order_active_edges(active);
+        for edge in active { edge.x1 = edge.x0; }
+        return next;
+    }
     for edge in &*active {
         if edge.slope != 0.0 {
             let step = if edge.slope > 0.0 { 1.0 } else { -1.0 };
@@ -284,6 +291,12 @@ fn prepare_active_slab(edges: &[Edge], y0: f32, limit: f32,
         .filter(|&end| end > y0).fold(limit, f32::min);
     for start in edges.iter().map(|edge| edge.upper.y) {
         if start > y0 && start < next { next = start; }
+    }
+    // Keep this path equivalent to the binned implementation above.
+    if active.iter().all(|edge| edge.slope == 0.0) {
+        order_active_edges(active);
+        for edge in active { edge.x1 = edge.x0; }
+        return next;
     }
     for edge in &*active {
         if edge.slope != 0.0 {

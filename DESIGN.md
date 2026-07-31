@@ -341,6 +341,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
 - Do not add `#[inline]` by default. The compiler decides ordinary inlining;
   annotations require benchmark or code-size evidence.
 - Do not introduce SIMD before scalar equivalence tests exist.
+- Analytic slabs special-case all-vertical active sets only after ordering new
+  edges by x. Vertical edges cannot cross pixel boundaries or one another, so
+  crossing-event and midpoint-order passes are unnecessary. Sloped sets retain
+  the general numerically coalesced event algorithm and both ordering passes.
 - Public types must not expose large third-party math or rendering dependencies.
 - Data-dependent input returns `Result`; it must not panic or abort.
 - Every optimization states its time, memory, allocation, and code-size tradeoff.

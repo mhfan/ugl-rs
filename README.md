@@ -319,6 +319,14 @@ the specialized adaptive insertion sort. Future unordered-activation work
 should sort row bins by x or merge each ordered activation batch instead of
 adding a comparator and movement budget to every slab.
 
+Vertical active sets now retain their required initial x ordering but skip
+integer-x event searches, adjacent-crossing scans, and midpoint reordering:
+their x coordinates cannot change. On the same host, `stable_256` improved
+from about 898 µs to 783 µs and `churn_512` from about 46.5 µs to 41.8 µs.
+The standard 64-rectangle linear render measured about 105.8 µs versus
+110.2 µs before this specialization; the crossing scene remained near
+2.42 ms.
+
 The optional retained fixed output groups only non-empty 16-row strips. Each
 strip descriptor is 12 bytes and each uniform non-zero coverage run is 12
 bytes (`u32` x/length plus `u8` row/coverage). It therefore does not impose a
