@@ -184,8 +184,15 @@ and SIMD layouts do not enter the common `Edge` representation.
   accepts Q24.8 endpoints and a caller-owned encoded ramp. It uses `i64`
   coordinate deltas and exact `i128` projection, spread mapping, and nearest
   ramp selection: the full Q24.8 endpoint difference squared reaches the edge
-  of `i64`, so `i128` is required before summing two axes. Static ramps need no
-  allocation or runtime color conversion on an MCU.
+  of `i64`, so `i128` is required before summing two axes.
+  `FixedConcentricRadialGradient` supports increasing or decreasing
+  non-negative Q24.8 radii. It rounds an integer square root to Q24.8, then
+  performs spread and ramp selection with exact integer arithmetic. Ordinary
+  device ranges take a `u64`/`i64` fast path; widened arithmetic preserves the
+  full public coordinate contract. Static ramps need no allocation or runtime
+  color conversion on an MCU. General two-circle/focal fixed radial paint
+  remains separate because its discriminant and valid-root policy require
+  their own width and error analysis.
 - Solid paint reports its constant color so span and tile compositors retain
   their bulk fast paths.
 - `TransformedPaint` maps device samples into paint-local coordinates through
@@ -464,7 +471,7 @@ Status: planned.
 | `f32` fill | Sampled and analytic coverage, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
 | Stroke | Allocation-free undashed caps and joins | Dashes, fuzzing, and production reliability validation |
-| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, rectangle and path-mask clipping, encoded composition, native fixed linear paint | Native fixed radial/conic paint, fixed stroke, real-device and range validation |
+| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, rectangle and path-mask clipping, encoded composition, native fixed linear and concentric-radial paint | Native fixed focal radial/conic paint, fixed stroke, real-device and range validation |
 | Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
 
@@ -472,3 +479,18 @@ The fixed backlog includes `rasterize_path_clip_fixed`: it must convert
 prepared fixed path coverage directly into a caller-owned `CoverageMaskMut`.
 Fixed compositors already consume arbitrary masks, but current path-mask
 generation uses the analytic `f32` backend.
+
+Two cross-cutting API reviews also remain:
+
+- Audit every public and internal `RGBA` use. Each boundary must make
+  straight versus premultiplied alpha, encoded sRGB versus linear light,
+  component width, and packed-value versus byte-layout semantics unambiguous.
+  Replace bare `RGBA` where its contract relies on convention, and add focused
+  conversion/boundary tests before removing compatibility aliases.
+- Design a stateful `Canvas`/`Context` facade over the low-level rendering
+  functions. It should own or borrow target state, current transform, paint,
+  clip stack, fill/stroke options, and reusable workspaces where appropriate,
+  while retaining the allocation-free low-level APIs. First classify and
+  consolidate duplicated render entry points; do not merely move the existing
+  API matrix into methods or hide capacity errors and fixed/floating backend
+  selection.

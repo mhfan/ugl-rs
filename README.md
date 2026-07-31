@@ -52,8 +52,8 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | `f32` fill and clipping | Reference path implemented and allocation-free |
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Undashed caps/joins reference implemented; reliability work continues |
-| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, encoded paint composition, and native fixed linear gradients implemented |
-| Production readiness | Pre-release: broader fuzzing, golden scenes, native fixed radial/conic paint and stroke, and real-device validation remain |
+| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, encoded composition, and native fixed linear/concentric-radial gradients implemented |
+| Production readiness | Pre-release: broader fuzzing, golden scenes, native fixed focal radial/conic paint and stroke, and real-device validation remain |
 
 ## Architecture at a glance
 
@@ -128,13 +128,23 @@ integer pipeline because those compatibility samplers use `f32`.
 `FixedPaintSampler` makes the no-FPU contract explicit. `FixedLinearGradient`
 projects Q24.8 endpoints with widened integer arithmetic and samples a
 caller-owned encoded ramp; streaming and retained strip/tile compositors support
-the same rectangle and path-mask adapters. Native fixed radial and conic
-gradients remain future MCU work.
+the same rectangle and path-mask adapters. `FixedConcentricRadialGradient`
+uses a rounded integer square root and exact integer spread/ramp mapping.
+General two-circle/focal radial and conic gradients remain future MCU work.
 
-Pending: add `rasterize_path_clip_fixed` so arbitrary `FixedScalar` paths can
-produce caller-owned `CoverageMaskMut` data without using the analytic `f32`
-backend. Until then, all fixed compositors can consume arbitrary path masks,
-but generating those masks is not yet an end-to-end no-FPU operation.
+Pending architectural work includes:
+
+- add `rasterize_path_clip_fixed` so arbitrary `FixedScalar` paths can produce
+  caller-owned `CoverageMaskMut` data without the analytic `f32` backend;
+- audit all `RGBA` uses so alpha representation, color space, component width,
+  packing, and byte layout are explicit at every API boundary;
+- design a `Canvas`/`Context` facade that consolidates target, transform, paint,
+  clipping, drawing options, and workspace reuse without removing the bounded,
+  allocation-free low-level APIs.
+
+Until fixed path-mask generation is implemented, all fixed compositors can
+consume arbitrary path masks, but producing those masks is not yet an
+end-to-end no-FPU operation.
 
 ## Benchmarking
 
@@ -221,6 +231,15 @@ The specialized path is checked against point sampling across 512-sample spans,
 transforms, center crossings, and all spread modes with a maximum linear-channel
 tolerance of `1e-4`. Non-concentric radial and conic paints retain their general
 point-sampling fallback.
+
+The native fixed sampler benchmark uses the same 65,536 pixel centers and a
+caller-owned 1024-entry encoded ramp. A short 10-sample diagnostic on
+2026-07-31 measured `FixedLinearGradient` at about 423.3 µs (154.8 Mpixel/s)
+and `FixedConcentricRadialGradient` at about 689.4 µs (95.1 Mpixel/s).
+The radial implementation selects a `u64` integer-square-root and `i64` ramp
+mapping fast path for ordinary device coordinates, with widened arithmetic
+retained for the full public coordinate range. Before that specialization the
+same radial diagnostic measured about 1.78 ms.
 
 Conic gradients keep exact `atan2f` as the default and expose
 `ConicAngleMode::Fast` as an explicit quality/performance choice. Fast mode

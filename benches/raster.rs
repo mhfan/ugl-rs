@@ -587,6 +587,18 @@ fn sample_checksum(sampler: &impl PaintSampler) -> u64 {
 }       checksum
 }
 
+#[cfg(feature = "fixed")]
+fn sample_fixed_checksum(sampler: &impl ugl_rs::sampler::FixedPaintSampler) -> u64 {
+    let mut checksum = 0_u64;
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let color = sampler.sample_fixed(x, y);
+            checksum = color.to_array().into_iter().fold(checksum,
+                |checksum, channel| checksum.wrapping_mul(257).wrapping_add(channel as _));
+        }
+}       checksum
+}
+
 fn sample_linear_checksum(sampler: &impl LinearPaintSampler) -> u64 {
     let mut checksum = 0_u64;
     for y in 0..HEIGHT {
@@ -674,7 +686,29 @@ fn benchmark_paint(c: &mut Criterion) {
             FixedCoverageTileWorkspace, FixedDirectTilePiece, FixedDirectTileWorkspace,
             encode_fixed_coverage_tiles, fixed_tile_requirements, rasterize_lines_to_tiles,
         },
+        sampler::{FixedConcentricRadialGradient, FixedLinearGradient},
     };
+
+    let stop_values = [GradientStop::new( 0.0, RGBA::new(240, 20, 80,  32)),
+                       GradientStop::new(0.35, RGBA::new(10, 220, 40, 160)),
+                       GradientStop::new( 1.0, RGBA::new(30, 60, 250, 224)) ];
+    let mut ramp = vec![EncodedPremulSRGBA8::zeroed(); 1024];
+    let stops = GradientStops::with_ramp(&stop_values, &mut ramp).unwrap();
+    let ramp = stops.encoded_ramp().unwrap();
+    let fixed = FixedScalar::from_num;
+    let linear = FixedLinearGradient::new(
+        (fixed(0), fixed(0)), (fixed(WIDTH), fixed(HEIGHT)),
+        ramp, SpreadMode::Pad).unwrap();
+    let radial = FixedConcentricRadialGradient::new(
+        (fixed(WIDTH / 2), fixed(HEIGHT / 2)), fixed(180),
+        ramp, SpreadMode::Pad).unwrap();
+    let mut paint_group = c.benchmark_group("paint_sample_fixed");
+    paint_group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
+    paint_group.bench_function("linear",
+        |b| b.iter(|| black_box(sample_fixed_checksum(&linear))));
+    paint_group.bench_function("radial_concentric",
+        |b| b.iter(|| black_box(sample_fixed_checksum(&radial))));
+    paint_group.finish();
 
     let mut group = c.benchmark_group("raster_rgba8888");
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
