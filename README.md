@@ -213,6 +213,13 @@ before drawing. Context construction takes a
 `context::Workspace` containing caller-owned slices; dash buffers may be empty
 when dashed strokes are not used.
 
+`Pixmap` is the compact encoded-premultiplied RGBA8 compatibility target;
+`LinearPixmap` is the higher-quality premultiplied linear-light working target.
+Both support owned `new(width, height)` and borrowed `from_buffer` storage, but
+they are intentionally separate types: conversion and quantization happen only
+through `LinearPixmap::encode_into` or its LUT/dirty variants. No generic pixel
+format trait obscures which compositing domain is active.
+
 ### Workspace planning
 
 Both backends expose exact, target-independent planners for fill, stroke, and

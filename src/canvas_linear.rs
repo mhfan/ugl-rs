@@ -5,6 +5,7 @@
 //! only when [`LinearPixmap::encode_into`] presents into the compatibility
 //! framebuffer.
 
+use alloc::vec::Vec;
 use core::convert::Infallible;
 use crate::{
     canvas::{DashedStrokePathOptions, DashedStrokeWorkspace,
@@ -18,12 +19,44 @@ use crate::{
 
 pub const LINEAR_DIRTY_TILE_SIZE: u32 = 16;
 
-/// Borrowed premultiplied linear-light RGBA `f32` target.
+enum LinearPixmapData<'a> {
+    Owned(Vec<LinearPremulRGBA<f32>>), Borrowed(&'a mut [LinearPremulRGBA<f32>]),
+}
+
+impl core::fmt::Debug for LinearPixmapData<'_> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_tuple(match self {
+            Self::Owned(_) => "Owned", Self::Borrowed(_) => "Borrowed",
+        }).field(&self.as_slice().len()).finish()
+    }
+}
+
+impl LinearPixmapData<'_> {
+    fn as_slice(&self) -> &[LinearPremulRGBA<f32>] { match self {
+        Self::Owned(data) => data, Self::Borrowed(data) => data,
+    } }
+    fn as_mut_slice(&mut self) -> &mut [LinearPremulRGBA<f32>] { match self {
+        Self::Owned(data) => data, Self::Borrowed(data) => data,
+    } }
+}
+
+/// Owned or borrowed premultiplied linear-light RGBA `f32` target.
 ///
 /// `stride` is measured in pixels, not bytes. Caller-provided pixels must
 /// already satisfy the [`LinearPremulRGBA`] invariant.
+///
+/// ```
+/// use ugl_rs::{canvas_linear::LinearPixmap, color::LinearPremulRGBA};
+///
+/// let owned = LinearPixmap::new(2, 1).unwrap();
+/// assert_eq!((owned.stride(), owned.as_pixels().len()), (2, 2));
+///
+/// let mut pixels = [LinearPremulRGBA::default(); 3];
+/// let borrowed = LinearPixmap::from_buffer(&mut pixels, 2, 1, 3).unwrap();
+/// assert_eq!((borrowed.width(), borrowed.height()), (2, 1));
+/// ```
 #[derive(Debug)] pub struct LinearPixmap<'a> {
-    data: &'a mut [LinearPremulRGBA<f32>], width: u32, height: u32, stride: u32,
+    data: LinearPixmapData<'a>, width: u32, height: u32, stride: u32,
     dirty_tiles: Option<&'a mut [u64]>, dirty_tile_columns: u32, dirty_tile_count: u32,
 }
 
@@ -33,6 +66,20 @@ pub const LINEAR_DIRTY_TILE_SIZE: u32 = 16;
     DirtyTileStorageTooSmall { minimum: usize, actual: usize },
     DirtyTrackingUnavailable, DimensionsOverflow,
     DimensionsMismatch { source: (u32, u32), destination: (u32, u32) },
+}
+
+impl LinearPixmap<'static> {
+    /// Creates zero-initialized, tightly packed linear working storage.
+    pub fn new(width: u32, height: u32) -> Result<Self, LinearPixmapError> {
+        let length = usize::try_from(width).ok().and_then(|width|
+            usize::try_from(height).ok().and_then(|height| width.checked_mul(height)))
+            .ok_or(LinearPixmapError::DimensionsOverflow)?;
+        Ok(Self {
+            data: LinearPixmapData::Owned(alloc::vec![LinearPremulRGBA::default(); length]),
+            width, height, stride: width, dirty_tiles: None,
+            dirty_tile_columns: width.div_ceil(LINEAR_DIRTY_TILE_SIZE), dirty_tile_count: 0,
+        })
+    }
 }
 
 impl<'a> LinearPixmap<'a> {
@@ -80,7 +127,8 @@ impl<'a> LinearPixmap<'a> {
         if data.len() < minimum {
             return Err(LinearPixmapError::BufferTooSmall { minimum, actual: data.len() });
         }
-        Ok(Self { data, width, height, stride, dirty_tiles, dirty_tile_count: 0,
+        Ok(Self { data: LinearPixmapData::Borrowed(data), width, height, stride,
+            dirty_tiles, dirty_tile_count: 0,
             dirty_tile_columns: width.div_ceil(LINEAR_DIRTY_TILE_SIZE),
         })
     }
@@ -88,10 +136,14 @@ impl<'a> LinearPixmap<'a> {
     pub fn  width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
+    pub fn as_pixels(&self) -> &[LinearPremulRGBA<f32>] { self.data.as_slice() }
+    pub fn as_pixels_mut(&mut self) -> &mut [LinearPremulRGBA<f32>] {
+        self.data.as_mut_slice()
+    }
 
     pub fn pixel(&self, x: u32, y: u32) -> Option<LinearPremulRGBA<f32>> {
         if x >= self.width || y >= self.height { return None; }
-        Some(self.data[y as usize * self.stride as usize + x as usize])
+        Some(self.as_pixels()[y as usize * self.stride as usize + x as usize])
     }
 
     /// Encodes the working buffer into premultiplied sRGB RGBA8888.
@@ -100,7 +152,7 @@ impl<'a> LinearPixmap<'a> {
         self.validate_destination(destination)?;
         for y in 0..self.height {
             for x in 0..self.width {
-                let color = self.data[y as usize * self.stride as usize + x as usize];
+                let color = self.as_pixels()[y as usize * self.stride as usize + x as usize];
                 destination.write_encoded_pixel(x, y, color.to_encoded_srgba8());
             }
         }   Ok(())
@@ -112,7 +164,7 @@ impl<'a> LinearPixmap<'a> {
         self.validate_destination(destination)?;
         for y in 0..self.height {
             for x in 0..self.width {
-                let color = self.data[y as usize * self.stride as usize + x as usize];
+                let color = self.as_pixels()[y as usize * self.stride as usize + x as usize];
                 destination.write_encoded_pixel(x, y, encoder.encode(color));
             }
         }   Ok(())
@@ -140,7 +192,7 @@ impl<'a> LinearPixmap<'a> {
         if u64::from(self.dirty_tile_count) * tile_area * 2 >= pixel_count {
             for y in 0..self.height {
                 for x in 0..self.width {
-                    let color = self.data[y as usize * self.stride as usize + x as usize];
+                    let color = self.as_pixels()[y as usize * self.stride as usize + x as usize];
                     destination.write_encoded_pixel(x, y, encode(color));
                 }
             }
@@ -149,6 +201,7 @@ impl<'a> LinearPixmap<'a> {
             self.dirty_tile_count = 0;  return Ok(());
         }
         let columns = self.dirty_tile_columns;
+        let data = self.data.as_slice();
         let dirty   = self.dirty_tiles.as_deref_mut()
             .ok_or(LinearPixmapError::DirtyTrackingUnavailable)?;
         let (width, height, stride) = (self.width, self.height, self.stride);
@@ -163,7 +216,7 @@ impl<'a> LinearPixmap<'a> {
             let y_end = (y_start + LINEAR_DIRTY_TILE_SIZE).min(height);
             for y in y_start..y_end {
                 for x in x_start..x_end {
-                    let color = self.data[y as usize * stride as usize + x as usize];
+                    let color = data[y as usize * stride as usize + x as usize];
                     destination.write_encoded_pixel(x, y, encode(color));
                 }
             }   dirty[word] &= !mask;
@@ -186,8 +239,9 @@ impl<'a> LinearPixmap<'a> {
         self.mark_dirty_span(x, y, len);
         let factor = coverage as f32 / u8::MAX as f32;
         if let Some(color) = sampler.solid_color_linear() {
-            let pixels = &mut self.data[y as usize * self.stride as usize + x as usize..
-                y as usize * self.stride as usize + (x + len) as usize];
+            let stride = self.stride as usize;
+            let pixels = &mut self.as_pixels_mut()[y as usize * stride + x as usize..
+                y as usize * stride + (x + len) as usize];
             if coverage == u8::MAX && color.alpha() == 1.0 {
                 pixels.fill(color);
                 return;
@@ -198,7 +252,7 @@ impl<'a> LinearPixmap<'a> {
             }   return;
         }
         let row = y as usize * self.stride as usize;
-        let pixels = &mut self.data[row + x as usize..row + (x + len) as usize];
+        let pixels = &mut self.as_pixels_mut()[row + x as usize..row + (x + len) as usize];
         let mut pixels = pixels.iter_mut();
         if coverage == u8::MAX && sampler.is_opaque_linear() {
             sampler.sample_linear_span(x as f32 + 0.5, y as f32 + 0.5, 1.0, 0.0, len,
@@ -415,6 +469,18 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
             &mut [LinearPremulRGBA::default(); 1], 1, 1, 1).unwrap()
             .encode_dirty_into(&mut Pixmap::from_buffer(&mut [0; 4], 1, 1, 4).unwrap())
             .unwrap_err(), LinearPixmapError::DirtyTrackingUnavailable);
+    }
+
+    #[test] fn linear_pixmap_supports_owned_and_borrowed_storage() {
+        let mut owned = LinearPixmap::new(2, 1).unwrap();
+        assert_eq!((owned.width(), owned.height(), owned.stride()), (2, 1, 2));
+        owned.as_pixels_mut()[1] = LinearPremulRGBA::new(0.25, 0.0, 0.0, 0.5).unwrap();
+        assert_eq!(owned.pixel(1, 0).unwrap().to_array(), [0.25, 0.0, 0.0, 0.5]);
+
+        let mut storage = [LinearPremulRGBA::default(); 3];
+        let mut borrowed = LinearPixmap::from_buffer(&mut storage, 2, 1, 3).unwrap();
+        borrowed.as_pixels_mut()[0] = LinearPremulRGBA::new(0.0, 0.25, 0.0, 0.5).unwrap();
+        assert_eq!(borrowed.pixel(0, 0).unwrap().to_array(), [0.0, 0.25, 0.0, 0.5]);
     }
 
     #[test] fn linear_source_over_differs_from_encoded_domain_and_encodes_once() {

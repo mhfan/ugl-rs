@@ -523,8 +523,10 @@ premultiplied invariant.
 
 ## Context facade and backend organization
 
-`Pixmap` owns or borrows compact RGBA8888 storage, while `LinearPixmap` borrows
-its linear working buffer. Neither is a drawing state machine. The bounded
+`Pixmap` owns or borrows compact RGBA8888 storage, while `LinearPixmap` owns or
+borrows its linear working buffer. They remain separate concrete types so the
+compositing domain and the explicit presentation boundary cannot be inferred
+incorrectly through a generic pixel-format abstraction. Neither is a drawing state machine. The bounded
 drawing facade is therefore named `Context`: it borrows a target, owns
 caller-supplied workspace slices by value, retains small drawing state, and
 delegates to allocation-free functions. Those low-level functions remain
