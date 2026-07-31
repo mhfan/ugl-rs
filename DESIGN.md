@@ -154,6 +154,10 @@ and SIMD layouts do not enter the common `Edge` representation.
   linear-light `f32` through source-over and encodes only when presenting into
   RGBA8888. `canvas::PixmapMut` remains the compact encoded-domain compatibility
   and performance path.
+- Linear presentation has two explicit modes: `encode_into` is the exact
+  transfer-function reference, while `encode_into_with` uses a caller-owned
+  4096-entry `Srgb8Encoder` table and is constrained to one RGBA8 code value per
+  channel of the reference by tests.
 - Integer conversion maps channel extrema exactly and uses round-to-nearest.
 
 ## Paint and gradients
@@ -216,6 +220,9 @@ and SIMD layouts do not enter the common `Edge` representation.
 ## Memory and failure
 
 - Rendering never owns the destination; it borrows a caller-provided buffer.
+- The desktop linear working target costs 16 bytes per pixel and the fast sRGB8
+  presentation LUT costs 4096 bytes. The encoded compatibility target remains
+  4 bytes per pixel; the MCU path must not inherit the desktop `f32` storage.
 - Invalid dimensions, insufficient destination/scratch storage, non-finite
   geometry, coordinate overflow, and unsupported operations return errors.
 - Library code must not panic for data-dependent input.

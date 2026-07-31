@@ -3,11 +3,14 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWorkspace,
         analytic_bin_requirements, build_analytic_row_bins, rasterize_edges_analytic_binned},
-    color::{EncodedPremulSRGBA8, RGBA}, edge::Edge, raster::{FillRule, Intersection},
+    color::{EncodedPremulSRGBA8, LinearPremulRGBA, Srgb8Encoder,
+        SRGB8_ENCODE_LUT_SIZE, SRGBA, RGBA},
+    edge::Edge, raster::{FillRule, Intersection},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, RenderOptions, RenderWorkspace,
         render_solid, render_solid_analytic, render_stroke_solid_analytic,
-    }, geometry::{Affine, Path, PathBuilder},
+    }, canvas_linear::{LinearPixmapMut, render_solid_analytic as render_solid_linear_analytic},
+    geometry::{Affine, Path, PathBuilder},
     sampler::{ConicGradient, GradientStop, GradientStops, LinearGradient, PaintSampler,
         RadialGradient, SolidPaint, SpreadMode},
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions, StrokePathWorkspace,
@@ -76,6 +79,58 @@ fn benchmark_f32(c: &mut Criterion) {
         ).unwrap();
         black_box(&pixels);
     }));
+
+    let mut linear_pixels =
+        vec![LinearPremulRGBA::default(); WIDTH as usize * HEIGHT as usize];
+    group.bench_function(BenchmarkId::new("analytic_linear_working", "64_rectangles"),
+        |b| b.iter(|| {
+            linear_pixels.fill(LinearPremulRGBA::default());
+            let mut target =
+                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            render_solid_linear_analytic(&path, Affine::identity(),
+                SRGBA::new(40, 120, 220, 192), AnalyticRenderOptions::default(),
+                &mut target, &mut AnalyticRenderWorkspace {
+                    edges: &mut edges, intersections: &mut analytic_intersections,
+                    row_coverage: &mut row_coverage,
+                    row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+                }).unwrap();
+            black_box(&linear_pixels);
+        }));
+    group.bench_function(BenchmarkId::new("analytic_linear_present_exact", "64_rectangles"),
+        |b| b.iter(|| {
+            linear_pixels.fill(LinearPremulRGBA::default());
+            let mut target =
+                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            render_solid_linear_analytic(&path, Affine::identity(),
+                SRGBA::new(40, 120, 220, 192), AnalyticRenderOptions::default(),
+                &mut target, &mut AnalyticRenderWorkspace {
+                    edges: &mut edges, intersections: &mut analytic_intersections,
+                    row_coverage: &mut row_coverage,
+                    row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+                }).unwrap();
+            target.encode_into(
+                &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap()).unwrap();
+            black_box(&pixels);
+        }));
+    let mut transfer_lut = vec![0; SRGB8_ENCODE_LUT_SIZE];
+    let encoder = Srgb8Encoder::new(&mut transfer_lut).unwrap();
+    group.bench_function(BenchmarkId::new("analytic_linear_present_lut", "64_rectangles"),
+        |b| b.iter(|| {
+            linear_pixels.fill(LinearPremulRGBA::default());
+            let mut target =
+                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            render_solid_linear_analytic(&path, Affine::identity(),
+                SRGBA::new(40, 120, 220, 192), AnalyticRenderOptions::default(),
+                &mut target, &mut AnalyticRenderWorkspace {
+                    edges: &mut edges, intersections: &mut analytic_intersections,
+                    row_coverage: &mut row_coverage,
+                    row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+                }).unwrap();
+            target.encode_into_with(
+                &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
+                encoder).unwrap();
+            black_box(&pixels);
+        }));
     group.finish();
 }
 

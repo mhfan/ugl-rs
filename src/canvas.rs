@@ -454,7 +454,8 @@ pub(crate) fn build_edges(path: &Path, transform: Affine, options: FlattenOption
     Ok(sink.len)
 }
 
-fn build_stroke_edges(path: &Path, transform: Affine, options: AnalyticStrokeOptions,
+pub(crate) fn build_stroke_edges(path: &Path, transform: Affine,
+    options: AnalyticStrokeOptions,
     points: &mut [Point], contours: &mut [StrokeContour], edges: &mut [Edge]) ->
     Result<usize, RenderError> {
     let mut path_workspace = StrokePathWorkspace { points, contours };

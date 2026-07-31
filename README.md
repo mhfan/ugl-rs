@@ -141,6 +141,22 @@ Current development baseline, measured on 2026-07-30:
 | analytic `f32` | 206.34 µs | 204.09–209.84 µs | 317.62 Mpixel/s |
 | Q24.8 fixed | 229.64 µs | 229.19–230.18 µs | 285.38 Mpixel/s |
 
+The linear-light compositor baseline was added on 2026-07-31 and measured on
+the same Darwin arm64 host with Criterion's default 3-second warm-up, 5-second
+measurement, and 100 samples:
+
+| Analytic color path | Time estimate | Reported interval | Throughput |
+| --- | ---: | ---: | ---: |
+| encoded RGBA8888 compatibility | 123.87 µs | 123.66–124.06 µs | 529.09 Mpixel/s |
+| linear `f32` working buffer | 155.88 µs | 155.16–156.71 µs | 420.44 Mpixel/s |
+| linear + 4096-entry LUT presentation | 357.79 µs | 357.08–358.63 µs | 183.17 Mpixel/s |
+| linear + exact `powf` presentation | 4.2181 ms | 4.2036–4.2368 ms | 15.54 Mpixel/s |
+
+The working-buffer row includes clearing and compositing but no presentation.
+Both presentation rows encode the complete 256 × 256 target after rendering;
+the LUT is prepared before the timed loop and stays within one RGBA8 code value
+per channel of the exact transfer path in the boundary tests.
+
 The additional fixed distribution scenes measure 45.76 µs for 16 sparse
 rectangles and 185.37 µs for 256 short-edge rectangles. Before strip binning
 and persistent active edges, the same scenes measured 65.34 µs and 621.64 µs,
@@ -154,6 +170,11 @@ The initial caller-owned scratch budgets are:
 | sampled `f32` | 128 `Edge` | 128 `Intersection` | 256 `f32` |
 | analytic `f32` | 128 `Edge` | 257 `u32` row offsets + 128 `u32` edge indices + 128 `AnalyticIntersection` | 256 `f32` |
 | Q24.8 fixed | 128 `FixedSegment` + 64 `FixedTrapezoid` | one `u32` offset per strip plus one `u32` per line/strip overlap | 256 `u64` |
+
+The compact target uses 4 bytes per pixel. `LinearPixmapMut` deliberately uses
+16 bytes per pixel (`LinearPremulRGBA<f32>`) and its fast presentation path
+borrows an additional 4096-byte sRGB encoding LUT. This desktop-quality working
+buffer is not the intended MCU storage path.
 
 Renderer allocation count inside the measured path is zero by API
 construction: every mutable geometry, crossing, area, and destination buffer
