@@ -29,6 +29,18 @@ pub struct CellWorkspace<'a> {
     pub cells: &'a mut [Cell],
 }
 
+#[derive(Clone, Copy)] struct CellRange { start: usize, end: usize }
+
+impl CellRange {
+    const EMPTY: Self = Self { start: usize::MAX, end: 0 };
+    fn include(&mut self, start: usize, end: usize) {
+        if start >= end { return; }
+        self.start = self.start.min(start);
+        self.end = self.end.max(end);
+    }
+    fn is_empty(self) -> bool { self.start == usize::MAX }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BinRequirements { pub offsets: usize, pub indices: usize }
 
@@ -152,23 +164,38 @@ pub fn rasterize_edges_cells<S>(edges: &[Edge], bins: RowBins<'_>, width: u32,
             intersections: edges.len(), row_coverage: width,
         });
     }
-    let mut active_count = 0;
+    let (mut active_count, mut previous) = (0, CellRange::EMPTY);
+    let mut initialized = false;
     for y in 0..height {
         active_count = retain_active(workspace.intersections, active_count, y as _);
         let row_edges = bins.indices(y);
         if active_count == 0 && row_edges.is_empty() { continue; }
-        let cells = &mut workspace.cells[..width];  cells.fill(Cell::default());
-        active_count = integrate_binned_row_cells(edges, row_edges, y as _, fill_rule,
+        let cells = &mut workspace.cells[..width];
+        if initialized {
+            if !previous.is_empty() {
+                cells[previous.start..previous.end].fill(Cell::default());
+            }
+        } else {
+            cells.fill(Cell::default());
+            initialized = true;
+        }
+        let (next_active, dirty) = integrate_binned_row_cells(
+            edges, row_edges, y as _, fill_rule,
             workspace.intersections, active_count, cells);
-        emit_cell_runs(cells, y, sink)?;
+        active_count = next_active;
+        if !dirty.is_empty() {
+            emit_cell_runs(&cells[dirty.start..dirty.end], dirty.start, y, sink)?;
+        }
+        previous = dirty;
     }
     Ok(())
 }
 
 fn integrate_binned_row_cells(edges: &[Edge], row_edges: &[u32], row_y: f32,
     fill_rule: FillRule, active: &mut [Intersection], mut active_count: usize,
-    cells: &mut [Cell]) -> usize {
+    cells: &mut [Cell]) -> (usize, CellRange) {
     let (row_end, mut y0, mut pending) = (row_y + 1.0, row_y, 0);
+    let mut dirty = CellRange::EMPTY;
     while y0 < row_end {
         active_count = retain_active(active, active_count, y0);
         while let Some(&index) = row_edges.get(pending) {
@@ -191,11 +218,11 @@ fn integrate_binned_row_cells(edges: &[Edge], row_edges: &[u32], row_y: f32,
         }
         let y1 = prepare_cell_slab(y0, next_start, &mut active[..active_count]);
         if y1 <= y0 { break; }
-        integrate_cell_spans(&active[..active_count], y1 - y0, fill_rule, cells);
+        integrate_cell_spans(&active[..active_count], y1 - y0, fill_rule, cells, &mut dirty);
         for edge in &mut active[..active_count] { edge.x0 = edge.x1; }
         y0 = y1;
     }
-    active_count
+    (active_count, dirty)
 }
 
 fn prepare_cell_slab(y0: f32, limit: f32, active: &mut [Intersection]) -> f32 {
@@ -225,11 +252,11 @@ fn prepare_cell_slab(y0: f32, limit: f32, active: &mut [Intersection]) -> f32 {
 }
 
 fn integrate_cell_spans(intersections: &[Intersection], height: f32,
-    fill_rule: FillRule, cells: &mut [Cell]) {
+    fill_rule: FillRule, cells: &mut [Cell], dirty: &mut CellRange) {
     let (mut winding, mut left) = (0_i32, None);
     for right in intersections {
         if let Some(left) = left && fill_rule.contains(winding) {
-            integrate_cell_span(left, right, height, cells);
+            integrate_cell_span(left, right, height, cells, dirty);
         }
         winding += right.winding as i32;
         left = Some(right);
@@ -237,15 +264,19 @@ fn integrate_cell_spans(intersections: &[Intersection], height: f32,
 }
 
 fn integrate_cell_span(left: &Intersection, right: &Intersection,
-    height: f32, cells: &mut [Cell]) {
+    height: f32, cells: &mut [Cell], dirty: &mut CellRange) {
     let start = floor(left.x0.min(left.x1)).clamp(0.0, cells.len() as _) as _;
     let end = ceil(right.x0.max(right.x1)).clamp(0.0, cells.len() as _) as _;
     let full_start = ceil(left.x0.max(left.x1)).clamp(0.0, cells.len() as _) as usize;
     let full_end = floor(right.x0.min(right.x1)).clamp(0.0, cells.len() as _) as usize;
+    dirty.include(start, end);
     if full_start < full_end {
         integrate_partial_cells(left, right, height, cells, start, full_start);
         cells[full_start].delta += height;
-        if full_end < cells.len() { cells[full_end].delta -= height; }
+        if full_end < cells.len() {
+            cells[full_end].delta -= height;
+            dirty.include(full_end, full_end + 1);
+        }
         integrate_partial_cells(left, right, height, cells, full_end, end);
     } else {
         integrate_partial_cells(left, right, height, cells, start, end);
@@ -279,7 +310,7 @@ fn integrate_clamped_line(start: f32, end: f32, height: f32) -> f32 {
     (primitive(high) - primitive(low)) * height / (high - low)
 }
 
-fn emit_cell_runs<S>(cells: &[Cell], y: u32,
+fn emit_cell_runs<S>(cells: &[Cell], x_offset: usize, y: u32,
     sink: &mut S) -> Result<(), RasterError<S::Error>> where S: CoverageSink {
     let quantize = |coverage: f32| (coverage.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
     let (mut accumulated, mut run_start, mut run_coverage) = (0.0, 0, 0);
@@ -288,13 +319,14 @@ fn emit_cell_runs<S>(cells: &[Cell], y: u32,
         let coverage = quantize(accumulated + cell.coverage);
         if coverage == run_coverage { continue; }
         if run_coverage != 0 {
-            sink.span(run_start as _, y, (x - run_start) as _, run_coverage)
+            sink.span((x_offset + run_start) as _, y, (x - run_start) as _, run_coverage)
                 .map_err(RasterError::Sink)?;
         }
         run_start = x;  run_coverage = coverage;
     }
     if run_coverage != 0 {
-        sink.span(run_start as _, y, (cells.len() - run_start) as _, run_coverage)
+        sink.span((x_offset + run_start) as _, y,
+            (cells.len() - run_start) as _, run_coverage)
             .map_err(RasterError::Sink)?;
     }
     Ok(())
@@ -648,7 +680,7 @@ fn integrate_partial_span(left: &Intersection, right: &Intersection,
         }).unwrap();
         let mut pixels = vec![0; width as usize * height as usize];
         let mut intersections = vec![Intersection::default(); edges.len()];
-        let mut cells = vec![Cell::default(); width as usize];
+        let mut cells = vec![Cell { coverage: 3.0, delta: -2.0 }; width as usize];
         rasterize_edges_cells(edges, bins, width, height, fill_rule,
             &mut CellWorkspace { intersections: &mut intersections, cells: &mut cells },
             &mut |x, y, coverage| {

@@ -399,9 +399,11 @@ guaranteed-full intervals with two delta writes. It reduced the representative
 480-edge stroke coverage stage from about 218 µs to 97 µs and the complete
 encoded draw to about 113 µs. A 32-edge crossing stress scene fell from about
 1.97 ms to 283 µs. Its caller-owned row scratch is 8 bytes per pixel rather
-than the former 4 bytes; short-edge churn is statistically unchanged, while
-the 64-small-rectangle scene currently regresses about 5.7%. Optimizing that
-simple/vertical case is the next scalar performance task.
+than the former 4 bytes; short-edge churn is statistically unchanged. Tracking
+the touched x range per row and limiting subsequent clear and emission scans to
+that range reduced the 64-small-rectangle scene from about 124 µs to 112 µs,
+removing its initial 5.7% regression. The representative complex stroke remains
+near 115 µs, statistically unchanged by the range bookkeeping.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the

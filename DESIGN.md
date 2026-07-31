@@ -411,8 +411,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   480-edge stroke coverage stage from about 218 us to 97 us. End-to-end solid
   compositing retained the gain, and the f32 Canvas now uses this path with an
   explicit one-`Cell`-per-column workspace. That doubles row scratch from four
-  to eight bytes per target column. The 64-small-rectangle case regresses about
-  5.7%, so simple vertical geometry remains the next specialization target.
+  to eight bytes per target column. Per-row dirty x bounds now restrict later
+  clears and output scans to touched cells; the 64-small-rectangle case improved
+  from about 124 us to 112 us, while the complex stroke remained statistically
+  unchanged near 115 us.
 
 ## Implementation rules
 
