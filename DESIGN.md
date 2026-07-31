@@ -33,18 +33,20 @@ systems. It is `no_std`, may use `alloc`, and must be usable with caller-owned
 pixel and scratch buffers. Windowing, image decoding, SVG parsing, text shaping,
 and 3D rendering are outside the core.
 
-The first reference backend uses `f32`. Geometry containers are generic over
-their coordinate representation so a fixed-point backend can reuse the same
-scene representation. Rasterization algorithms are not made generically
-numeric until the required fixed-point operations and overflow behavior are
-known.
+The primary floating-point backend uses exact-area analytic `f32` coverage and
+also serves as the behavioral reference for fixed differential tests. A
+separate supersampled `f32` rasterizer remains a quality oracle. Geometry
+containers are generic over their coordinate representation so the fixed-point
+backend can reuse the scene representation; raster algorithms remain concrete
+where operations, intermediate widths, rounding, overflow, or performance
+differ.
 
 ### Core capabilities
 
 1. Paths, affine transforms, curve flattening, filling, and clipping.
 2. Solid paint and source-over compositing into premultiplied RGBA8888.
 3. Linear, radial, and conic gradients through a bounded sampler interface.
-4. Strokes with caps, joins, miter limits, and later dash patterns.
+4. Strokes with caps, joins, miter limits, and dash patterns.
 5. Additional pixel formats and blend modes.
 6. A fixed-point backend and caller-provided rasterization workspace.
 
@@ -67,7 +69,7 @@ The architecture separates representation from execution:
   prescribing floating point.
 - Owned `Path<T>` uses `alloc`; renderers consume segment slices so static and
   fixed-capacity storage can avoid it.
-- The reference geometry and rasterizer algorithms use `f32`.
+- The primary exact-area and sampled-reference rasterizers use `f32`.
 - The Q24.8 fixed-point backend follows the reference behavior with widened
   intermediates and explicit overflow and rounding rules.
 
@@ -97,16 +99,18 @@ or a renderer. Parsing, codecs, text, and platform integration stay outside.
 The project targets two optimized execution families behind the same Path,
 Edge, Paint, CoverageSink, and borrowed Target contracts:
 
-- **Desktop/mobile high performance:** sparse strips or tiles for locality and
-  empty/full rejection, analytic cell coverage at active boundaries, and
-  optional ahead-of-time SIMD specialization.
+- **Desktop/mobile high performance:** sparse strips or tiles for locality,
+  candidate-edge reduction, and empty/full rejection; analytic cell coverage
+  at active boundaries; and optional ahead-of-time SIMD specialization.
 - **MCU/fixed memory:** scanline spans or trapezoid decomposition, fixed-point
   analytic boundary area, caller-owned bounded workspace, and streaming
   compositing without a full intermediate mask.
 
-Both may share edge preparation, area formulas, fill semantics, paint sampling,
-and compositing. Backend-specific inverse slopes, cell accumulators, strip IDs,
-and SIMD layouts do not enter the common `Edge` representation.
+Sparse strips are a spatial index, not a coverage algorithm: fixed rendering
+may use bounded strip bins while retaining trapezoid/scanline area evaluation.
+Both families may share edge preparation, area formulas, fill semantics, paint
+sampling, and compositing. Backend-specific inverse slopes, cell accumulators,
+strip IDs, and SIMD layouts do not enter the common `Edge` representation.
 
 ## Coordinates and transforms
 
@@ -121,8 +125,8 @@ and SIMD layouts do not enter the common `Edge` representation.
   error rather than panic or silently emit geometry.
 - The fixed-point backend must document its Q format, intermediate widths,
   rounding, saturation, and accepted device-coordinate range before release.
-- The initial device-coordinate reference format is signed Q24.8
-  (`fixed::types::I24F8`): 8 fractional bits align with 8-bit coverage and its
+- The fixed device-coordinate format is signed Q24.8 (`fixed::Scalar`): 8
+  fractional bits align with 8-bit coverage and its
   integer range accommodates large device surfaces. It is a storage and API
   reference, not permission to evaluate transforms, slopes, cross-products, or
   accumulated area in 32 bits. Those operations require at least 64-bit widened
@@ -213,9 +217,9 @@ and SIMD layouts do not enter the common `Edge` representation.
   are rejected.
 - Conic paint covers one complete turn, repeats at the seam, and takes its
   start angle in radians.
-- `GradientStop::new` treats `RGBA<u8>` as straight encoded sRGB for migration;
-  `GradientStop::from_srgba` is the explicit API. Linear interpolation and
-  encoded-domain framebuffer compositing are intentionally separate stages.
+- `GradientStop::new` accepts straight encoded `SRGBA<u8>`. Linear
+  interpolation and encoded-domain framebuffer compositing are intentionally
+  separate stages.
 - `GradientStops::new` is the exact reference path. `GradientStops::with_ramp`
   precomputes into caller-owned storage for allocation-free high-throughput
   sampling. Its encoded premultiplied entries approximate the linear-light
@@ -277,8 +281,11 @@ and SIMD layouts do not enter the common `Edge` representation.
   half circle, making edge capacity and the chord error
   `r · (1 - cos(π / segments))` predictable without runtime transcendental
   functions.
-- Dash patterns are added only after undashed contour semantics and capacity
-  behavior are stable.
+- Dash patterns borrow validated alternating lengths and preserve each
+  backend's numeric contract. Each contour restarts the normalized phase;
+  closed seams merge a continuing on-interval so it receives a join rather
+  than two caps. Decomposition preflights caller-owned point/contour capacity
+  before writing.
 
 ## Memory and failure
 
@@ -432,8 +439,8 @@ Status: complete (2026-07-30).
 
 ### M3 — Stroke
 
-Status: scalar dash/cap/join reference implemented; reliability validation
-ongoing (2026-07-31).
+Status: scalar f32/fixed dash, cap, join, and Context entry points implemented;
+reliability validation ongoing (2026-07-31).
 
 - Width, cap, join, and miter behavior.
 - Degenerate subpaths and self-intersections.
@@ -486,7 +493,7 @@ Status: planned.
 
 | Area | Implemented | Remaining production work |
 | --- | --- | --- |
-| `f32` fill | Sampled and analytic coverage, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
+| `f32` fill | Exact-area primary path, sampled reference, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
 | Stroke | Allocation-free f32/fixed dashes, caps, joins, and path stroke pipelines | Fuzzing and production reliability validation |
 | Fixed raster | Checked Q24.8 transformed path fill/stroke/dashing, rational crossings, sparse strips/tiles, clipping, and native fixed paint | Real-device and range validation |
@@ -539,18 +546,21 @@ The first stable method vocabulary is small:
 - `fill` and `stroke` use the current solid paint.
 - `fill_with` and `stroke_with` accept a statically dispatched sampler without
   storing trait objects or allocating.
+- `stroke_dashed` and `stroke_dashed_with` accept a borrowed validated pattern
+  rather than storing it in context state; their additional point/contour
+  buffers are explicit in `ContextWorkspace`.
 - clipping is context state, represented as no clip, one rectangle, or one
   borrowed coverage mask. A later caller-owned clip stack uses explicit
   `save`/`restore`; the first facade must not allocate an implicit stack.
-- dashed drawing remains an explicit method because a dash pattern borrows
-  caller data and requires additional bounded scratch. It is not hidden inside
-  an enum that expands every context.
 
-Status: the first `Context` and `fixed::context::Context` fill/stroke facade is
-implemented. Both share generic state storage and parallel method names;
-rectangle/mask clip state and statically dispatched custom paint are supported.
-Dashed methods, caller-owned save/restore, and workspace sizing helpers remain
-before the facade can be considered complete.
+Status: the first `Context` and `fixed::context::Context` fill/stroke/dash
+facade is implemented. Both share generic state storage and parallel method
+names; rectangle/mask clip state and statically dispatched custom paint are
+supported. Arbitrary path clipping is intentionally explicit: low-level
+`rasterize_path_clip` writes caller-owned `CoverageMaskMut`, after which the
+facade borrows the mask with `set_clip_mask`. Caller-owned save/restore,
+multi-clip mask combination, and workspace sizing helpers remain before the
+facade can be considered complete.
 
 All methods preserve existing error and mutation contracts. Geometry/capacity
 failure before rasterization leaves the target unchanged. Once span emission

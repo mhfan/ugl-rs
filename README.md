@@ -7,8 +7,11 @@
 
 # ugl-rs
 
-`ugl-rs` aims to become an industrial-quality, deterministic, pure-Rust 2D
-software rasterization core for embedded and otherwise constrained systems.
+`ugl-rs` is a pre-release, deterministic, pure-Rust 2D software rasterization
+core aimed at embedded and otherwise constrained systems. Its goal is
+industrial quality, but broader fuzzing, golden-scene comparison, API
+stabilization, and real-device validation are still required before production
+use.
 It is inspired by [**micro{gl}**](https://github.com/micro-gl/micro-gl), but is
 designed around Rust ownership, explicit failure, caller-owned memory, and
 testable rendering semantics rather than as a line-by-line port.
@@ -18,31 +21,26 @@ The intended niche is deliberately narrower than Blend2D, tiny-skia, Skia, or Ve
 - CPU-only rendering without requiring a GPU or FPU;
 - a `no_std` core with optional allocation and no-allocation rasterization;
 - caller-provided destination and scratch memory;
-- a floating-point reference backend and a bounded fixed-point backend;
+- an exact-area `f32` production path, a sampled reference rasterizer, and a
+  bounded Q24.8 backend;
 - deterministic output, bounded resource use, and no data-dependent panics;
 - high-quality path filling, stroking, clipping, gradients, sampling, blending,
   and alpha compositing.
 
-The project now has an allocation-free path-to-pixel vertical slice with
-sampled and analytic `f32` rasterizers, premultiplied source-over, caller-owned
-scratch storage, rectangular and path coverage clips, and allocation-free
-solid, linear, two-circle radial, and conic paint samplers. Paint transforms
-are independent from path transforms and invert once at construction.
-Allocation-free analytic stroking now covers transformed paths, flattened
-curves, open and explicitly closed contours, butt/round/square caps, and
-miter/round/bevel joins. Its flattened points, compact contour descriptors,
-expanded edges, intersections, and row coverage all use caller-owned bounded
-storage. The project also has an early Q24.8 fixed-point backend. Production
-fixed edge binning and persistent active edges now operate on caller-owned
-sparse strip storage. The fixed backend can optionally retain compact sparse
-coverage strips for batching or caching while keeping the lower-memory
-streaming sink as its default. Q24.8 paths can now be transformed with checked
-widened arithmetic, adaptively flattened, and filled without an FPU. An
-optional 16 × 16 tile prototype now
-classifies empty, full, and boundary regions, supports direct tile-major
-output, and can composite a retained tile mask without rasterizing it again.
-External fuzzing and broader golden/benchmark scenes are still under
-development, so it is not yet suitable as a production renderer.
+The implemented vertical slice covers allocation-free path filling, stroking,
+dashing, rectangular and arbitrary-path clipping, gradients, and source-over
+composition. Both main backends borrow destination and scratch storage:
+
+- unqualified `canvas::render_*` functions use exact-area analytic `f32`
+  coverage with sparse row bins;
+- `canvas::render_*_sampled` is the slower supersampled reference used for
+  differential testing;
+- `fixed::*` provides checked Q24.8 geometry, native fixed paint, sparse-strip
+  rasterization, and optional retained strip/tile coverage.
+
+The fixed streaming path is the minimum-memory default. Retained strips and
+16 × 16 tiles are explicit batching/caching options; current measurements do
+not justify selecting tile construction for immediate rendering.
 
 The current MSRV is Rust 1.93. CI checks MSRV and stable builds, independent
 feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
@@ -51,11 +49,12 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 
 | Area | Status |
 | --- | --- |
-| `f32` fill and clipping | Reference path implemented and allocation-free |
+| `f32` fill and clipping | Exact-area production path plus sampled reference; allocation-free |
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Allocation-free f32/fixed dashes, caps, joins, and path stroke pipelines implemented |
 | Fixed point | Q24.8 transformed path fill/stroke, sparse strips/tiles, clipping, native fixed gradients, and all fixed caps/joins implemented |
-| Production readiness | Pre-release: broader fuzzing, golden scenes, and real-device validation remain |
+| Facade | Parallel f32/fixed `Context` APIs for fill, stroke, dash, rectangle clip, and borrowed path masks |
+| Production readiness | Pre-release: API stabilization, broader fuzzing/goldens, code-size work, and real-device validation remain |
 
 The f32 dash reference accepts finite, strictly positive alternating on/off
 lengths and a finite phase. Odd-length arrays repeat twice before the parity
@@ -77,7 +76,7 @@ so capacity and numeric errors leave caller-owned dash scratch untouched.
 
 ## Architecture at a glance
 
-The first complete rendering path is intentionally small:
+The rendering pipeline is intentionally explicit:
 
 ```text
 Path
@@ -91,12 +90,11 @@ Path
   -> caller-owned RGBA8888 buffer
 ```
 
-The `f32` implementation is the behavioral reference. Geometry containers are
-generic over coordinates so that fixed-point values can reuse the scene
-representation, but rasterization algorithms remain concrete until their
-required operations, intermediate widths, rounding rules, and overflow
-behavior are understood. This avoids premature numeric abstraction while
-preserving the fixed-point migration path.
+The exact-area `f32` implementation is the primary floating-point renderer and
+the behavioral reference for fixed differential tests. The sampled `f32`
+rasterizer is a separate quality oracle, not the default canvas API. Geometry
+containers are generic over coordinates, while raster algorithms stay concrete
+where intermediate widths, rounding, overflow, and performance differ.
 
 The normative rendering contract, architecture boundaries, implementation
 order, and milestones are maintained in [DESIGN.md](DESIGN.md). External
@@ -110,7 +108,7 @@ chosen by the caller and insufficient workspace is returned as an error:
 
 ```rust
 use ugl_rs::{analytic::Intersection,
-    color::RGBA, edge::Edge, geometry::{Affine, PathBuilder},
+    color::SRGBA, edge::Edge, geometry::{Affine, PathBuilder},
     canvas::{RenderOptions, RenderWorkspace, PixmapMut,
         render_solid},
 };
@@ -128,7 +126,7 @@ let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
 let (mut edges, mut coverage) = ([Edge::default(); 8], [0.0; WIDTH as usize]);
 let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
 
-render_solid(&path, Affine::identity(), RGBA::new(20, 200, 40, 160),
+render_solid(&path, Affine::identity(), SRGBA::new(20, 200, 40, 160),
     RenderOptions::default(), &mut target,
     &mut RenderWorkspace { edges: &mut edges,
         intersections: &mut intersections, row_coverage: &mut coverage,
@@ -161,9 +159,11 @@ modules use concise names such as `fixed::raster::Workspace`,
 `fixed::stroke::Options`, and `fixed::context::Context`; no legacy crate-root
 backend aliases are retained.
 
-Both f32 analytic and Q24.8 fixed paths can rasterize arbitrary path clips into
-caller-owned `CoverageMaskMut` storage. Fixed compositors can therefore produce
-and consume arbitrary path masks end to end without an FPU.
+Both exact-area f32 and Q24.8 fixed paths rasterize arbitrary path clips into
+caller-owned `CoverageMaskMut` storage. A borrowed `CoverageMask` can then be
+reused by fill, stroke, dash, streaming, retained-strip, or retained-tile
+composition. Fixed mask production and native fixed mask consumption require
+no FPU.
 
 Color boundaries are explicit: solid paints and gradient stops accept straight
 encoded `SRGBA<u8>`, while `PixmapMut::pixel` returns only validated
@@ -171,11 +171,44 @@ encoded `SRGBA<u8>`, while `PixmapMut::pixel` returns only validated
 Pixmap construction intentionally validates layout without scanning the image;
 source-over callers are responsible for valid premultiplied destination data.
 
-`Context` and `fixed::context::Context` provide parallel stateful drawing APIs for the
-analytic f32 and Q24.8 pipelines. They retain transform, fill rule, flattening,
-stroke, solid color, and rectangle/mask clip state while borrowing the target
-and bounded scratch storage. `fill_with` and `stroke_with` preserve static
-sampler dispatch; all original low-level functions remain available.
+`Context` and `fixed::context::Context` provide parallel stateful drawing APIs
+for the exact-area f32 and Q24.8 pipelines. They retain transform, fill rule,
+flattening, stroke, solid color, and rectangle/mask clip state while borrowing
+the target and bounded scratch storage. `fill_with`, `stroke_with`, and
+`stroke_dashed_with` preserve static sampler dispatch; all low-level functions
+remain available.
+
+### API layers
+
+Choose the narrowest layer that owns the required state:
+
+- `Context` or `fixed::context::Context` for immediate stateful drawing;
+- `canvas::render_*` for direct exact-area f32 rendering;
+- `canvas::render_*_sampled` only as the supersampled reference;
+- `canvas_linear` for a premultiplied linear-light working framebuffer;
+- `fixed::canvas` for explicit Q24.8 streaming, retained strips, and tiles.
+
+No layer allocates destination or raster scratch implicitly. Context
+construction borrows a `ContextWorkspace`; dash buffers may be empty when
+dashed strokes are not used.
+
+### Arbitrary path clipping
+
+Free-path clipping is deliberately a two-stage operation so its image-sized
+storage and lifetime stay visible:
+
+1. Rasterize any path into caller-owned `CoverageMaskMut` with
+   `canvas::rasterize_path_clip` or
+   `fixed::canvas::rasterize_path_clip`.
+2. Borrow it with `as_mask()` and pass it to `Context::set_clip_mask`, or to a
+   low-level `render_*_masked` function.
+
+During rendering, shape and mask coverage are multiplied before paint
+composition. The mask therefore preserves antialiased path boundaries and can
+be reused across multiple draws. `set_clip_rect` is the cheaper direct path
+for a single rectangle. There is currently no implicit clip stack or hidden
+mask allocation; callers that need clip intersections must combine
+caller-owned masks explicitly.
 
 ## Benchmarking
 
