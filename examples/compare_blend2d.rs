@@ -4,18 +4,22 @@
 use std::{env, fs, hint::black_box, process::ExitCode, time::Instant};
 use ugl_rs::{
     analytic::Intersection,
-    canvas::{Pixmap, RenderOptions, RenderWorkspace, render_solid},
+    canvas::{Pixmap, RenderOptions, RenderWorkspace, StrokePathOptions, StrokeWorkspace,
+        render_solid, render_stroke_solid},
     color::SRGBA,
     edge::Edge,
     geometry::{Affine, Path, PathBuilder},
+    stroke::{StrokeContour, StrokeOptions},
 };
 
 const WIDTH: u32 = 256;
 const HEIGHT: u32 = 256;
 const SHAPES: usize = 64;
-const EDGE_CAPACITY: usize = SHAPES * 2;
+const EDGE_CAPACITY: usize = 4096;
 
-fn scene() -> Path {
+#[derive(Clone, Copy)] enum Operation { Fill, Stroke }
+
+fn rectangles() -> Path {
     let mut path = PathBuilder::with_capacity(SHAPES * 5);
     for index in 0..SHAPES {
         let x = (index % 8) as f32 * 30.0 + 4.25;
@@ -24,6 +28,26 @@ fn scene() -> Path {
             .line_to((x + 22.5, y + 21.75)).line_to((x, y + 21.75));
     }
     path.build()
+}
+
+fn curves() -> Path {
+    let mut path = PathBuilder::with_capacity(9);
+    path.move_to((8.0, 128.0));
+    for index in 0..8 {
+        let x = 8.0 + index as f32 * 30.0;
+        let (high, low) = if index & 1 == 0 { (24.0, 232.0) } else { (232.0, 24.0) };
+        path.cubic_to((x + 10.0, high), (x + 20.0, low), (x + 30.0, 128.0));
+    }
+    path.build()
+}
+
+fn scene() -> Result<(&'static str, Path, Operation), String> {
+    match path_argument("--scene")?.as_deref().unwrap_or("fill_rectangles_64") {
+        "fill_rectangles_64" => Ok(("fill_rectangles_64", rectangles(), Operation::Fill)),
+        "fill_cubics_8" => Ok(("fill_cubics_8", curves(), Operation::Fill)),
+        "stroke_cubics_8" => Ok(("stroke_cubics_8", curves(), Operation::Stroke)),
+        name => Err(format!("unknown scene: {name}")),
+    }
 }
 
 fn checksum(bytes: &[u8]) -> u64 {
@@ -47,7 +71,7 @@ fn path_argument(name: &str) -> Result<Option<String>, String> {
         .ok_or_else(|| format!("missing value after {name}"))
 }
 
-fn compare(reference: &[u8], actual: &[u8]) -> Result<(), String> {
+fn compare(scene: &str, reference: &[u8], actual: &[u8]) -> Result<(), String> {
     if reference.len() != actual.len() {
         return Err(format!("image sizes differ: {} != {}", reference.len(), actual.len()));
     }
@@ -65,7 +89,7 @@ fn compare(reference: &[u8], actual: &[u8]) -> Result<(), String> {
     }
     println!("image_diff,changed_pixels,total_pixels,changed_percent,mean_abs_channel_error,\
         max_abs_channel_error");
-    println!("Blend2D_vs_ugl-rs,{changed_pixels},{},{:.6},{:.6},{maximum_error}",
+    println!("{scene},{changed_pixels},{},{:.6},{:.6},{maximum_error}",
         actual.len() / 4, changed_pixels as f64 * 400.0 / actual.len() as f64,
         total_error as f64 / actual.len() as f64);
     Ok(())
@@ -79,25 +103,40 @@ fn run() -> Result<(), String> {
         return Err("--iterations and --samples must be positive".into());
     }
 
-    let path = scene();
+    let (scene, path, operation) = scene()?;
     let mut pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
     let mut edges = vec![Edge::default(); EDGE_CAPACITY];
     let mut intersections = vec![Intersection::default(); EDGE_CAPACITY];
     let mut row_coverage = vec![0.0; WIDTH as usize];
     let mut row_offsets = vec![0; HEIGHT as usize + 1];
     let mut edge_indices = vec![0; EDGE_CAPACITY];
+    let mut stroke_points = vec![Default::default(); 2048];
+    let mut stroke_contours = vec![StrokeContour::default(); 16];
 
     let mut timings = {
         let mut render = || -> Result<(), String> {
             pixels.fill(0);
             let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4)
                 .map_err(|error| format!("target: {error:?}"))?;
-            render_solid(&path, Affine::identity(), SRGBA::new(40, 120, 220, 192),
-                RenderOptions::default(), &mut target, &mut RenderWorkspace {
-                    edges: &mut edges, intersections: &mut intersections,
-                    row_coverage: &mut row_coverage, row_offsets: &mut row_offsets,
-                    edge_indices: &mut edge_indices,
-                }).map_err(|error| format!("render: {error:?}"))
+            match operation {
+                Operation::Fill => render_solid(&path, Affine::identity(),
+                    SRGBA::new(40, 120, 220, 192), RenderOptions::default(), &mut target,
+                    &mut RenderWorkspace {
+                        edges: &mut edges, intersections: &mut intersections,
+                        row_coverage: &mut row_coverage, row_offsets: &mut row_offsets,
+                        edge_indices: &mut edge_indices,
+                    }),
+                Operation::Stroke => render_stroke_solid(&path, Affine::identity(),
+                    SRGBA::new(40, 120, 220, 192), StrokePathOptions {
+                        stroke: StrokeOptions::new(6.0).expect("valid comparison stroke"),
+                        ..Default::default()
+                    }, &mut target, &mut StrokeWorkspace {
+                        points: &mut stroke_points, contours: &mut stroke_contours,
+                        edges: &mut edges, intersections: &mut intersections,
+                        row_coverage: &mut row_coverage, row_offsets: &mut row_offsets,
+                        edge_indices: &mut edge_indices,
+                    }),
+            }.map_err(|error| format!("render: {error:?}"))
         };
 
         for _ in 0..warmup { render()?; }
@@ -116,12 +155,12 @@ fn run() -> Result<(), String> {
     }
 
     println!("renderer,scene,width,height,samples,iterations,min_ns,median_ns,max_ns,checksum");
-    println!("ugl-rs,fill_rectangles_64,{WIDTH},{HEIGHT},{samples},{iterations},\
+    println!("ugl-rs,{scene},{WIDTH},{HEIGHT},{samples},{iterations},\
         {:.3},{:.3},{:.3},{}", timings[0], timings[timings.len() / 2],
         timings[timings.len() - 1], checksum(&pixels));
     if let Some(path) = path_argument("--compare")? {
         let reference = fs::read(path).map_err(|error| format!("read reference: {error}"))?;
-        compare(&reference, &pixels)?;
+        compare(scene, &reference, &pixels)?;
     }
     Ok(())
 }

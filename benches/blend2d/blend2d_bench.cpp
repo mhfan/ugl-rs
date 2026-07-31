@@ -29,13 +29,19 @@ const char* output_path(int argc, char** argv) {
   return nullptr;
 }
 
+const char* scene_name(int argc, char** argv) {
+  for (int index = 1; index + 1 < argc; ++index)
+    if (std::strcmp(argv[index], "--scene") == 0) return argv[index + 1];
+  return "fill_rectangles_64";
+}
+
 uint64_t checksum(const std::vector<uint8_t>& bytes) {
   uint64_t hash = UINT64_C(0xcbf29ce484222325);
   for (uint8_t byte : bytes) hash = (hash ^ byte) * UINT64_C(0x100000001b3);
   return hash;
 }
 
-BLPath scene() {
+BLPath rectangles() {
   BLPath path;
   for (uint32_t index = 0; index < kShapes; ++index) {
     double x = double(index % 8) * 30.0 + 4.25;
@@ -45,6 +51,18 @@ BLPath scene() {
     path.line_to(x + 22.5, y + 21.75);
     path.line_to(x, y + 21.75);
     path.close();
+  }
+  return path;
+}
+
+BLPath curves() {
+  BLPath path;
+  path.move_to(8.0, 128.0);
+  for (uint32_t index = 0; index < 8; ++index) {
+    double x = 8.0 + double(index) * 30.0;
+    double high = (index & 1) == 0 ? 24.0 : 232.0;
+    double low = (index & 1) == 0 ? 232.0 : 24.0;
+    path.cubic_to(x + 10.0, high, x + 20.0, low, x + 30.0, 128.0);
   }
   return path;
 }
@@ -78,13 +96,26 @@ int main(int argc, char** argv) {
     return 2;
   }
 
+  const char* scene = scene_name(argc, argv);
+  bool stroke = std::strcmp(scene, "stroke_cubics_8") == 0;
+  bool curve = stroke || std::strcmp(scene, "fill_cubics_8") == 0;
+  if (!curve && std::strcmp(scene, "fill_rectangles_64") != 0) {
+    std::fprintf(stderr, "unknown scene: %s\n", scene);
+    return 2;
+  }
+
   BLImage image(kWidth, kHeight, BL_FORMAT_PRGB32);
   BLContext context(image);
-  BLPath path = scene();
+  BLPath path = curve ? curves() : rectangles();
   context.set_fill_style(BLRgba32(40, 120, 220, 192));
+  context.set_stroke_style(BLRgba32(40, 120, 220, 192));
+  context.set_stroke_width(6.0);
+  context.set_stroke_caps(BL_STROKE_CAP_BUTT);
+  context.set_stroke_join(BL_STROKE_JOIN_MITER_BEVEL);
+  context.set_stroke_miter_limit(4.0);
   auto render = [&]() {
     context.clear_all();
-    context.fill_path(path);
+    if (stroke) context.stroke_path(path); else context.fill_path(path);
   };
 
   for (uint32_t index = 0; index < warmup; ++index) render();
@@ -113,7 +144,7 @@ int main(int argc, char** argv) {
   }
 
   std::printf("renderer,scene,width,height,samples,iterations,min_ns,median_ns,max_ns,checksum\n");
-  std::printf("Blend2D,fill_rectangles_64,%u,%u,%u,%u,%.3f,%.3f,%.3f,%llu\n",
+  std::printf("Blend2D,%s,%u,%u,%u,%u,%.3f,%.3f,%.3f,%llu\n", scene,
       kWidth, kHeight, samples, iterations, timings.front(), timings[timings.size() / 2],
       timings.back(), static_cast<unsigned long long>(checksum(pixels)));
   return 0;
