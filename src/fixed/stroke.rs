@@ -1,7 +1,7 @@
 //! No-FPU stroke expansion for Q24.8 polylines.
 
 use crate::{edge::{Edge, EdgeSink}, geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar, Point},
-    math::{FixedAngle, cordic_turn, cordic_unit_vector, integer_sqrt_u64},
+    fixed::math::{FixedAngle, cordic_turn, cordic_unit_vector, integer_sqrt_u64},
     stroke::{LineCap, LineJoin}};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FixedStrokeError {

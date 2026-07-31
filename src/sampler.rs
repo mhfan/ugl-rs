@@ -20,13 +20,13 @@ use crate::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA},
 #[cfg(feature = "fixed")]
 use crate::geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar};
 #[cfg(feature = "fixed")]
-use crate::math::{integer_sqrt_u64, scaled_integer_sqrt};
+use crate::fixed::math::{integer_sqrt_u64, scaled_integer_sqrt};
 #[cfg(feature = "fixed")]
-use crate::math::cordic_turn;
+use crate::fixed::math::cordic_turn;
 #[cfg(feature = "fixed")]
-pub use crate::math::FixedAngle;
+pub use crate::fixed::math::FixedAngle;
 #[cfg(all(feature = "fixed", test))]
-use crate::math::integer_sqrt;
+use crate::fixed::math::integer_sqrt;
 
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///

@@ -2,7 +2,8 @@
 
 use crate::geometry::{Point, Scalar};
 #[cfg(feature = "fixed")]
-use crate::{geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar}, math::integer_sqrt_u64};
+use crate::{fixed::math::integer_sqrt_u64,
+    geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar}};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum DashPatternError {
     Empty, NonFiniteLength, NonPositiveLength, NonFinitePhase,

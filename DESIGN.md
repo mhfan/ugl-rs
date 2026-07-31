@@ -565,6 +565,7 @@ Backend-specific implementation lives under `src/fixed/`:
 src/fixed/
     context.rs
     flatten.rs
+    math.rs
     raster.rs
     stroke.rs
     tile.rs
