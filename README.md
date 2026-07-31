@@ -166,6 +166,21 @@ reused by fill, stroke, dash, streaming, retained-strip, or retained-tile
 composition. Fixed mask production and native fixed mask consumption require
 no FPU.
 
+The fixed execution contract is deliberately per entry point:
+
+| Fixed operation | No-FPU guarantee |
+| --- | --- |
+| geometry, flattening, stroke, dash, raster, strip/tile encoding | yes |
+| `fixed::sampler::*` solid/linear/radial/conic paint | yes |
+| path-mask production and native mask composition | yes |
+| `fixed::context::Context` with a native fixed sampler and no clip/mask clip | yes |
+| rectangle clipping | no; the shared antialiased rectangle adapter uses `f32` |
+| compatibility entry points accepting `sampler::PaintSampler` | no |
+
+“Fixed backend” therefore describes geometry and coverage representation; a
+complete no-FPU claim additionally requires a native fixed sampler and a clip
+route marked `yes` above.
+
 Color boundaries are explicit: solid paints and gradient stops accept straight
 encoded `SRGBA<u8>`, while `Pixmap::pixel` returns only validated
 `PremulSRGBA8`. `pixel_bytes` exposes the physical RGBA bytes unchanged.

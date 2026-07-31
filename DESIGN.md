@@ -185,6 +185,9 @@ strip IDs, and SIMD layouts do not enter the common `Edge` representation.
   functional backend parity without claiming FPU-free paint evaluation:
   existing gradient samplers remain `f32`.
 - `fixed::sampler::PaintSampler` is the explicit no-FPU contract.
+  A complete no-FPU draw additionally requires no clip or a native fixed path
+  mask. The shared antialiased rectangle adapter remains an explicitly
+  documented f32 compatibility path.
   `fixed::sampler::LinearGradient` accepts Q24.8 endpoints and a caller-owned
   encoded ramp. It uses `i64`
   coordinate deltas and exact `i128` projection, spread mapping, and nearest

@@ -2,28 +2,28 @@
 
 use core::convert::Infallible;
 use libfuzzer_sys::fuzz_target;
-use ugl_rs::{edge::Edge, geometry::{FixedScalar, Point}, raster::FillRule,
-    raster_fixed::{
-        FIXED_STRIP_HEIGHT, FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace,
-        FixedLine, FixedRasterWorkspace, FixedRenderError, FixedSegment, FixedTrapezoid,
-        fixed_strip_requirements, prepare_lines, rasterize_lines, rasterize_lines_to_strips,
+use ugl_rs::{analytic::{Intersection as FloatIntersection, Workspace as FloatWorkspace,
+        rasterize_edges as rasterize_float_edges},
+    edge::Edge, fixed::{Scalar, raster::{
+        STRIP_HEIGHT, CoverageRun, CoverageStrip, CoverageWorkspace,
+        Error, Line, Workspace, RenderError, Segment, Trapezoid, WorkspaceKind,
+        strip_requirements, prepare_lines, rasterize_lines, rasterize_lines_to_strips,
     },
-    tile_fixed::{
-        FixedCoverageTile, FixedCoverageTileRun, FixedDirectTilePiece,
-        FixedDirectTileWorkspace, fixed_tile_requirements, rasterize_lines_to_tiles,
-    },
+    tile::{CoverageTile, CoverageTileRun, DirectTilePiece,
+        DirectTileWorkspace, requirements as tile_requirements, rasterize_lines_to_tiles}},
+    geometry::Point, raster::FillRule,
 };
 
-fn point(bytes: [u8; 4], width: u32, height: u32) -> Point<FixedScalar> {
+fn point(bytes: [u8; 4], width: u32, height: u32) -> Point<Scalar> {
     let coordinate = |bytes: [u8; 2], extent: u32| {
         let range = (extent + 8) * 256;
-        FixedScalar::from_bits(u16::from_le_bytes(bytes) as i32 % range as i32 - 1024)
+        Scalar::from_bits(u16::from_le_bytes(bytes) as i32 % range as i32 - 1024)
     };
     (coordinate([bytes[0], bytes[1]], width),
      coordinate([bytes[2], bytes[3]], height)).into()
 }
 
-fn edge(from: Point<FixedScalar>, to: Point<FixedScalar>) -> Option<Edge<FixedScalar>> {
+fn edge(from: Point<Scalar>, to: Point<Scalar>) -> Option<Edge<Scalar>> {
     if from.y < to.y {
         Some(Edge { upper: from, lower: to, winding: 1 })
     } else if to.y < from.y {
@@ -50,27 +50,40 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    let mut lines = vec![FixedLine::default(); edges.len()];
+    if !edges.is_empty() {
+        let mut insufficient = vec![Line::default(); edges.len() - 1];
+        let before = insufficient.clone();
+        assert_eq!(prepare_lines(&edges, &mut insufficient), Err(Error::WorkspaceTooSmall {
+            kind: WorkspaceKind::Lines, required: edges.len(),
+        }));
+        assert_eq!(insufficient, before);
+    }
+    let mut lines = vec![Line::default(); edges.len()];
     let line_count = prepare_lines(&edges, &mut lines).unwrap();
     lines.truncate(line_count);
-    let strip_requirements = fixed_strip_requirements(&lines, height).unwrap();
-    let tile_requirements = fixed_tile_requirements(width, height).unwrap();
+    let float_edges = edges.iter().map(|edge| Edge {
+        upper: (edge.upper.x.to_num::<f32>(), edge.upper.y.to_num::<f32>()).into(),
+        lower: (edge.lower.x.to_num::<f32>(), edge.lower.y.to_num::<f32>()).into(),
+        winding: edge.winding,
+    }).collect::<Vec<_>>();
+    let strip_requirements = strip_requirements(&lines, height).unwrap();
+    let tile_requirements = tile_requirements(width, height).unwrap();
     let (mut segments, mut trapezoids, mut row_area) = (
-        vec![FixedSegment::default(); lines.len()],
-        vec![FixedTrapezoid::default(); lines.len().div_ceil(2)],
+        vec![Segment::default(); lines.len()],
+        vec![Trapezoid::default(); lines.len().div_ceil(2)],
         vec![0; width as usize],
     );
     let (mut offsets, mut indices) = (
         vec![0; strip_requirements.offsets], vec![0; strip_requirements.indices],
     );
     let (mut strips, mut strip_runs) = (
-        vec![FixedCoverageStrip::default(); height.div_ceil(FIXED_STRIP_HEIGHT) as usize],
-        vec![FixedCoverageRun::default(); width as usize * height as usize],
+        vec![CoverageStrip::default(); height.div_ceil(STRIP_HEIGHT) as usize],
+        vec![CoverageRun::default(); width as usize * height as usize],
     );
     let (mut tiles, mut tile_runs, mut pieces) = (
-        vec![FixedCoverageTile::default(); tile_requirements.tiles],
-        vec![FixedCoverageTileRun::default(); tile_requirements.runs],
-        vec![FixedDirectTilePiece::default(); tile_requirements.pieces],
+        vec![CoverageTile::default(); tile_requirements.tiles],
+        vec![CoverageTileRun::default(); tile_requirements.runs],
+        vec![DirectTilePiece::default(); tile_requirements.pieces],
     );
     let (mut heads, mut tails, mut touched) = (
         vec![0; tile_requirements.columns], vec![0; tile_requirements.columns],
@@ -78,7 +91,7 @@ fuzz_target!(|data: &[u8]| {
     );
 
     for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
-        let mut workspace = FixedRasterWorkspace {
+        let mut workspace = Workspace {
             segments: &mut segments, trapezoids: &mut trapezoids, row_area: &mut row_area,
             strip_offsets: &mut offsets, strip_indices: &mut indices,
         };
@@ -89,13 +102,16 @@ fuzz_target!(|data: &[u8]| {
                 Ok::<_, Infallible>(())
             });
         if let Err(error) = result {
-            let FixedRenderError::Raster(error) = error;
+            let error = match error {
+                RenderError::Raster(error) => error,
+                RenderError::Sink(never) => match never {},
+            };
             assert_eq!(rasterize_lines_to_strips(&lines, width, height, fill_rule,
-                &mut workspace, FixedCoverageWorkspace {
+                &mut workspace, CoverageWorkspace {
                     strips: &mut strips, runs: &mut strip_runs,
                 }).unwrap_err(), error);
             assert_eq!(rasterize_lines_to_tiles(&lines, width, height, fill_rule,
-                &mut workspace, FixedDirectTileWorkspace {
+                &mut workspace, DirectTileWorkspace {
                     tiles: &mut tiles, runs: &mut tile_runs, pieces: &mut pieces,
                     column_heads: &mut heads, column_tails: &mut tails,
                     touched_columns: &mut touched,
@@ -103,8 +119,31 @@ fuzz_target!(|data: &[u8]| {
             continue;
         }
 
+        let (mut float_pixels, mut float_row, mut float_intersections) = (
+            vec![0; streamed.len()], vec![0.0; width as usize],
+            vec![FloatIntersection::default(); float_edges.len()],
+        );
+        rasterize_float_edges(&float_edges, width, height, fill_rule,
+            &mut FloatWorkspace {
+                intersections: &mut float_intersections, row_coverage: &mut float_row,
+            }, &mut |x, y, coverage| {
+                float_pixels[y as usize * width as usize + x as usize] = coverage;
+                Ok::<_, Infallible>(())
+            }).unwrap();
+        // A constant per-pixel error is meaningful for a simple triangle.
+        // Arbitrary self-intersecting multi-contour inputs can accumulate
+        // independently rounded fixed crossings, so their stronger oracle is
+        // the exact stream/strip/tile equivalence checked below.
+        if edges.len() <= 3 {
+            for (&fixed, &float) in streamed.iter().zip(&float_pixels) {
+                assert!(fixed.abs_diff(float) <= 2,
+                    "fixed={fixed}, float={float}, size={width}x{height}, \
+                     rule={fill_rule:?}");
+            }
+        }
+
         let retained = rasterize_lines_to_strips(&lines, width, height, fill_rule,
-            &mut workspace, FixedCoverageWorkspace {
+            &mut workspace, CoverageWorkspace {
                 strips: &mut strips, runs: &mut strip_runs,
             }).unwrap();
         let mut replayed = vec![0; streamed.len()];
@@ -115,7 +154,7 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(replayed, streamed);
 
         let tiled = rasterize_lines_to_tiles(&lines, width, height, fill_rule,
-            &mut workspace, FixedDirectTileWorkspace {
+            &mut workspace, DirectTileWorkspace {
                 tiles: &mut tiles, runs: &mut tile_runs, pieces: &mut pieces,
                 column_heads: &mut heads, column_tails: &mut tails,
                 touched_columns: &mut touched,

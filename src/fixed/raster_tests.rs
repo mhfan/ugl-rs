@@ -70,6 +70,22 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(intersection.floor_raw(), 128);
 }
 
+#[test] fn exact_device_limit_is_accepted_and_next_raw_unit_is_rejected() {
+    let limit = Scalar::from_bits(DEVICE_RAW_LIMIT);
+    let negative_limit = Scalar::from_bits(-DEVICE_RAW_LIMIT);
+    let line = Line::new(Edge {
+        upper: (negative_limit, Scalar::ZERO).into(),
+        lower: (limit, Scalar::ONE).into(), winding: 1,
+    }).unwrap();
+    assert_eq!(line.intersection(Scalar::ZERO).floor_raw(), -DEVICE_RAW_LIMIT as i64);
+
+    let outside = Scalar::from_bits(DEVICE_RAW_LIMIT + 1);
+    assert_eq!(Line::new(Edge {
+        upper: (outside, Scalar::ZERO).into(),
+        lower: (limit, Scalar::ONE).into(), winding: 1,
+    }), Err(Error::CoordinateOutOfRange));
+}
+
 #[test] fn rasterizer_renders_aligned_and_fractional_rectangles() {
     let rectangle = |left, right| [
         Edge { upper: (fixed(left), fixed(0.0)).into(),
