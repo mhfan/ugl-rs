@@ -170,7 +170,7 @@ and SIMD layouts do not enter the common `Edge` representation.
 
 ## Paint and gradients
 
-- `PaintSampler` returns `EncodedPremulSRGBA8` at device-space pixel centers
+- `PaintSampler` returns `PremulSRGBA8` at device-space pixel centers
   and is statically dispatched without allocation.
 - `LinearPaintSampler` is a separate explicit contract returning
   `LinearPremulRGBA<f32>` without an encoded round trip. Built-in solid and
@@ -500,7 +500,7 @@ and consumption remain allocation-free and no-FPU.
 The framebuffer boundary now distinguishes raw storage from valid color:
 solid paint and gradient-stop inputs use straight encoded `SRGBA<u8>`;
 `PixmapMut::pixel_bytes` exposes physical RGBA bytes unchanged; and `pixel`
-returns only validated `EncodedPremulSRGBA8`. Construction remains O(1) with
+returns only validated `PremulSRGBA8`. Construction remains O(1) with
 respect to image area and therefore does not scan caller-owned destination
 contents. Compositing over existing bytes requires the caller to uphold the
 premultiplied invariant.

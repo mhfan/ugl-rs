@@ -133,7 +133,7 @@ impl<'a> LinearPixmapMut<'a> {
 
     fn encode_dirty_with<F>(&mut self, destination: &mut PixmapMut<'_>,
         encode: F) -> Result<(), LinearPixmapError>
-        where F: Fn(LinearPremulRGBA<f32>) -> crate::color::EncodedPremulSRGBA8 {
+        where F: Fn(LinearPremulRGBA<f32>) -> crate::color::PremulSRGBA8 {
         self.validate_destination(destination)?;
         let tile_area = u64::from(LINEAR_DIRTY_TILE_SIZE).pow(2);
         let pixel_count = u64::from(self.width) * u64::from(self.height);

@@ -1,6 +1,6 @@
 
 use ugl_rs::{analytic::AnalyticIntersection,
-    color::{EncodedPremulSRGBA8, LinearPremulRGBA, PremulRGBA, SRGBA, SRGBA as RGBA},
+    color::{PremulSRGBA8, LinearPremulRGBA, PremulRGBA, SRGBA, SRGBA as RGBA},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,
         render_stroke_solid_analytic,
@@ -15,7 +15,7 @@ use ugl_rs::{analytic::AnalyticIntersection,
 const  WIDTH: u32 = 4;
 const HEIGHT: u32 = 4;
 
-fn legacy_pixel(pixel: EncodedPremulSRGBA8) -> PremulRGBA<u8> {
+fn legacy_pixel(pixel: PremulSRGBA8) -> PremulRGBA<u8> {
     let [r, g, b, a] = pixel.to_array();
     (r, g, b, a).into()
 }

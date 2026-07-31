@@ -1,7 +1,7 @@
 
 use super::*;
 use crate::{analytic::AnalyticIntersection,
-    color::{EncodedPremulSRGBA8, RGBA as GenericRGBA, SRGBA as RGBA},
+    color::{PremulSRGBA8, RGBA as GenericRGBA, SRGBA as RGBA},
     edge::Edge,
     geometry::{Affine, PathBuilder}, raster::Intersection,
     sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient, SpreadMode},
@@ -121,8 +121,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 #[test] fn analytic_sampled_paint_uses_device_pixel_centers_and_coverage() {
     struct CoordinatePaint;
     impl PaintSampler for CoordinatePaint {
-        fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
-            EncodedPremulSRGBA8::new((x * 40.0) as _, (y * 40.0) as _, 0, u8::MAX).unwrap()
+        fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
+            PremulSRGBA8::new((x * 40.0) as _, (y * 40.0) as _, 0, u8::MAX).unwrap()
         }
     }
 
@@ -490,8 +490,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 
     struct CoordinatePaint;
     impl PaintSampler for CoordinatePaint {
-        fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
-            EncodedPremulSRGBA8::new((x * 40.0) as _, (y * 40.0) as _, 0, u8::MAX).unwrap()
+        fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
+            PremulSRGBA8::new((x * 40.0) as _, (y * 40.0) as _, 0, u8::MAX).unwrap()
         }
     }
     let mut painted_pixels = [0; 8];
@@ -625,8 +625,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         &mut PixmapMut::new(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(cached_pixels, masked_pixels);
 
-    let ramp = [EncodedPremulSRGBA8::new(255, 0, 0, 255).unwrap(),
-                EncodedPremulSRGBA8::new(0, 0, 255, 255).unwrap()];
+    let ramp = [PremulSRGBA8::new(255, 0, 0, 255).unwrap(),
+                PremulSRGBA8::new(0, 0, 255, 255).unwrap()];
     let gradient = FixedLinearGradient::new(
         (fixed(0.0), fixed(0.0)), (fixed(2.0), fixed(0.0)),
         &ramp, SpreadMode::Pad).unwrap();

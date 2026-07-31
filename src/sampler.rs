@@ -15,7 +15,7 @@
       a texture (image)
  */
 
-use crate::{color::{EncodedPremulSRGBA8, LinearPremulRGBA, SRGBA},
+use crate::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA},
     geometry::{Affine, Point}};
 #[cfg(feature = "fixed")]
 use crate::geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar};
@@ -33,10 +33,10 @@ use crate::math::integer_sqrt;
 /// Implementations should be small values borrowed by the compositor. Calls are
 /// statically dispatched; no trait object or allocation is required.
 pub trait PaintSampler {
-    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8;
+    fn sample(&self, x: f32, y: f32) -> PremulSRGBA8;
 
     /// Reports a position-independent color to enable span and tile fast paths.
-    fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { None }
+    fn solid_color(&self) -> Option<PremulSRGBA8> { None }
 }
 
 /// Produces encoded premultiplied sRGB at integer device-pixel coordinates.
@@ -45,8 +45,8 @@ pub trait PaintSampler {
 /// floating-point arithmetic. This is separate from [`PaintSampler`] so a
 /// fixed raster pipeline never silently calls an `f32` sampler.
 #[cfg(feature = "fixed")] pub trait FixedPaintSampler {
-    fn sample_fixed(&self, x: u32, y: u32) -> EncodedPremulSRGBA8;
-    fn solid_color_fixed(&self) -> Option<EncodedPremulSRGBA8> { None }
+    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8;
+    fn solid_color_fixed(&self) -> Option<PremulSRGBA8> { None }
 }
 
 /// Produces premultiplied linear-light colors without an encoded round trip.
@@ -76,15 +76,15 @@ pub trait LinearPaintSampler {
 }
 
 impl<S: PaintSampler + ?Sized> PaintSampler for &S {
-    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 { (**self).sample(x, y) }
-    fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { (**self).solid_color() }
+    fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 { (**self).sample(x, y) }
+    fn solid_color(&self) -> Option<PremulSRGBA8> { (**self).solid_color() }
 }
 
 #[cfg(feature = "fixed")] impl<S: FixedPaintSampler + ?Sized> FixedPaintSampler for &S {
-    fn sample_fixed(&self, x: u32, y: u32) -> EncodedPremulSRGBA8 {
+    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8 {
         (**self).sample_fixed(x, y)
     }
-    fn solid_color_fixed(&self) -> Option<EncodedPremulSRGBA8> {
+    fn solid_color_fixed(&self) -> Option<PremulSRGBA8> {
         (**self).solid_color_fixed()
     }
 }
@@ -124,12 +124,12 @@ impl<S> TransformedPaint<S> {
 }
 
 impl<S: PaintSampler> PaintSampler for TransformedPaint<S> {
-    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
+    fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
         let point = self.device_to_paint.transform_point((x, y).into());
         self.sampler.sample(point.x, point.y)
     }
 
-    fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { self.sampler.solid_color() }
+    fn solid_color(&self) -> Option<PremulSRGBA8> { self.sampler.solid_color() }
 }
 
 impl<S: LinearPaintSampler> LinearPaintSampler for TransformedPaint<S> {
@@ -154,30 +154,30 @@ impl<S: LinearPaintSampler> LinearPaintSampler for TransformedPaint<S> {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SolidPaint {
-    encoded: EncodedPremulSRGBA8, linear: LinearPremulRGBA<f32>,
+    encoded: PremulSRGBA8, linear: LinearPremulRGBA<f32>,
 }
 
 impl SolidPaint {
     pub fn new(color: SRGBA<u8>) -> Self {
         Self { encoded: color.premul_encoded(), linear: color.to_linear().premul() }
     }
-    pub fn premultiplied(color: EncodedPremulSRGBA8) -> Self {
+    pub fn premultiplied(color: PremulSRGBA8) -> Self {
         Self { encoded: color, linear: color.to_linear() }
     }
-    pub fn color(&self) -> EncodedPremulSRGBA8 { self.encoded }
+    pub fn color(&self) -> PremulSRGBA8 { self.encoded }
     pub fn linear_color(&self) -> LinearPremulRGBA<f32> { self.linear }
 }
 
 impl From<SRGBA<u8>> for SolidPaint { fn from(color: SRGBA<u8>) -> Self { Self::new(color) } }
 
 impl PaintSampler for SolidPaint {
-    fn sample(&self, _x: f32, _y: f32) -> EncodedPremulSRGBA8 { self.encoded }
-    fn solid_color(&self) -> Option<EncodedPremulSRGBA8> { Some(self.encoded) }
+    fn sample(&self, _x: f32, _y: f32) -> PremulSRGBA8 { self.encoded }
+    fn solid_color(&self) -> Option<PremulSRGBA8> { Some(self.encoded) }
 }
 
 #[cfg(feature = "fixed")] impl FixedPaintSampler for SolidPaint {
-    fn sample_fixed(&self, _x: u32, _y: u32) -> EncodedPremulSRGBA8 { self.encoded }
-    fn solid_color_fixed(&self) -> Option<EncodedPremulSRGBA8> { Some(self.encoded) }
+    fn sample_fixed(&self, _x: u32, _y: u32) -> PremulSRGBA8 { self.encoded }
+    fn solid_color_fixed(&self) -> Option<PremulSRGBA8> { Some(self.encoded) }
 }
 
 impl LinearPaintSampler for SolidPaint {
@@ -207,7 +207,7 @@ impl GradientStop {
 /// Validated, caller-owned gradient stops.
 #[derive(Clone, Copy, Debug)] pub struct GradientStops<'a> {
     stops: &'a [GradientStop],
-    encoded_ramp: Option<&'a [EncodedPremulSRGBA8]>,
+    encoded_ramp: Option<&'a [PremulSRGBA8]>,
     linear_ramp: Option<&'a [LinearPremulRGBA<f32>]>, opaque: bool,
 }
 
@@ -234,7 +234,7 @@ impl<'a> GradientStops<'a> {
     /// [`Self::new`]. Smooth gradients converge with ramp resolution; repeated
     /// stops used for hard transitions are quantized to one ramp interval.
     pub fn with_ramp(stops: &'a [GradientStop],
-        ramp: &'a mut [EncodedPremulSRGBA8]) -> Result<Self, GradientError> {
+        ramp: &'a mut [PremulSRGBA8]) -> Result<Self, GradientError> {
         let mut result = Self::new(stops)?;
         if ramp.len() < 2 { return Err(GradientError::RampTooSmall); }
         let scale = (ramp.len() - 1) as f32;
@@ -263,17 +263,17 @@ impl<'a> GradientStops<'a> {
 
     pub fn as_slice(&self) -> &'a [GradientStop] { self.stops }
     /// Returns the caller-owned encoded ramp when this is a ramp-backed sampler.
-    pub fn encoded_ramp(&self) -> Option<&'a [EncodedPremulSRGBA8]> { self.encoded_ramp }
+    pub fn encoded_ramp(&self) -> Option<&'a [PremulSRGBA8]> { self.encoded_ramp }
     /// Returns whether every stop has alpha exactly one.
     pub fn is_opaque(&self) -> bool { self.opaque }
 
-    fn sample(&self, t: f32) -> EncodedPremulSRGBA8 {
+    fn sample(&self, t: f32) -> PremulSRGBA8 {
         let Some(ramp) = self.encoded_ramp else { return Self::sample_stops(self.stops, t); };
         let index = (t.clamp(0.0, 1.0) * (ramp.len() - 1) as f32 + 0.5) as usize;
         ramp[index]
     }
 
-    fn sample_stops(stops: &[GradientStop], t: f32) -> EncodedPremulSRGBA8 {
+    fn sample_stops(stops: &[GradientStop], t: f32) -> PremulSRGBA8 {
         Self::sample_linear_stops(stops, t).to_encoded_srgba8()
     }
 
@@ -320,12 +320,12 @@ impl SpreadMode {
 #[cfg(feature = "fixed")]
 #[derive(Clone, Copy, Debug)] pub struct FixedLinearGradient<'a> {
     from: [i32; 2], delta: [i64; 2], length_squared: i128,
-    ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode,
+    ramp: &'a [PremulSRGBA8], spread: SpreadMode,
 }
 
 #[cfg(feature = "fixed")] impl<'a> FixedLinearGradient<'a> {
     pub fn new(from: impl Into<Point<FixedScalar>>, to: impl Into<Point<FixedScalar>>,
-        ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode) ->
+        ramp: &'a [PremulSRGBA8], spread: SpreadMode) ->
         Result<Self, GradientError> {
         validate_fixed_ramp(ramp)?;
         let (from, to) = (from.into(), to.into());
@@ -340,7 +340,7 @@ impl SpreadMode {
         Ok(Self { from, delta, length_squared, ramp, spread })
     }
 
-    pub fn ramp(&self) -> &'a [EncodedPremulSRGBA8] { self.ramp }
+    pub fn ramp(&self) -> &'a [PremulSRGBA8] { self.ramp }
     pub fn spread(&self) -> SpreadMode { self.spread }
 
     fn ramp_index(&self, x: u32, y: u32) -> usize {
@@ -357,7 +357,7 @@ impl SpreadMode {
 }
 
 #[cfg(feature = "fixed")] impl FixedPaintSampler for FixedLinearGradient<'_> {
-    fn sample_fixed(&self, x: u32, y: u32) -> EncodedPremulSRGBA8 {
+    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8 {
         self.ramp[self.ramp_index(x, y)]
     }
 }
@@ -370,13 +370,13 @@ impl SpreadMode {
 #[derive(Clone, Copy, Debug)] pub struct FixedRadialGradient<'a> {
     start: [i32; 2], center_delta: [i64; 2],
     start_radius: i64, radius_delta: i64, quadratic: i128,
-    ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode,
+    ramp: &'a [PremulSRGBA8], spread: SpreadMode,
 }
 
 #[cfg(feature = "fixed")] impl<'a> FixedRadialGradient<'a> {
     /// Creates a concentric gradient from radius zero to `radius`.
     pub fn new(center: impl Into<Point<FixedScalar>>, radius: FixedScalar,
-        ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode) ->
+        ramp: &'a [PremulSRGBA8], spread: SpreadMode) ->
         Result<Self, GradientError> {
         let center = center.into();
         Self::two_circle(center, FixedScalar::ZERO, center, radius, ramp, spread)
@@ -385,7 +385,7 @@ impl SpreadMode {
     /// Creates a concentric gradient between two non-negative radii.
     pub fn with_radii(center: impl Into<Point<FixedScalar>>,
         start_radius: FixedScalar, end_radius: FixedScalar,
-        ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode) ->
+        ramp: &'a [PremulSRGBA8], spread: SpreadMode) ->
         Result<Self, GradientError> {
         let center = center.into();
         Self::two_circle(center, start_radius, center, end_radius, ramp, spread)
@@ -394,7 +394,7 @@ impl SpreadMode {
     /// Creates the general gradient between two circles.
     pub fn two_circle(start: impl Into<Point<FixedScalar>>, start_radius: FixedScalar,
         end: impl Into<Point<FixedScalar>>, end_radius: FixedScalar,
-        ramp: &'a [EncodedPremulSRGBA8], spread: SpreadMode) ->
+        ramp: &'a [PremulSRGBA8], spread: SpreadMode) ->
         Result<Self, GradientError> {
         validate_fixed_ramp(ramp)?;
         if start_radius < FixedScalar::ZERO || end_radius < FixedScalar::ZERO {
@@ -423,7 +423,7 @@ impl SpreadMode {
             radius_delta, quadratic, ramp, spread })
     }
 
-    pub fn ramp(&self) -> &'a [EncodedPremulSRGBA8] { self.ramp }
+    pub fn ramp(&self) -> &'a [PremulSRGBA8] { self.ramp }
     pub fn spread(&self) -> SpreadMode { self.spread }
 
     fn concentric_ramp_index(&self, x: u32, y: u32) -> Option<usize> {
@@ -491,12 +491,12 @@ impl SpreadMode {
 }
 
 #[cfg(feature = "fixed")] impl FixedPaintSampler for FixedRadialGradient<'_> {
-    fn sample_fixed(&self, x: u32, y: u32) -> EncodedPremulSRGBA8 {
+    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8 {
         if self.center_delta == [0, 0] {
             return self.concentric_ramp_index(x, y)
-                .map_or_else(EncodedPremulSRGBA8::zeroed, |index| self.ramp[index]);
+                .map_or_else(PremulSRGBA8::zeroed, |index| self.ramp[index]);
         }
-        self.parameter(x, y).map_or_else(EncodedPremulSRGBA8::zeroed,
+        self.parameter(x, y).map_or_else(PremulSRGBA8::zeroed,
             |(parameter, denominator)| self.ramp[
                 fixed_ramp_index(parameter, denominator, self.ramp.len(), self.spread)])
     }
@@ -513,7 +513,7 @@ fn normalize_ratio(mut numerator: i128, mut denominator: i128) -> Option<(i128, 
 }
 
 #[cfg(feature = "fixed")]
-fn validate_fixed_ramp(ramp: &[EncodedPremulSRGBA8]) -> Result<(), GradientError> {
+fn validate_fixed_ramp(ramp: &[PremulSRGBA8]) -> Result<(), GradientError> {
     if ramp.len() < 2 { return Err(GradientError::RampTooSmall); }
     if ramp.len() > u32::MAX as usize { return Err(GradientError::RampTooLarge); }
     Ok(())
@@ -580,7 +580,7 @@ impl<'a> LinearGradient<'a> {
 }
 
 impl PaintSampler for LinearGradient<'_> {
-    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
+    fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
         let t = ((x - self.from.x) * self.delta.x  +
                  (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
         self.stops.sample(self.spread.map(t))
@@ -692,8 +692,8 @@ impl<'a> RadialGradient<'a> {
 }
 
 impl PaintSampler for RadialGradient<'_> {
-    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
-        self.parameter(x, y).map_or_else(EncodedPremulSRGBA8::zeroed,
+    fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
+        self.parameter(x, y).map_or_else(PremulSRGBA8::zeroed,
             |t| self.stops.sample(self.spread.map(t)))
     }
 }
@@ -732,12 +732,12 @@ impl LinearPaintSampler for RadialGradient<'_> {
 #[cfg(feature = "fixed")]
 #[derive(Clone, Copy, Debug)] pub struct FixedConicGradient<'a> {
     center: [i32; 2], start_angle: FixedAngle,
-    ramp: &'a [EncodedPremulSRGBA8],
+    ramp: &'a [PremulSRGBA8],
 }
 
 #[cfg(feature = "fixed")] impl<'a> FixedConicGradient<'a> {
     pub fn new(center: impl Into<Point<FixedScalar>>, start_angle: FixedAngle,
-        ramp: &'a [EncodedPremulSRGBA8]) -> Result<Self, GradientError> {
+        ramp: &'a [PremulSRGBA8]) -> Result<Self, GradientError> {
         validate_fixed_ramp(ramp)?;
         let center = center.into();
         let center = [center.x.to_bits(), center.y.to_bits()];
@@ -748,7 +748,7 @@ impl LinearPaintSampler for RadialGradient<'_> {
         Ok(Self { center, start_angle, ramp })
     }
 
-    pub fn ramp(&self) -> &'a [EncodedPremulSRGBA8] { self.ramp }
+    pub fn ramp(&self) -> &'a [PremulSRGBA8] { self.ramp }
     pub fn start_angle(&self) -> FixedAngle { self.start_angle }
 
     fn ramp_index(&self, x: u32, y: u32) -> Option<usize> {
@@ -769,8 +769,8 @@ impl LinearPaintSampler for RadialGradient<'_> {
 }
 
 #[cfg(feature = "fixed")] impl FixedPaintSampler for FixedConicGradient<'_> {
-    fn sample_fixed(&self, x: u32, y: u32) -> EncodedPremulSRGBA8 {
-        self.ramp_index(x, y).map_or_else(EncodedPremulSRGBA8::zeroed,
+    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8 {
+        self.ramp_index(x, y).map_or_else(PremulSRGBA8::zeroed,
             |index| self.ramp[index])
     }
 }
@@ -818,7 +818,7 @@ impl<'a> ConicGradient<'a> {
 }
 
 impl PaintSampler for ConicGradient<'_> {
-    fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
+    fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
         self.stops.sample(SpreadMode::Repeat.map(self.turn(x, y) - self.start_turn))
     }
 }
@@ -851,16 +851,16 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
 
 #[cfg(test)] mod tests { use super::*;
     use crate::color::SRGBA as RGBA;
-    fn encoded(color: SRGBA<u8>) -> EncodedPremulSRGBA8 { color.premul_encoded() }
+    fn encoded(color: SRGBA<u8>) -> PremulSRGBA8 { color.premul_encoded() }
 
-    fn linear(r: f32, g: f32, b: f32, a: f32) -> EncodedPremulSRGBA8 {
+    fn linear(r: f32, g: f32, b: f32, a: f32) -> PremulSRGBA8 {
         crate::color::LinearRGBA::new(r, g, b, a).premul().to_encoded_srgba8()
     }
 
     #[test] fn solid_paint_is_position_independent_and_premultiplied() {
         let paint = SolidPaint::new(RGBA::new(200, 100, 50, 128));
         assert_eq!(paint.sample(0.5, 0.5),
-            EncodedPremulSRGBA8::new(100, 50, 25, 128).unwrap());
+            PremulSRGBA8::new(100, 50, 25, 128).unwrap());
         assert_eq!(paint.sample(-100.0, 200.0), paint.solid_color().unwrap());
     }
 
@@ -881,7 +881,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         let stops = [GradientStop::new(0.0, RGBA::new(255, 0, 0, 0)),
                      GradientStop::new(1.0, RGBA::new(0, 0, 255, 255))];
         assert_eq!(GradientStops::new(&stops).unwrap().sample(0.5),
-            EncodedPremulSRGBA8::new(0, 0, 128, 128).unwrap());
+            PremulSRGBA8::new(0, 0, 128, 128).unwrap());
 
         let single = [GradientStop::new(0.4, RGBA::green())];
         let single = GradientStops::new(&single).unwrap();
@@ -902,12 +902,12 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
             GradientStop::new(0.0, RGBA::red()),
             GradientStop::new(1.0, RGBA::new(0, 0, 255, 254)),
         ]).unwrap().is_opaque());
-        let mut too_small = [EncodedPremulSRGBA8::zeroed(); 1];
+        let mut too_small = [PremulSRGBA8::zeroed(); 1];
         assert_eq!(GradientStops::with_ramp(&stops, &mut too_small).unwrap_err(),
             GradientError::RampTooSmall);
 
         let exact = GradientStops::new(&stops).unwrap();
-        let mut storage = [EncodedPremulSRGBA8::zeroed(); 1024];
+        let mut storage = [PremulSRGBA8::zeroed(); 1024];
         let ramp = GradientStops::with_ramp(&stops, &mut storage).unwrap();
         for step in 0..=256 {
             let t = step as f32 / 256.0;
@@ -957,7 +957,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
     #[cfg(feature = "fixed")]
     #[test] fn fixed_linear_gradient_matches_the_encoded_reference_ramp() {
         let stops = red_blue_stops();
-        let mut storage = [EncodedPremulSRGBA8::zeroed(); 257];
+        let mut storage = [PremulSRGBA8::zeroed(); 257];
         let stops = GradientStops::with_ramp(&stops, &mut storage).unwrap();
         let ramp = stops.encoded_ramp().unwrap();
         let (from, to) = ((FixedScalar::from_num(2), FixedScalar::from_num(0)),
@@ -995,7 +995,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
     #[cfg(feature = "fixed")]
     #[test] fn fixed_concentric_radial_matches_the_encoded_reference_ramp() {
         let stops = red_blue_stops();
-        let mut storage = [EncodedPremulSRGBA8::zeroed(); 257];
+        let mut storage = [PremulSRGBA8::zeroed(); 257];
         let stops = GradientStops::with_ramp(&stops, &mut storage).unwrap();
         let ramp = stops.encoded_ramp().unwrap();
         let center = (FixedScalar::from_num(8), FixedScalar::from_num(8));
@@ -1060,7 +1060,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
     #[cfg(feature = "fixed")]
     #[test] fn fixed_two_circle_radial_matches_quadratic_and_linear_references() {
         fn assert_close(fixed: &FixedRadialGradient<'_>, reference: &RadialGradient<'_>,
-            ramp: &[EncodedPremulSRGBA8], x: u32, y: u32) {
+            ramp: &[PremulSRGBA8], x: u32, y: u32) {
             let (actual, expected) = (fixed.sample_fixed(x, y),
                 reference.sample(x as f32 + 0.5, y as f32 + 0.5));
             match (ramp.iter().position(|color| *color == actual),
@@ -1073,7 +1073,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         }
 
         let stop_values = red_blue_stops();
-        let mut storage = [EncodedPremulSRGBA8::zeroed(); 257];
+        let mut storage = [PremulSRGBA8::zeroed(); 257];
         let stops = GradientStops::with_ramp(&stop_values, &mut storage).unwrap();
         let ramp = stops.encoded_ramp().unwrap();
         let fixed = FixedScalar::from_num;
@@ -1122,7 +1122,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
             (fixed(0), fixed(0)), fixed(1), &ramp, SpreadMode::Pad).unwrap();
         let first_outside_pixel = FIXED_DEVICE_RAW_LIMIT as u32 / 256;
         assert_eq!(radial.sample_fixed(first_outside_pixel, 0),
-            EncodedPremulSRGBA8::zeroed());
+            PremulSRGBA8::zeroed());
     }
 
     #[test] fn radial_gradient_supports_concentric_and_focal_circles() {
@@ -1146,7 +1146,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         let tangent = RadialGradient::two_circle((0.0, 0.0), 0.0, (1.0, 0.0), 1.0,
             stops, SpreadMode::Pad).unwrap();
         assert_eq!(tangent.sample(0.5, 0.0), linear(0.75, 0.0, 0.25, 1.0));
-        assert_eq!(tangent.sample(0.0, 1.0), EncodedPremulSRGBA8::zeroed());
+        assert_eq!(tangent.sample(0.0, 1.0), PremulSRGBA8::zeroed());
     }
 
     #[cfg(feature = "fixed")]
@@ -1169,7 +1169,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         assert!(maximum_error <= 6e-6, "maximum turn error={maximum_error}");
 
         let stop_values = red_blue_stops();
-        let mut storage = [EncodedPremulSRGBA8::zeroed(); 257];
+        let mut storage = [PremulSRGBA8::zeroed(); 257];
         let stops = GradientStops::with_ramp(&stop_values, &mut storage).unwrap();
         let ramp = stops.encoded_ramp().unwrap();
         let fixed = FixedScalar::from_num;
@@ -1207,7 +1207,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         let conic = FixedConicGradient::new(
             (fixed(0), fixed(0)), FixedAngle::ZERO, &ramp).unwrap();
         assert_eq!(conic.sample_fixed(FIXED_DEVICE_RAW_LIMIT as u32 / 256, 0),
-            EncodedPremulSRGBA8::zeroed());
+            PremulSRGBA8::zeroed());
     }
 
     #[test] fn conic_gradient_wraps_a_full_turn_from_its_start_angle() {

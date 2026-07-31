@@ -169,7 +169,7 @@ and consume arbitrary path masks end to end without an FPU.
 
 Color boundaries are explicit: solid paints and gradient stops accept straight
 encoded `SRGBA<u8>`, while `PixmapMut::pixel` returns only validated
-`EncodedPremulSRGBA8`. `pixel_bytes` exposes the physical RGBA bytes unchanged.
+`PremulSRGBA8`. `pixel_bytes` exposes the physical RGBA bytes unchanged.
 Pixmap construction intentionally validates layout without scanning the image;
 source-over callers are responsible for valid premultiplied destination data.
 

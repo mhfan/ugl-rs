@@ -11,7 +11,7 @@
 //! - **alpha association**: [`RGBA`] and the two straight wrappers keep RGB
 //!   independent of alpha, while [`PremulRGBA`] and [`LinearPremulRGBA`] require
 //!   each RGB channel to be no greater than alpha;
-//! - **storage boundary**: [`EncodedPremulSRGBA8`] is the logical color returned
+//! - **storage boundary**: [`PremulSRGBA8`] is the logical color returned
 //!   by the current paint samplers; canvas owns the conversion to its raw
 //!   premultiplied RGBA8888 framebuffer bytes.
 //!
@@ -21,7 +21,7 @@
 //! SRGBA<u8> (straight, encoded input)
 //!     -> LinearRGBA<f32> (decode)
 //!     -> LinearPremulRGBA<f32> (premultiply, interpolate)
-//!     -> EncodedPremulSRGBA8 (encode and quantize at the framebuffer boundary)
+//!     -> PremulSRGBA8 (encode and quantize at the framebuffer boundary)
 //! ```
 //!
 //! Gradient interpolation follows this path. The current RGBA8888 canvas then
@@ -56,7 +56,7 @@
 //! Names intentionally include transfer and alpha association at semantic
 //! boundaries. The legacy [`RGBA`] and [`PremulRGBA`] names are transfer-neutral
 //! building blocks; prefer [`SRGBA`], [`LinearRGBA`], [`LinearPremulRGBA`], or
-//! [`EncodedPremulSRGBA8`] in new APIs whenever the interpretation is known.
+//! [`PremulSRGBA8`] in new APIs whenever the interpretation is known.
 
 /** ```
     use ugl_rs::color::RGBA;
@@ -104,7 +104,7 @@ impl<T: ColorChannel> Default for LinearPremulRGBA<T> {
 
 /// Premultiplied encoded sRGB bytes for the legacy compatibility path.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[repr(transparent)] pub struct EncodedPremulSRGBA8(PremulRGBA<u8>);
+#[repr(transparent)] pub struct PremulSRGBA8(PremulRGBA<u8>);
 
 pub const SRGB8_ENCODE_LUT_SIZE: usize = 4096;
 
@@ -347,8 +347,8 @@ impl SRGBA<u8> {
     ///
     /// This is not linear-light compositing; use [`Self::to_linear`] followed by
     /// [`LinearRGBA::premul`] for the reference color-correct path.
-    pub fn premul_encoded(self) -> EncodedPremulSRGBA8 {
-        EncodedPremulSRGBA8(self.0.premul())
+    pub fn premul_encoded(self) -> PremulSRGBA8 {
+        PremulSRGBA8(self.0.premul())
     }
 
     /// Decodes sRGB RGB channels to linear light. Alpha remains a linear opacity.
@@ -371,7 +371,7 @@ impl From<[u8; 4]> for SRGBA<u8> {
 impl From<RGBA<u8>> for SRGBA<u8> { fn from(color: RGBA<u8>) -> Self { Self(color) } }
 impl From<SRGBA<u8>> for RGBA<u8> { fn from(color: SRGBA<u8>) -> Self { color.0 } }
 
-impl EncodedPremulSRGBA8 {
+impl PremulSRGBA8 {
     /// Constructs encoded premultiplied bytes, rejecting RGB above alpha.
     pub fn new(r: u8, g: u8, b: u8, a: u8) -> Option<Self> {
         PremulRGBA::new(r, g, b, a).map(Self)
@@ -386,7 +386,7 @@ impl EncodedPremulSRGBA8 {
     pub(crate) fn into_legacy(self) -> PremulRGBA<u8> { self.0 }
 }
 
-impl Default for EncodedPremulSRGBA8 { fn default() -> Self { Self::zeroed() } }
+impl Default for PremulSRGBA8 { fn default() -> Self { Self::zeroed() } }
 
 impl LinearRGBA<f32> {
     pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self { Self(RGBA::new(r, g, b, a)) }
@@ -408,7 +408,7 @@ impl LinearPremulRGBA<f32> {
     pub fn to_array(self) -> [f32; 4] { self.0.to_array() }
     pub fn alpha(&self) -> f32 { self.0.alpha() }
     pub fn unpremul(self) -> LinearRGBA<f32> { LinearRGBA(self.0.unpremul()) }
-    pub fn to_encoded_srgba8(self) -> EncodedPremulSRGBA8 {
+    pub fn to_encoded_srgba8(self) -> PremulSRGBA8 {
         self.unpremul().to_srgba8().premul_encoded()
     }
 
@@ -455,9 +455,9 @@ impl<'a> Srgb8Encoder<'a> {
         Ok(Self { table })
     }
 
-    pub fn encode(self, color: LinearPremulRGBA<f32>) -> EncodedPremulSRGBA8 {
+    pub fn encode(self, color: LinearPremulRGBA<f32>) -> PremulSRGBA8 {
         let [r, g, b, a] = color.to_array();
-        if a <= 0.0 { return EncodedPremulSRGBA8::zeroed(); }
+        if a <= 0.0 { return PremulSRGBA8::zeroed(); }
         let scale = (self.table.len() - 1) as f32;
         let channel = |value: f32| {
             let index = ((value / a).clamp(0.0, 1.0) * scale + 0.5) as usize;
@@ -560,9 +560,9 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
         assert_eq!(PremulRGBA::new(100_u8, 50, 25, 100).unwrap().to_array(),
                    [100, 50, 25, 100]);
         assert_eq!(PremulRGBA::new(101_u8, 50, 25, 100), None);
-        assert_eq!(EncodedPremulSRGBA8::new(100, 50, 25, 100).unwrap().to_array(),
+        assert_eq!(PremulSRGBA8::new(100, 50, 25, 100).unwrap().to_array(),
                    [100, 50, 25, 100]);
-        assert_eq!(EncodedPremulSRGBA8::new(101, 50, 25, 100), None);
+        assert_eq!(PremulSRGBA8::new(101, 50, 25, 100), None);
         let clamped: PremulRGBA<u8> = (200, 100, 50, 80).into();
         assert_eq!(clamped.to_array(), [80, 80, 50, 80]);
         assert_eq!(PremulRGBA::new(f32::NAN, 0.0, 0.0, 1.0), None);

@@ -3,7 +3,7 @@ use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWorkspace,
         analytic_bin_requirements, build_analytic_row_bins, rasterize_edges_analytic_binned},
-    color::{EncodedPremulSRGBA8, LinearPremulRGBA, Srgb8Encoder,
+    color::{PremulSRGBA8, LinearPremulRGBA, Srgb8Encoder,
         SRGB8_ENCODE_LUT_SIZE, SRGBA, SRGBA as RGBA},
     dash::{dash_polyline, DashContour, DashPattern, DashWorkspace},
     edge::{Edge, build_fill_edges}, flatten::FlattenOptions,
@@ -647,7 +647,7 @@ fn benchmark_paint(c: &mut Criterion) {
     let stop_values = [GradientStop::new( 0.0, RGBA::new(240, 20, 80,  32)),
                        GradientStop::new(0.35, RGBA::new(10, 220, 40, 160)),
                        GradientStop::new( 1.0, RGBA::new(30, 60, 250, 224)) ];
-    let mut ramp = vec![EncodedPremulSRGBA8::zeroed(); 1024];
+    let mut ramp = vec![PremulSRGBA8::zeroed(); 1024];
     let stops = GradientStops::with_ramp(&stop_values, &mut ramp).unwrap();
     let solid = SolidPaint::new(RGBA::new(40, 120, 220, 192));
     let linear = LinearGradient::new((0.0, 0.0), (WIDTH as _, HEIGHT as _),
@@ -815,7 +815,7 @@ fn benchmark_paint(c: &mut Criterion) {
     let stop_values = [GradientStop::new( 0.0, RGBA::new(240, 20, 80,  32)),
                        GradientStop::new(0.35, RGBA::new(10, 220, 40, 160)),
                        GradientStop::new( 1.0, RGBA::new(30, 60, 250, 224)) ];
-    let mut ramp = vec![EncodedPremulSRGBA8::zeroed(); 1024];
+    let mut ramp = vec![PremulSRGBA8::zeroed(); 1024];
     let stops = GradientStops::with_ramp(&stop_values, &mut ramp).unwrap();
     let ramp = stops.encoded_ramp().unwrap();
     let fixed = FixedScalar::from_num;

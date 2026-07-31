@@ -1,7 +1,7 @@
 //! Borrowed pixel targets and the first complete reference rendering path.
 
 use core::convert::Infallible;
-use crate::{color::{EncodedPremulSRGBA8, PremulRGBA, SRGBA},
+use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
     dash::{dash_polyline, DashContour, DashError, DashPattern, DashWorkspace},
     edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{AnalyticBinError, AnalyticBinWorkspace, AnalyticIntersection,
@@ -88,12 +88,12 @@ impl<'a> PixmapMut<'a> {
     ///
     /// `None` indicates either an out-of-bounds coordinate or raw target bytes
     /// that violate the premultiplied `RGB <= alpha` invariant.
-    pub fn pixel(&self, x: u32, y: u32) -> Option<EncodedPremulSRGBA8> {
-        EncodedPremulSRGBA8::from_array(self.pixel_bytes(x, y)?)
+    pub fn pixel(&self, x: u32, y: u32) -> Option<PremulSRGBA8> {
+        PremulSRGBA8::from_array(self.pixel_bytes(x, y)?)
     }
 
     pub(crate) fn write_encoded_pixel(&mut self, x: u32, y: u32,
-        color: EncodedPremulSRGBA8) {
+        color: PremulSRGBA8) {
         let offset = y as usize * self.stride as usize +
                      x as usize * BYTES_PER_PIXEL as usize;
         self.data[offset..offset + BYTES_PER_PIXEL as usize]
