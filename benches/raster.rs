@@ -1,7 +1,9 @@
 
 use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ugl_rs::{analytic::AnalyticIntersection, color::RGBA, edge::Edge, raster::Intersection,
+use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWorkspace,
+        analytic_bin_requirements, build_analytic_row_bins, rasterize_edges_analytic_binned},
+    color::RGBA, edge::Edge, raster::{FillRule, Intersection},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, RenderOptions, RenderWorkspace,
         render_solid, render_solid_analytic, render_stroke_solid_analytic,
@@ -11,10 +13,9 @@ use ugl_rs::{analytic::AnalyticIntersection, color::RGBA, edge::Edge, raster::In
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions, StrokePathWorkspace,
         flatten_stroke_path, stroke_polyline},
 };
-#[cfg(feature = "fixed")] use ugl_rs::raster::FillRule;
-#[cfg(feature = "fixed")] #[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
+#[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
 
-#[cfg(feature = "fixed")] impl ugl_rs::raster::CoverageSink for RunCounter {
+impl ugl_rs::raster::CoverageSink for RunCounter {
     type Error = core::convert::Infallible;
     fn span(&mut self, _x: u32, _y: u32, len: u32, _coverage: u8) ->
         Result<(), Self::Error> {
@@ -75,6 +76,51 @@ fn benchmark_f32(c: &mut Criterion) {
         ).unwrap();
         black_box(&pixels);
     }));
+    group.finish();
+}
+
+fn benchmark_analytic_active(c: &mut Criterion) {
+    let stable = (0..64).flat_map(|index| {
+        let x = index as f32 * 3.75 + 4.0;
+        [Edge { upper: (x, 0.25).into(), lower: (x, 255.75).into(), winding: -1 },
+         Edge { upper: (x + 2.0, 0.25).into(),
+                lower: (x + 2.0, 255.75).into(), winding: 1 }]
+    }).collect::<Vec<_>>();
+    let churn = (0..256).flat_map(|index| {
+        let (column, row) = (index % 16, index / 16);
+        let (x, y) = (column as f32 * 16.0 + 2.25, row as f32 * 16.0 + 2.5);
+        [Edge { upper: (x, y).into(), lower: (x, y + 3.25).into(), winding: -1 },
+         Edge { upper: (x + 8.5, y).into(),
+                lower: (x + 8.5, y + 3.25).into(), winding: 1 }]
+    }).collect::<Vec<_>>();
+    let crossing = (0..32).map(|index| {
+        let top = index as f32 * 7.5 + 8.0;
+        let bottom = (31 - index) as f32 * 7.5 + 8.0;
+        Edge { upper: (top, 0.25).into(), lower: (bottom, 255.75).into(),
+               winding: if index & 1 == 0 { -1 } else { 1 } }
+    }).collect::<Vec<_>>();
+    let mut group = c.benchmark_group("analytic_active");
+    group.throughput(Throughput::Elements(WIDTH as u64 * HEIGHT as u64));
+    for (name, edges) in [("stable_128", stable), ("churn_512", churn),
+                          ("crossing_32", crossing)] {
+        let requirements = analytic_bin_requirements(&edges, HEIGHT).unwrap();
+        let (mut offsets, mut indices) =
+            (vec![0; requirements.offsets], vec![0; requirements.indices]);
+        let bins = build_analytic_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
+            row_offsets: &mut offsets, edge_indices: &mut indices,
+        }).unwrap();
+        let (mut active, mut row) =
+            (vec![AnalyticIntersection::default(); edges.len()], vec![0.0; WIDTH as usize]);
+        group.bench_function(name, |b| b.iter(|| {
+            let mut sink = RunCounter::default();
+            rasterize_edges_analytic_binned(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+                &mut AnalyticWorkspace {
+                    intersections: &mut active, row_coverage: &mut row,
+                }, &mut sink,
+            ).unwrap();
+            black_box((sink.runs, sink.pixels));
+        }));
+    }
     group.finish();
 }
 
@@ -461,6 +507,7 @@ fn benchmark_paint(c: &mut Criterion) {
 fn  benchmarks(c: &mut Criterion) {
     #[cfg(feature = "fixed")] benchmark_fixed(c);
     benchmark_f32(c);
+    benchmark_analytic_active(c);
     benchmark_stroke(c);
     benchmark_paint(c);
 }

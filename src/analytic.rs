@@ -230,7 +230,7 @@ fn prepare_binned_slab(y0: f32, limit: f32, active: &mut [AnalyticIntersection])
         let (a, b) = (&pair[0], &pair[1]);
         if a.slope == b.slope { continue; }
         let y = y0 + (b.x0 - a.x0) / (a.slope - b.slope);
-        if y > y0 && y < next { next = y; }
+        if is_distinct_event(y, y0) && y < next { next = y; }
     }
     let height = next - y0;
     for intersection in &mut *active {
@@ -303,7 +303,7 @@ fn prepare_active_slab(edges: &[Edge], y0: f32, limit: f32,
         let (a, b) = (&pair[0], &pair[1]);
         if a.slope == b.slope { continue; }
         let y = y0 + (b.x0 - a.x0) / (a.slope - b.slope);
-        if  y > y0 && y < next { next = y; }
+        if is_distinct_event(y, y0) && y < next { next = y; }
     }
     let height = next - y0;
     for intersection in &mut *active {
@@ -317,6 +317,10 @@ fn order_active_edges(active: &mut [AnalyticIntersection]) {
     insertion_sort_active_by(active, |previous, edge|
         previous.x0.total_cmp(&edge.x0)
             .then_with(|| previous.slope.total_cmp(&edge.slope)).is_gt());
+}
+
+fn is_distinct_event(y: f32, current: f32) -> bool {
+    y - current > f32::EPSILON * current.abs().max(1.0) * 4.0
 }
 
 fn order_active_midpoints(active: &mut [AnalyticIntersection]) {
@@ -481,6 +485,25 @@ fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersect
         builder.move_to((0.0, 0.0)).line_to((2.0, 2.0))
                .line_to((0.0, 2.0)).line_to((2.0, 0.0));
         assert_eq!(render_analytic(&edges(builder), 2, 2, FillRule::EvenOdd), [128; 4]);
+    }
+
+    #[test] fn coincident_crossings_are_coalesced_without_changing_coverage() {
+        let edges: Vec<_> = (0..16).map(|index| Edge {
+            upper: (index as f32 * 0.45 + 0.5, 0.25).into(),
+            lower: ((15 - index) as f32 * 0.45 + 0.5, 7.75).into(),
+            winding: if index & 1 == 0 { -1 } else { 1 },
+        }).collect();
+        for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
+            let (analytic, sampled) = (
+                render_analytic(&edges, 8, 8, fill_rule),
+                render_sampled(&edges, 8, 8, fill_rule),
+            );
+            assert_eq!(render_binned(&edges, 8, 8, fill_rule), analytic);
+            for (&actual, &reference) in analytic.iter().zip(&sampled) {
+                assert!(actual.abs_diff(reference) <= 1,
+                    "{fill_rule:?}: analytic={actual}, sampled={reference}");
+            }
+        }
     }
 
     #[test] fn nested_contours_distinguish_non_zero_and_even_odd() {

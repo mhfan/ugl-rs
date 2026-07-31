@@ -179,6 +179,16 @@ integration and active-edge ordering now dominate the remaining curve cost.
 These short measurements are an initial regression baseline, not a
 cross-renderer performance comparison.
 
+The `analytic_active` group isolates binned scan conversion from path expansion
+and pixel compositing. A 1-second/10-sample diagnostic run on 2026-07-31
+measured 493.56 µs for 128 stable full-height edges and 44.44 µs for 512
+short-lived edges, confirming that persistent active-set size dominates edge
+activation churn. Thirty-two edges meeting at one coincident crossing exposed
+`f32` event fragmentation: near-identical crossing heights originally formed
+many negligible slabs and took 3.721 s. Coalescing events within four ulps of
+the current y reduced that case to 2.407 ms while retaining sampled-reference
+coverage tests for both fill rules.
+
 The optional retained fixed output groups only non-empty 16-row strips. Each
 strip descriptor is 12 bytes and each uniform non-zero coverage run is 12
 bytes (`u32` x/length plus `u8` row/coverage). It therefore does not impose a
