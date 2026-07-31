@@ -628,6 +628,54 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 #[cfg(feature = "fixed")]
+#[test] fn native_fixed_curved_stroke_path_uses_bounded_workspaces() {
+    use crate::{geometry::{FixedScalar, PathBuilder},
+        raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid},
+        stroke::{StrokeContour, StrokePathWorkspace},
+    };
+
+    let fixed = FixedScalar::from_num;
+    let mut builder = PathBuilder::new();
+    builder.move_to((fixed(0), fixed(1)))
+        .quad_to((fixed(1), fixed(-1)), (fixed(2), fixed(1)));
+    let path = builder.build();
+    let mut points = [(FixedScalar::ZERO, FixedScalar::ZERO).into(); 32];
+    let mut contours = [StrokeContour::default(); 2];
+    let (mut edges, mut lines) = ([Edge::default(); 128], [FixedLine::default(); 128]);
+    let (mut segments, mut trapezoids, mut row_area) =
+        ([FixedSegment::default(); 128], [FixedTrapezoid::default(); 64], [0; 7]);
+    let (mut strip_offsets, mut strip_indices) = ([0; 7], [0; 128]);
+    let mut pixels = [0; 6 * 6 * 4];
+    render_native_stroke_path_fixed(&path, &SolidPaint::new(RGBA::white()),
+        FixedStrokePathOptions {
+            transform: Affine::translate(fixed(2), fixed(2)),
+            ..FixedStrokePathOptions::default()
+        },
+        &mut PixmapMut::new(&mut pixels, 6, 6, 24).unwrap(),
+        &mut StrokePathWorkspace { points: &mut points, contours: &mut contours },
+        &mut FixedGeometryWorkspace { edges: &mut edges, lines: &mut lines },
+        &mut FixedRasterWorkspace {
+            segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+            strip_indices: &mut strip_indices,
+        }).unwrap();
+    assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
+
+    let mut untouched = [17; 6 * 6 * 4];
+    assert_eq!(render_native_stroke_path_fixed(&path, &SolidPaint::new(RGBA::white()),
+        FixedStrokePathOptions::default(),
+        &mut PixmapMut::new(&mut untouched, 6, 6, 24).unwrap(),
+        &mut StrokePathWorkspace { points: &mut [], contours: &mut contours },
+        &mut FixedGeometryWorkspace { edges: &mut edges, lines: &mut lines },
+        &mut FixedRasterWorkspace {
+            segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+            strip_indices: &mut strip_indices,
+        }), Err(RenderError::StrokePointCapacity { needed_at_least: 1 }));
+    assert_eq!(untouched, [17; 6 * 6 * 4]);
+}
+
+#[cfg(feature = "fixed")]
 #[test] fn native_fixed_curved_path_renders_end_to_end() {
     use crate::{geometry::{FixedScalar, PathBuilder},
         raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid},

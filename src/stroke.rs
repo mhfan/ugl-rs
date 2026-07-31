@@ -1,8 +1,12 @@
 //! Stroke expansion options and scalar reference implementation.
 
 use core::f32::consts::{FRAC_PI_2, PI};
-use crate::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point},
+use crate::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point, Scalar},
     flatten::{flatten_path, FlattenError, FlattenOptions, LineSink},
+};
+#[cfg(feature = "fixed")] use crate::{
+    flatten_fixed::{flatten_path_fixed, FixedFlattenError, FixedFlattenOptions},
+    geometry::FixedScalar,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -80,9 +84,9 @@ impl StrokeContour {
 }
 
 /// Caller-owned storage used while flattening a path for stroke expansion.
-pub struct StrokePathWorkspace<'a> {
+pub struct StrokePathWorkspace<'a, T = Scalar> {
     pub contours: &'a mut [StrokeContour],
-    pub   points: &'a mut [Point],
+    pub   points: &'a mut [Point<T>],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum StrokeWorkspaceError {
@@ -92,18 +96,38 @@ pub struct StrokePathWorkspace<'a> {
 }
 
 /// Borrowed flattened path backed by a [`StrokePathWorkspace`].
-pub struct FlattenedStrokePath<'a> {
+pub struct FlattenedStrokePath<'a, T = Scalar> {
     contours: &'a [StrokeContour],
-      points: &'a [Point],
+      points: &'a [Point<T>],
 }
 
-impl<'a> FlattenedStrokePath<'a> {
-    pub fn contours(&self) -> impl ExactSizeIterator<Item = (&'a [Point], bool)> + 'a {
+impl<'a, T> FlattenedStrokePath<'a, T> {
+    pub fn contours(&self) -> impl ExactSizeIterator<Item = (&'a [Point<T>], bool)> + 'a {
         self.contours.iter().map(|contour| {
             let start: usize = contour.start as _;
             (&self.points[start..start + contour.len()], contour.is_closed())
         })
     }
+}
+
+#[cfg(feature = "fixed")]
+pub fn flatten_stroke_path_fixed<'a>(path: &Path<FixedScalar>,
+    transform: Affine<FixedScalar>, options: FixedFlattenOptions,
+    workspace: &'a mut StrokePathWorkspace<'_, FixedScalar>) ->
+    Result<FlattenedStrokePath<'a, FixedScalar>,
+        FixedFlattenError<StrokeWorkspaceError>> {
+    let (point_len, contour_len) = {
+        let mut sink = StrokePathSink {
+            points: workspace.points, contours: workspace.contours,
+            point_len: 0, contour_len: 0, current_start: None, current_closed: false,
+        };
+        flatten_path_fixed(path, transform, options, &mut sink)?;
+        (sink.point_len, sink.contour_len)
+    };
+    Ok(FlattenedStrokePath {
+          points: &workspace.points[..point_len],
+        contours: &workspace.contours[..contour_len],
+    })
 }
 
 /// Flattens a transformed path into caller-owned, compact stroke storage.
@@ -124,8 +148,8 @@ pub fn flatten_stroke_path<'a>(path: &Path, transform: Affine, options: FlattenO
     })
 }
 
-struct StrokePathSink<'a> {
-    points: &'a mut [Point],
+struct StrokePathSink<'a, T = Scalar> {
+    points: &'a mut [Point<T>],
     contours: &'a mut [StrokeContour],
     point_len: usize,
     contour_len: usize,
@@ -133,8 +157,8 @@ struct StrokePathSink<'a> {
     current_closed: bool,
 }
 
-impl StrokePathSink<'_> {
-    fn push_point(&mut self, point: Point) -> Result<(), StrokeWorkspaceError> {
+impl<T: Copy> StrokePathSink<'_, T> {
+    fn push_point(&mut self, point: Point<T>) -> Result<(), StrokeWorkspaceError> {
         let needed = self.point_len.checked_add(1).ok_or(StrokeWorkspaceError::IndexOverflow)?;
         let slot = self.points.get_mut(self.point_len)
             .ok_or(StrokeWorkspaceError::PointCapacity { needed_at_least: needed })?;
@@ -142,16 +166,16 @@ impl StrokePathSink<'_> {
     }
 }
 
-impl LineSink for StrokePathSink<'_> {
+impl<T: Copy> LineSink<T> for StrokePathSink<'_, T> {
     type Error = StrokeWorkspaceError;
 
-    fn begin_subpath(&mut self, at: Point) -> Result<(), Self::Error> {
+    fn begin_subpath(&mut self, at: Point<T>) -> Result<(), Self::Error> {
         self.current_start = Some(self.point_len);
         self.current_closed = false;
         self.push_point(at)
     }
 
-    fn line(&mut self, _: Point, to: Point) -> Result<(), Self::Error> {
+    fn line(&mut self, _: Point<T>, to: Point<T>) -> Result<(), Self::Error> {
         self.push_point(to)
     }
 

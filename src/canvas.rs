@@ -20,6 +20,7 @@ use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
     edge::build_fill_edges_fixed,
     flatten_fixed::{FixedFlattenError, FixedFlattenOptions},
     geometry::FixedScalar,
+    stroke::flatten_stroke_path_fixed,
     stroke_fixed::{FixedStrokeExpandError, FixedStrokeOptions, stroke_polyline_fixed},
 };
 #[cfg(feature = "fixed")] use crate::tile_fixed::{
@@ -201,6 +202,13 @@ impl Default for RenderOptions { fn default() -> Self {
     Self { transform: Affine::identity(), flatten: FixedFlattenOptions::default(),
         fill_rule: FillRule::NonZero }
 } }
+
+#[cfg(feature = "fixed")]
+#[derive(Clone, Copy, Debug, Default, PartialEq)] pub struct FixedStrokePathOptions {
+    pub transform: Affine<FixedScalar>,
+    pub flatten: FixedFlattenOptions,
+    pub stroke: FixedStrokeOptions,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct AnalyticRenderOptions {
     pub fill_rule: FillRule, pub flatten: FlattenOptions,
@@ -487,6 +495,27 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
     let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
     stroke_polyline_fixed(points, closed, stroke, &mut sink)
         .map_err(map_fixed_stroke_expand_error)?;
+    let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
+        .map_err(RenderError::FixedRaster)?;
+    render_native_paint_fixed(&geometry.lines[..line_count], sampler,
+        FillRule::NonZero, target, raster_workspace)
+}
+
+/// Transforms, flattens, expands, and renders a Q24.8 stroked path without an FPU.
+#[cfg(feature = "fixed")] pub fn render_native_stroke_path_fixed<
+    S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>, sampler: &S,
+    options: FixedStrokePathOptions, target: &mut PixmapMut<'_>,
+    path_workspace: &mut StrokePathWorkspace<'_, FixedScalar>,
+    geometry: &mut FixedGeometryWorkspace<'_>,
+    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
+    let flattened = flatten_stroke_path_fixed(
+        path, options.transform, options.flatten, path_workspace)
+        .map_err(map_fixed_stroke_flatten_error)?;
+    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
+    for (points, closed) in flattened.contours() {
+        stroke_polyline_fixed(points, closed, options.stroke, &mut sink)
+            .map_err(map_fixed_stroke_expand_error)?;
+    }
     let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
         .map_err(RenderError::FixedRaster)?;
     render_native_paint_fixed(&geometry.lines[..line_count], sampler,
@@ -830,6 +859,25 @@ fn map_fixed_flatten_error(error: FixedFlattenError<EdgeCapacity>) -> RenderErro
         FixedFlattenError::InvalidPath(error) => RenderError::InvalidPath(error),
         FixedFlattenError::Sink(error) =>
             RenderError::EdgeCapacity { needed_at_least: error.needed_at_least },
+    }
+}
+
+#[cfg(feature = "fixed")]
+fn map_fixed_stroke_flatten_error(
+    error: FixedFlattenError<StrokeWorkspaceError>) -> RenderError {
+    match error {
+        FixedFlattenError::NonPositiveTolerance => RenderError::InvalidTolerance,
+        FixedFlattenError::InvalidDepth => RenderError::InvalidDepth,
+        FixedFlattenError::CoordinateOutOfRange =>
+            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
+        FixedFlattenError::DepthLimit => RenderError::FlattenDepthLimit,
+        FixedFlattenError::InvalidPath(error) => RenderError::InvalidPath(error),
+        FixedFlattenError::Sink(StrokeWorkspaceError::PointCapacity { needed_at_least }) =>
+            RenderError::StrokePointCapacity { needed_at_least },
+        FixedFlattenError::Sink(StrokeWorkspaceError::ContourCapacity { needed_at_least }) =>
+            RenderError::StrokeContourCapacity { needed_at_least },
+        FixedFlattenError::Sink(StrokeWorkspaceError::IndexOverflow) =>
+            RenderError::StrokeIndexOverflow,
     }
 }
 

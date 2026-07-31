@@ -53,9 +53,9 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | --- | --- |
 | `f32` fill and clipping | Reference path implemented and allocation-free |
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
-| Stroke | Undashed caps/joins reference implemented; reliability work continues |
-| Fixed point | Q24.8 path flattening/raster, sparse strips/tiles, clipping, native fixed gradients, and all fixed stroke caps/joins implemented |
-| Production readiness | Pre-release: broader fuzzing, golden scenes, fixed path strokes/dashes, and real-device validation remain |
+| Stroke | Undashed caps/joins and fixed path stroke pipeline implemented; reliability work continues |
+| Fixed point | Q24.8 transformed path fill/stroke, sparse strips/tiles, clipping, native fixed gradients, and all fixed caps/joins implemented |
+| Production readiness | Pre-release: broader fuzzing, golden scenes, fixed dashes, and real-device validation remain |
 
 ## Architecture at a glance
 

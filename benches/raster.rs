@@ -688,6 +688,7 @@ fn benchmark_paint(c: &mut Criterion) {
             encode_fixed_coverage_tiles, fixed_tile_requirements, rasterize_lines_to_tiles,
         },
         sampler::{FixedAngle, FixedConicGradient, FixedLinearGradient, FixedRadialGradient},
+        stroke::{StrokeContour, StrokePathWorkspace, flatten_stroke_path_fixed},
         stroke_fixed::{FixedStrokeOptions, stroke_polyline_fixed},
     };
 
@@ -727,6 +728,27 @@ fn benchmark_paint(c: &mut Criterion) {
             (FixedScalar::from_num(x + 28), FixedScalar::from_num(128)));
     }
     let curve_path = curve_builder.build();
+    let (mut stroke_path_points, mut stroke_path_contours) =
+        (vec![(FixedScalar::ZERO, FixedScalar::ZERO).into(); 512],
+         vec![StrokeContour::default(); 16]);
+    let mut stroke_path_group = c.benchmark_group("stroke_path_fixed");
+    stroke_path_group.throughput(Throughput::Elements(8));
+    stroke_path_group.bench_function("cubic_8", |b| b.iter(|| {
+        stroke_edges.clear();
+        let mut workspace = StrokePathWorkspace {
+            points: &mut stroke_path_points, contours: &mut stroke_path_contours,
+        };
+        let flattened = flatten_stroke_path_fixed(&curve_path, Affine::identity(),
+            FixedFlattenOptions::default(), &mut workspace).unwrap();
+        for (points, closed) in flattened.contours() {
+            stroke_polyline_fixed(points, closed, stroke_options, &mut |edge| {
+                stroke_edges.push(edge); Ok::<_, core::convert::Infallible>(())
+            }).unwrap();
+        }
+        black_box(&stroke_edges);
+    }));
+    stroke_path_group.finish();
+
     let mut flatten_group = c.benchmark_group("flatten_fixed");
     flatten_group.throughput(Throughput::Elements(8));
     flatten_group.bench_function("cubic_8", |b| b.iter(|| {
