@@ -13,6 +13,15 @@ use crate::{edge::Edge,
     raster::{checked_width, emit_coverage_runs, CoverageSink, FillRule, RasterError}
 };
 
+#[cfg(feature = "std")]
+fn floor(value: f32) -> f32 { value.floor() }
+#[cfg(not(feature = "std"))]
+fn floor(value: f32) -> f32 { libm::floorf(value) }
+#[cfg(feature = "std")]
+fn ceil(value: f32) -> f32 { value.ceil() }
+#[cfg(not(feature = "std"))]
+fn ceil(value: f32) -> f32 { libm::ceilf(value) }
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Intersection { x0: f32, x1: f32, slope: f32, y_end: f32, winding: i8 }
 
@@ -73,7 +82,7 @@ pub fn build_row_bins<'a>(edges: &[Edge], height: u32,
     let offsets = &mut workspace.row_offsets[..required.offsets];
     let indices = &mut workspace.edge_indices[..required.indices];
     offsets.fill(0);
-    let row_of = |edge: Edge| libm::floorf(edge.upper.y)
+    let row_of = |edge: Edge| floor(edge.upper.y)
         .clamp(0.0, height.saturating_sub(1) as f32) as usize;
     for edge in edges {
         if height != 0 && edge.lower.y > 0.0 && edge.upper.y < height as f32 {
@@ -225,8 +234,8 @@ fn prepare_binned_slab(y0: f32, limit: f32, active: &mut [Intersection]) -> f32 
         if edge.y_end > y0 { next = next.min(edge.y_end); }
         if edge.slope != 0.0 {
             let step = if edge.slope > 0.0 { 1.0 } else { -1.0 };
-            let mut boundary = if edge.slope > 0.0 { libm::floorf(edge.x0) + 1.0 }
-                else { libm::ceilf(edge.x0) - 1.0 };
+            let mut boundary = if edge.slope > 0.0 { floor(edge.x0) + 1.0 }
+                else { ceil(edge.x0) - 1.0 };
             let mut y = y0 + (boundary - edge.x0) / edge.slope;
             if y <= y0 {
                 boundary += step;
@@ -251,9 +260,9 @@ fn prepare_binned_slab(y0: f32, limit: f32, active: &mut [Intersection]) -> f32 
 }
 
 fn occupied_rows(edges: &[Edge], height: u32) -> Option<(u32, u32)> {
-    let first = edges.iter().map(|edge| libm::floorf(edge.upper.y))
+    let first = edges.iter().map(|edge| floor(edge.upper.y))
         .fold(f32::INFINITY, f32::min).clamp(0.0, height as _) as u32;
-    let last = edges.iter().map(|edge| libm::ceilf(edge.lower.y))
+    let last = edges.iter().map(|edge| ceil(edge.lower.y))
         .fold(f32::NEG_INFINITY, f32::max).clamp(0.0, height as _) as u32;
     (first < last).then_some((first, last))
 }
@@ -261,7 +270,7 @@ fn occupied_rows(edges: &[Edge], height: u32) -> Option<(u32, u32)> {
 fn next_occupied_row(edges: &[Edge], current: u32, limit: u32) -> Option<u32> {
     let current_y = current as f32;
     edges.iter().filter(|edge| edge.lower.y > current_y)
-        .map(|edge| libm::floorf(edge.upper.y).max(current_y) as u32)
+        .map(|edge| floor(edge.upper.y).max(current_y) as u32)
         .filter(|&row| row < limit).min()
 }
 
@@ -307,8 +316,8 @@ fn prepare_active_slab(edges: &[Edge], y0: f32, limit: f32,
         if edge.y_end > y0 { next = next.min(edge.y_end); }
         if edge.slope != 0.0 {
             let step = if edge.slope > 0.0 { 1.0 } else { -1.0 };
-            let mut boundary = if edge.slope > 0.0 { libm::floorf(edge.x0) + 1.0 }
-                else { libm::ceilf(edge.x0) - 1.0 };
+            let mut boundary = if edge.slope > 0.0 { floor(edge.x0) + 1.0 }
+                else { ceil(edge.x0) - 1.0 };
             let mut y = y0 + (boundary - edge.x0) / edge.slope;
             if  y <= y0 {
                 boundary += step;
@@ -376,12 +385,12 @@ fn integrate_spans(intersections: &[Intersection], height: f32,
 
 fn integrate_span(left: &Intersection,
                  right: &Intersection, height: f32, row: &mut [f32]) {
-    let start = libm::floorf(left.x0.min( left.x1)).clamp(0.0, row.len() as _) as _;
-    let end   = libm::ceilf(right.x0.max(right.x1)).clamp(0.0, row.len() as _) as _;
+    let start = floor(left.x0.min(left.x1)).clamp(0.0, row.len() as _) as _;
+    let end   = ceil(right.x0.max(right.x1)).clamp(0.0, row.len() as _) as _;
     let full_start =
-        libm::ceilf(left.x0.max(left.x1)).clamp(0.0, row.len() as _) as usize;
+        ceil(left.x0.max(left.x1)).clamp(0.0, row.len() as _) as usize;
     let full_end =
-        libm::floorf(right.x0.min(right.x1)).clamp(0.0, row.len() as _) as usize;
+        floor(right.x0.min(right.x1)).clamp(0.0, row.len() as _) as usize;
     if full_start < full_end {
         integrate_partial_span(left, right, height, row, start, full_start);
         for coverage in &mut row[full_start..full_end] { *coverage += height; }

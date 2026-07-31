@@ -16,6 +16,7 @@ keywords = [ "ugl", "microgl", "vector-graphic" ]
 
 [features]
 default = [ "fixed" ]
+std = []
 
 [dependencies]
 fixed = { version = "1.29", optional = true, default-features = false }

@@ -378,6 +378,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   the numerically coalesced event algorithm and both ordering passes. Their
   lifetime minimum and integer-x event are discovered in one active-edge
   traversal; a measured stroke scene improved coverage time by about 6.2%.
+- The core remains `no_std` by default. An explicit `std` feature permits the
+  f32 analytic backend to use native floor/ceil instructions; without it the
+  same operations use `libm`, preserving embedded portability. Release
+  profiling measured the native path about 19% faster after event-scan fusion.
 - The matched 8-cubic stroke expands to 65 centerline points and 480 edges.
   Stage benchmarks put flatten, outline expansion, and row binning near 10 µs
   combined versus roughly 320 µs for coverage and 367 µs end to end. Prepared

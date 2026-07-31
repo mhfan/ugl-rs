@@ -136,9 +136,11 @@ workspace arrays only for static-memory systems, custom allocators, retained
 coverage integration, and renderer development; they are not required for
 ordinary drawing.
 
-The crate is `no_std` and currently uses `alloc`. The default feature enables
-the Q24.8 fixed backend; use `--no-default-features` for the floating-point
-core alone.
+The crate is `no_std` by default and currently uses `alloc`. The default
+feature enables the Q24.8 fixed backend; use `--no-default-features` for the
+floating-point core alone. Desktop applications may enable `std` to use native
+floating-point floor/ceil instructions in the analytic rasterizer; the
+`no_std` path retains deterministic software `libm` operations.
 
 The fixed raster APIs can feed any existing `PaintSampler` through streaming,
 retained-strip, or retained-tile coverage, with rectangle or borrowed path-mask
@@ -352,7 +354,7 @@ measurement produced these central estimates:
 | centerline curve flatten | 1.72 µs |
 | stroke outline expansion | 1.77 µs |
 | sparse row bin construction | 6.88 µs |
-| analytic coverage integration and run emission | 320.32 µs initial; 262.64 µs current |
+| analytic coverage integration and run emission | 320.32 µs initial; 262.64 µs no_std; 212.66 µs std |
 | complete clear + stroke + encoded composite | 366.58 µs |
 
 The independently measured stages are not strictly additive, but they locate
@@ -369,6 +371,14 @@ same-process baseline, Criterion measured 262.64 µs, a statistically
 significant 6.2% improvement. Removing midpoint ordering was also tested, but
 randomized and self-intersecting paths proved that ordering is part of the
 numeric event contract, so that experiment was rejected.
+
+Release profiling then found software `libm` floor/ceil expansion inside both
+event discovery and span integration. The optional `std` feature uses native
+platform rounding while the default embedded build keeps the no_std software
+path. On the same stroke scene, native rounding measured 212.66 µs, another
+19.0% below the fused no_std result and 23.6% below a fresh saved software
+baseline. A whole-row difference accumulator was also rejected: short stroke
+interiors did not amortize its extra boundary writes and prefix scan.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the
