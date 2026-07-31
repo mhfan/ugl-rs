@@ -16,25 +16,13 @@ pub mod stroke;
 pub mod dash;
 pub mod flatten;
 pub mod analytic;
-#[cfg(feature = "fixed")] pub mod fixed;
-#[cfg(feature = "fixed")] pub mod flatten_fixed {
-    pub use crate::fixed::flatten::*;
-}
-#[cfg(feature = "fixed")] pub mod raster_fixed {
-    pub use crate::fixed::raster::*;
-}
-#[cfg(feature = "fixed")] pub mod stroke_fixed {
-    pub use crate::fixed::stroke::*;
-}
-#[cfg(feature = "fixed")] pub mod tile_fixed {
-    pub use crate::fixed::tile::*;
-}
 pub mod canvas;
 pub mod canvas_linear;
 pub mod context;
 pub mod edge;
 
-/// Compatibility exports for fixed-point numeric helpers.
-#[cfg(feature = "fixed")] pub mod math {
-    pub use crate::fixed::math::{Fixed, FixedAngle};
-}
+#[cfg(feature = "fixed")] pub mod fixed;
+#[cfg(feature = "fixed")] pub use fixed::{ math,
+    flatten as flatten_fixed, raster as raster_fixed,
+    stroke as stroke_fixed, tile as tile_fixed,
+};
