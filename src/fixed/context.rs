@@ -130,9 +130,9 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             stroke: self.state.stroke,
         }, self.clip);
         let workspace = &mut *self.workspace;
-        let line_count = prepare_stroke_path(
+        let usage = prepare_stroke_path(
             path, options, &mut workspace.path, &mut workspace.geometry)?;
-        let lines = &workspace.geometry.lines[..line_count];
+        let lines = &workspace.geometry.lines[..usage.lines];
         match clip {
             Clip::None => render_paint(
                 lines, paint, FillRule::NonZero, self.target, &mut workspace.raster),
@@ -169,8 +169,8 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
                 edges: workspace.geometry.edges, lines: workspace.geometry.lines,
             },
         };
-        let line_count = prepare_dashed_stroke_path(path, options, &mut dashed)?;
-        let lines = &dashed.geometry.lines[..line_count];
+        let usage = prepare_dashed_stroke_path(path, options, &mut dashed)?;
+        let lines = &dashed.geometry.lines[..usage.lines];
         match clip {
             Clip::None => render_paint(
                 lines, paint, FillRule::NonZero, self.target, &mut workspace.raster),

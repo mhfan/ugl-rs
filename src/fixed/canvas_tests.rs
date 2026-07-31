@@ -15,6 +15,53 @@ fn rectangle(left: f32, top: f32, right: f32, bottom: f32) -> Path {
     builder.build()
 }
 
+#[test] fn planners_return_exact_capacities_for_fill_stroke_and_dash() {
+    use crate::{fixed::{Scalar, dash::Pattern}, stroke::StrokeContour};
+
+    let fixed = |value: f32| Scalar::from_num(value);
+    let mut builder = PathBuilder::new();
+    builder.move_to((fixed(0.5), fixed(0.5))).line_to((fixed(3.5), fixed(0.5)))
+        .line_to((fixed(3.5), fixed(3.5))).line_to((fixed(0.5), fixed(3.5)));
+    let path = builder.build();
+    let (mut edges, mut lines) =
+        ([Edge::<Scalar>::default(); 32], [Line::default(); 32]);
+    let fill = render_requirements(&path, RenderOptions::default(), (4, 4),
+        &mut GeometryWorkspace { edges: &mut edges, lines: &mut lines }).unwrap();
+    assert_eq!(fill, RenderRequirements {
+        edges: 2, lines: 2, segments: 2, trapezoids: 1, row_area: 4,
+        strip_offsets: 2, strip_indices: 2,
+    });
+
+    let mut line_builder = PathBuilder::new();
+    line_builder.move_to((fixed(0.0), fixed(1.0))).line_to((fixed(4.0), fixed(1.0)));
+    let line = line_builder.build();
+    let (mut points, mut contours) = (
+        [(Scalar::ZERO, Scalar::ZERO).into(); 8], [StrokeContour::default(); 4],
+    );
+    let stroke = stroke_requirements(&line, StrokePathOptions::default(), (4, 3),
+        &mut StrokePlanningWorkspace {
+            path: StrokePathWorkspace { points: &mut points, contours: &mut contours },
+            geometry: GeometryWorkspace { edges: &mut edges, lines: &mut lines },
+        }).unwrap();
+    assert_eq!((stroke.points, stroke.contours, stroke.render.edges), (2, 1, 2));
+
+    let lengths = [fixed(1.0), fixed(1.0)];
+    let pattern = Pattern::new(&lengths, Scalar::ZERO).unwrap();
+    let (mut dash_points, mut dash_contours) = (
+        [(Scalar::ZERO, Scalar::ZERO).into(); 8], [DashContour::default(); 4],
+    );
+    let dashed = dashed_stroke_requirements(&line, DashedStrokePathOptions {
+        path: StrokePathOptions::default(), dash: pattern,
+    }, (4, 3), &mut DashedStrokeWorkspace {
+        path: StrokePathWorkspace { points: &mut points, contours: &mut contours },
+        dash_points: &mut dash_points, dash_contours: &mut dash_contours,
+        geometry: GeometryWorkspace { edges: &mut edges, lines: &mut lines },
+    }).unwrap();
+    assert_eq!((dashed.stroke.points, dashed.stroke.contours), (2, 1));
+    assert_eq!((dashed.dash_points, dashed.dash_contours), (4, 2));
+    assert_eq!(dashed.stroke.render.edges, 4);
+}
+
 struct AnalyticBuffers<const EDGES: usize, const WIDTH: usize> {
     intersections: [AnalyticIntersection; EDGES],
     edges: [Edge; EDGES], row_coverage: [f32; WIDTH],

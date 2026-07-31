@@ -5,10 +5,11 @@ use crate::{
     canvas::{EdgeCapacity, EdgeSliceSink, PaintCompositor as CompatPaintCompositor,
         PixmapMut, RenderError, map_dash_error, validate_coverage_dimensions},
     color::SRGBA, dash::{DashContour, DashWorkspace}, edge::Edge,
-    fixed::{Scalar, dash::{Pattern as DashPattern, dash_polyline},
+    fixed::{DEVICE_RAW_LIMIT, Scalar, dash::{Pattern as DashPattern, dash_polyline},
         flatten::{Error as FlattenError, Options as FlattenOptions, build_fill_edges},
         raster::{CoverageStrips, Error as RasterError, Line,
-            RenderError as RasterRenderError, Workspace, prepare_lines, rasterize_lines},
+            RenderError as RasterRenderError, Workspace, prepare_lines, rasterize_lines,
+            strip_requirements},
         sampler::PaintSampler,
         stroke::{ExpandError as StrokeExpandError, Options as StrokeOptions,
             flatten_path as flatten_stroke_path, stroke_polyline},
@@ -44,6 +45,36 @@ pub struct DashedStrokeWorkspace<'a> {
     pub geometry: GeometryWorkspace<'a>,
 }
 
+pub struct StrokePlanningWorkspace<'a> {
+    pub path: StrokePathWorkspace<'a, Scalar>,
+    pub geometry: GeometryWorkspace<'a>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RenderRequirements {
+    pub edges: usize,
+    pub lines: usize,
+    pub segments: usize,
+    pub trapezoids: usize,
+    pub row_area: usize,
+    pub strip_offsets: usize,
+    pub strip_indices: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StrokeRequirements {
+    pub render: RenderRequirements,
+    pub points: usize,
+    pub contours: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DashedStrokeRequirements {
+    pub stroke: StrokeRequirements,
+    pub dash_points: usize,
+    pub dash_contours: usize,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct RenderOptions {
     pub transform: Affine<Scalar>,
     pub flatten: FlattenOptions,
@@ -64,6 +95,44 @@ impl Default for RenderOptions { fn default() -> Self {
 #[derive(Clone, Copy, Debug)] pub struct DashedStrokePathOptions<'a> {
     pub path: StrokePathOptions,
     pub dash: DashPattern<'a>,
+}
+
+/// Computes exact fixed fill capacities without touching a render target.
+pub fn render_requirements(path: &Path<Scalar>, options: RenderOptions,
+    dimensions: (u32, u32), workspace: &mut GeometryWorkspace<'_>) ->
+    Result<RenderRequirements, RenderError> {
+    let usage = prepare_path(path, options, workspace)?;
+    requirements_from_lines(
+        usage.edges, &workspace.lines[..usage.lines], dimensions)
+}
+
+/// Computes exact fixed stroke capacities using caller-owned planning scratch.
+pub fn stroke_requirements(path: &Path<Scalar>, options: StrokePathOptions,
+    dimensions: (u32, u32), workspace: &mut StrokePlanningWorkspace<'_>) ->
+    Result<StrokeRequirements, RenderError> {
+    let usage = prepare_stroke_path(
+        path, options, &mut workspace.path, &mut workspace.geometry)?;
+    Ok(StrokeRequirements {
+        render: requirements_from_lines(usage.edges,
+            &workspace.geometry.lines[..usage.lines], dimensions)?,
+        points: usage.points, contours: usage.contours,
+    })
+}
+
+/// Computes exact fixed dashed-stroke capacities using caller-owned planning scratch.
+pub fn dashed_stroke_requirements(path: &Path<Scalar>,
+    options: DashedStrokePathOptions<'_>, dimensions: (u32, u32),
+    workspace: &mut DashedStrokeWorkspace<'_>) ->
+    Result<DashedStrokeRequirements, RenderError> {
+    let usage = prepare_dashed_stroke_path(path, options, workspace)?;
+    Ok(DashedStrokeRequirements {
+        stroke: StrokeRequirements {
+            render: requirements_from_lines(usage.edges,
+                &workspace.geometry.lines[..usage.lines], dimensions)?,
+            points: usage.points, contours: usage.contours,
+        },
+        dash_points: usage.dash_points, dash_contours: usage.dash_contours,
+    })
 }
 
 /// Renders prepared Q24.8 lines through the allocation-free fixed backend.
@@ -141,8 +210,8 @@ pub fn render_path<
     sampler: &S, options: RenderOptions,
     target: &mut PixmapMut<'_>, geometry: &mut GeometryWorkspace<'_>,
     raster_workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
-    let line_count = prepare_path(path, options, geometry)?;
-    render_paint(&geometry.lines[..line_count], sampler,
+    let usage = prepare_path(path, options, geometry)?;
+    render_paint(&geometry.lines[..usage.lines], sampler,
         options.fill_rule, target, raster_workspace)
 }
 
@@ -152,8 +221,8 @@ pub fn render_path_clipped<
     sampler: &S, clip: Rect, options: RenderOptions,
     target: &mut PixmapMut<'_>, geometry: &mut GeometryWorkspace<'_>,
     raster_workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
-    let line_count = prepare_path(path, options, geometry)?;
-    render_paint_clipped(&geometry.lines[..line_count], sampler,
+    let usage = prepare_path(path, options, geometry)?;
+    render_paint_clipped(&geometry.lines[..usage.lines], sampler,
         clip, options.fill_rule, target, raster_workspace)
 }
 
@@ -163,8 +232,8 @@ pub fn render_path_masked<
     sampler: &S, mask: CoverageMask<'_>, options: RenderOptions,
     target: &mut PixmapMut<'_>, geometry: &mut GeometryWorkspace<'_>,
     raster_workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
-    let line_count = prepare_path(path, options, geometry)?;
-    render_paint_masked(&geometry.lines[..line_count], sampler,
+    let usage = prepare_path(path, options, geometry)?;
+    render_paint_masked(&geometry.lines[..usage.lines], sampler,
         mask, options.fill_rule, target, raster_workspace)
 }
 
@@ -190,34 +259,64 @@ pub fn render_stroke_path<
     path_workspace: &mut StrokePathWorkspace<'_, Scalar>,
     geometry: &mut GeometryWorkspace<'_>,
     raster_workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
-    let line_count = prepare_stroke_path(path, options, path_workspace, geometry)?;
-    render_paint(&geometry.lines[..line_count], sampler,
+    let usage = prepare_stroke_path(path, options, path_workspace, geometry)?;
+    render_paint(&geometry.lines[..usage.lines], sampler,
         FillRule::NonZero, target, raster_workspace)
 }
 
+pub(crate) struct PreparedUsage {
+    pub(crate) points: usize, pub(crate) contours: usize,
+    pub(crate) edges: usize, pub(crate) lines: usize,
+}
+
+pub(crate) struct DashedPreparedUsage {
+    pub(crate) points: usize, pub(crate) contours: usize,
+    pub(crate) edges: usize, pub(crate) lines: usize,
+    pub(crate) dash_points: usize, pub(crate) dash_contours: usize,
+}
+
+fn requirements_from_lines(edges: usize, lines: &[Line], dimensions: (u32, u32)) ->
+    Result<RenderRequirements, RenderError> {
+    let (width, height) = dimensions;
+    let extent = |value: u32| value as u64 * 256;
+    if extent(width) > DEVICE_RAW_LIMIT as u64 || extent(height) > DEVICE_RAW_LIMIT as u64 {
+        return Err(RenderError::FixedRaster(RasterError::CoordinateOutOfRange));
+    }
+    let bins = strip_requirements(lines, height).map_err(RenderError::FixedRaster)?;
+    Ok(RenderRequirements {
+        edges, lines: lines.len(), segments: lines.len(),
+        trapezoids: lines.len().div_ceil(2),
+        row_area: usize::try_from(width).map_err(|_| RenderError::DimensionsOverflow)?,
+        strip_offsets: bins.offsets, strip_indices: bins.indices,
+    })
+}
+
 fn prepare_path(path: &Path<Scalar>, options: RenderOptions,
-    geometry: &mut GeometryWorkspace<'_>) -> Result<usize, RenderError> {
+    geometry: &mut GeometryWorkspace<'_>) -> Result<PreparedUsage, RenderError> {
     let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
     build_fill_edges(path, options.transform, options.flatten, &mut sink)
         .map_err(map_flatten_error)?;
-    prepare_lines(&sink.edges[..sink.len], geometry.lines)
-        .map_err(RenderError::FixedRaster)
+    let lines = prepare_lines(&sink.edges[..sink.len], geometry.lines)
+        .map_err(RenderError::FixedRaster)?;
+    Ok(PreparedUsage { points: 0, contours: 0, edges: sink.len, lines })
 }
 
 pub(crate) fn prepare_stroke_path(
     path: &Path<Scalar>, options: StrokePathOptions,
     path_workspace: &mut StrokePathWorkspace<'_, Scalar>,
-    geometry: &mut GeometryWorkspace<'_>) -> Result<usize, RenderError> {
+    geometry: &mut GeometryWorkspace<'_>) -> Result<PreparedUsage, RenderError> {
     let flattened = flatten_stroke_path(
         path, options.transform, options.flatten, path_workspace)
         .map_err(map_stroke_flatten_error)?;
+    let (points, contours) = (flattened.point_count(), flattened.contour_count());
     let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
     for (points, closed) in flattened.contours() {
         stroke_polyline(points, closed, options.stroke, &mut sink)
             .map_err(map_stroke_expand_error)?;
     }
-    prepare_lines(&sink.edges[..sink.len], geometry.lines)
-        .map_err(RenderError::FixedRaster)
+    let lines = prepare_lines(&sink.edges[..sink.len], geometry.lines)
+        .map_err(RenderError::FixedRaster)?;
+    Ok(PreparedUsage { points, contours, edges: sink.len, lines })
 }
 
 /// Renders a transformed, dashed Q24.8 path without floating-point operations.
@@ -226,17 +325,19 @@ pub fn render_dashed_stroke_path<
     options: DashedStrokePathOptions<'_>, target: &mut PixmapMut<'_>,
     workspace: &mut DashedStrokeWorkspace<'_>,
     raster_workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
-    let line_count = prepare_dashed_stroke_path(path, options, workspace)?;
-    render_paint(&workspace.geometry.lines[..line_count], sampler,
+    let usage = prepare_dashed_stroke_path(path, options, workspace)?;
+    render_paint(&workspace.geometry.lines[..usage.lines], sampler,
         FillRule::NonZero, target, raster_workspace)
 }
 
 pub(crate) fn prepare_dashed_stroke_path(path: &Path<Scalar>,
     options: DashedStrokePathOptions<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
-    Result<usize, RenderError> {
+    Result<DashedPreparedUsage, RenderError> {
     let flattened = flatten_stroke_path(path, options.path.transform,
         options.path.flatten, &mut workspace.path)
         .map_err(map_stroke_flatten_error)?;
+    let (points, contours) = (flattened.point_count(), flattened.contour_count());
+    let (mut dash_points, mut dash_contours) = (0, 0);
     let mut sink = EdgeSliceSink { edges: workspace.geometry.edges, len: 0 };
     for (points, closed) in flattened.contours() {
         let mut dash_workspace = DashWorkspace {
@@ -244,13 +345,18 @@ pub(crate) fn prepare_dashed_stroke_path(path: &Path<Scalar>,
         };
         let dashed = dash_polyline(points, closed, options.dash, &mut dash_workspace)
             .map_err(map_dash_error)?;
+        dash_points = dash_points.max(dashed.point_count());
+        dash_contours = dash_contours.max(dashed.contour_count());
         for (points, closed) in dashed.contours() {
             stroke_polyline(points, closed, options.path.stroke, &mut sink)
                 .map_err(map_stroke_expand_error)?;
         }
     }
-    prepare_lines(&sink.edges[..sink.len], workspace.geometry.lines)
-        .map_err(RenderError::FixedRaster)
+    let lines = prepare_lines(&sink.edges[..sink.len], workspace.geometry.lines)
+        .map_err(RenderError::FixedRaster)?;
+    Ok(DashedPreparedUsage {
+        points, contours, edges: sink.len, lines, dash_points, dash_contours,
+    })
 }
 
 /// Renders fixed geometry and no-FPU paint through a rectangle clip.
