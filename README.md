@@ -52,8 +52,8 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | `f32` fill and clipping | Reference path implemented and allocation-free |
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Undashed caps/joins reference implemented; reliability work continues |
-| Fixed point | Q24.8 raster, sparse strips, retained coverage, and tile prototype implemented |
-| Production readiness | Pre-release: broader fuzzing, golden scenes, fixed paint/stroke, and real-device validation remain |
+| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, and shared encoded paint compositor implemented |
+| Production readiness | Pre-release: broader fuzzing, golden scenes, native fixed paint/stroke, and real-device validation remain |
 
 ## Architecture at a glance
 
@@ -120,6 +120,12 @@ render_solid_analytic(&path, Affine::identity(), RGBA::new(20, 200, 40, 160),
 The crate is `no_std` and currently uses `alloc`. The default feature enables
 the Q24.8 fixed backend; use `--no-default-features` for the floating-point
 core alone. Optional `serde` support is independent.
+
+The fixed raster APIs can feed any existing `PaintSampler` through streaming,
+retained-strip, or retained-tile coverage, with rectangle or borrowed path-mask
+clipping. This gives functional parity on desktop, but does not claim a wholly
+integer pipeline: current gradient samplers use `f32`. Native fixed-point paint
+sampling is a separate MCU milestone.
 
 ## Benchmarking
 

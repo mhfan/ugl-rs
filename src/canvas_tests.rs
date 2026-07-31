@@ -361,9 +361,11 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 #[cfg(feature = "fixed")]
-#[test] fn fixed_solid_rendering_uses_the_shared_compositor() {
+#[test] fn fixed_coverage_uses_shared_paint_and_clip_compositor() {
     use crate::{geometry::FixedScalar, raster_fixed::{
-            FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines,
+            FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace, FixedLine,
+            FixedRasterWorkspace, FixedSegment, FixedTrapezoid, prepare_lines,
+            rasterize_lines_to_strips,
         },
         tile_fixed::{FixedCoverageTile, FixedCoverageTileRun, FixedDirectTilePiece,
             FixedDirectTileWorkspace, rasterize_lines_to_tiles,
@@ -390,6 +392,86 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(target.pixel(0, 0), Some((128, 128, 128, 128).into()));
     assert_eq!(target.pixel(1, 0), Some((128, 128, 128, 128).into()));
 
+    struct CoordinatePaint;
+    impl PaintSampler for CoordinatePaint {
+        fn sample(&self, x: f32, y: f32) -> EncodedPremulSRGBA8 {
+            EncodedPremulSRGBA8::new((x * 40.0) as _, (y * 40.0) as _, 0, u8::MAX).unwrap()
+        }
+    }
+    let mut painted_pixels = [0; 8];
+    render_paint_fixed(&lines, &CoordinatePaint, FillRule::NonZero,
+        &mut PixmapMut::new(&mut painted_pixels, 2, 1, 8).unwrap(),
+        &mut FixedRasterWorkspace { segments: &mut segments,
+            trapezoids: &mut trapezoids, row_area: &mut row_area,
+            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+        }).unwrap();
+    assert_eq!(painted_pixels, [10, 10, 0, 128, 30, 10, 0, 128]);
+    let path = rectangle(0.5, 0.0, 1.5, 1.0);
+    let mut analytic_pixels = [0; 8];
+    render_paint_analytic(&path, Affine::identity(), &CoordinatePaint,
+        AnalyticRenderOptions::default(),
+        &mut PixmapMut::new(&mut analytic_pixels, 2, 1, 8).unwrap(),
+        &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
+    assert_eq!(painted_pixels, analytic_pixels);
+
+    let mut clipped_pixels = [0; 8];
+    render_paint_fixed_clipped(&lines, &CoordinatePaint,
+        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(), FillRule::NonZero,
+        &mut PixmapMut::new(&mut clipped_pixels, 2, 1, 8).unwrap(),
+        &mut FixedRasterWorkspace { segments: &mut segments,
+            trapezoids: &mut trapezoids, row_area: &mut row_area,
+            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+        }).unwrap();
+    assert_eq!(clipped_pixels, [5, 5, 0, 64, 0, 0, 0, 0]);
+    analytic_pixels.fill(0);
+    render_paint_analytic_clipped(&path, Affine::identity(), &CoordinatePaint,
+        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
+        AnalyticRenderOptions::default(),
+        &mut PixmapMut::new(&mut analytic_pixels, 2, 1, 8).unwrap(),
+        &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
+    assert_eq!(clipped_pixels, analytic_pixels);
+
+    let mut masked_pixels = [0; 8];
+    render_paint_fixed_masked(&lines, &CoordinatePaint,
+        CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(), FillRule::NonZero,
+        &mut PixmapMut::new(&mut masked_pixels, 2, 1, 8).unwrap(),
+        &mut FixedRasterWorkspace { segments: &mut segments,
+            trapezoids: &mut trapezoids, row_area: &mut row_area,
+            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+        }).unwrap();
+    assert_eq!(masked_pixels, [5, 5, 0, 64, 30, 10, 0, 128]);
+    analytic_pixels.fill(0);
+    render_paint_analytic_masked(&path, Affine::identity(), &CoordinatePaint,
+        CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
+        AnalyticRenderOptions::default(),
+        &mut PixmapMut::new(&mut analytic_pixels, 2, 1, 8).unwrap(),
+        &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
+    assert_eq!(masked_pixels, analytic_pixels);
+
+    let (mut coverage_strips, mut coverage_runs) =
+        ([FixedCoverageStrip::default(); 1], [FixedCoverageRun::default(); 2]);
+    let strips = rasterize_lines_to_strips(&lines, 2, 1, FillRule::NonZero,
+        &mut FixedRasterWorkspace { segments: &mut segments,
+            trapezoids: &mut trapezoids, row_area: &mut row_area,
+            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+        }, FixedCoverageWorkspace {
+            strips: &mut coverage_strips, runs: &mut coverage_runs,
+        }).unwrap();
+    let mut retained_pixels = [0; 8];
+    composite_paint_fixed_strips(strips, &CoordinatePaint,
+        &mut PixmapMut::new(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(retained_pixels, painted_pixels);
+    retained_pixels.fill(0);
+    composite_paint_fixed_strips_clipped(strips, &CoordinatePaint,
+        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
+        &mut PixmapMut::new(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(retained_pixels, clipped_pixels);
+    retained_pixels.fill(0);
+    composite_paint_fixed_strips_masked(strips, &CoordinatePaint,
+        CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
+        &mut PixmapMut::new(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(retained_pixels, masked_pixels);
+
     let mut tiled_pixels = [0; 8];
     let mut tiled_target = PixmapMut::new(&mut tiled_pixels, 2, 1, 8).unwrap();
     let (mut tiles, mut runs, mut pieces) =  ([FixedCoverageTile::default(); 1],
@@ -407,6 +489,20 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     ).unwrap();
     assert_eq!(tiled_pixels, pixels);
 
+    let mut painted_tiled_pixels = [0; 8];
+    render_paint_fixed_tiled(&lines, &CoordinatePaint, FillRule::NonZero,
+        &mut PixmapMut::new(&mut painted_tiled_pixels, 2, 1, 8).unwrap(),
+        &mut FixedRasterWorkspace { segments: &mut segments,
+            trapezoids: &mut trapezoids, row_area: &mut row_area,
+            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+        },
+        FixedDirectTileWorkspace {
+            tiles: &mut tiles, runs: &mut runs, pieces: &mut pieces,
+            column_heads: &mut [0], column_tails: &mut [0], touched_columns: &mut [0],
+        },
+    ).unwrap();
+    assert_eq!(painted_tiled_pixels, painted_pixels);
+
     let tiled = rasterize_lines_to_tiles(&lines, 2, 1, FillRule::NonZero,
         &mut FixedRasterWorkspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
@@ -422,6 +518,16 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     composite_solid_fixed_tiles(tiled, RGBA::white(),
         &mut PixmapMut::new(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(cached_pixels, pixels);
+    cached_pixels.fill(0);
+    composite_paint_fixed_tiles_clipped(tiled, &CoordinatePaint,
+        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
+        &mut PixmapMut::new(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(cached_pixels, clipped_pixels);
+    cached_pixels.fill(0);
+    composite_paint_fixed_tiles_masked(tiled, &CoordinatePaint,
+        CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
+        &mut PixmapMut::new(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
+    assert_eq!(cached_pixels, masked_pixels);
 
     let mut mismatched_pixels = [17; 4];
     let error = composite_solid_fixed_tiles(tiled, RGBA::white(),
@@ -429,6 +535,15 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(error, Err(RenderError::CoverageDimensionsMismatch {
         coverage: (2, 1), target: (1, 1) }));
     assert_eq!(mismatched_pixels, [17; 4]);
+
+    let mut untouched = [17; 8];
+    assert!(render_paint_fixed(&lines, &CoordinatePaint, FillRule::NonZero,
+        &mut PixmapMut::new(&mut untouched, 2, 1, 8).unwrap(),
+        &mut FixedRasterWorkspace { segments: &mut [],
+            trapezoids: &mut trapezoids, row_area: &mut row_area,
+            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
+        }).is_err());
+    assert_eq!(untouched, [17; 8]);
 }
 
 #[cfg(feature = "fixed")]

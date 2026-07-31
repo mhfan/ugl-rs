@@ -176,6 +176,12 @@ and SIMD layouts do not enter the common `Edge` representation.
   `LinearPremulRGBA<f32>` without an encoded round trip. Built-in solid and
   gradient paints implement both contracts; custom encoded samplers do not
   silently opt into linear compositing.
+- Fixed streaming, retained-strip, and retained-tile coverage share the encoded
+  `PaintSampler` compositor and rectangle/path-mask adapters. This establishes
+  functional backend parity without claiming FPU-free paint evaluation:
+  existing gradient samplers remain `f32`. Native fixed-point samplers require
+  a separate numeric contract, intermediate-width analysis, and differential
+  error bounds.
 - Solid paint reports its constant color so span and tile compositors retain
   their bulk fast paths.
 - `TransformedPaint` maps device samples into paint-local coordinates through
@@ -454,6 +460,6 @@ Status: planned.
 | `f32` fill | Sampled and analytic coverage, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
 | Stroke | Allocation-free undashed caps and joins | Dashes, fuzzing, and production reliability validation |
-| Fixed raster | Q24.8 geometry, widened arithmetic, rational crossings, sparse strips, retained coverage, direct tiles | Fixed clipping, paint, stroke, real-device and range validation |
+| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, rectangle and path-mask clipping, shared encoded paint composition | Native fixed paint, fixed stroke, real-device and range validation |
 | Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
