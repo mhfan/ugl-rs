@@ -1,9 +1,10 @@
-//! Borrowed pixel targets and allocation-free `f32` rendering paths.
+//! Pixel targets and allocation-free `f32` rendering paths.
 //!
 //! The exact-area rasterizer is the production path exposed by the unqualified
 //! `render_*` API. The supersampled reference path is explicitly named
 //! `render_*_sampled`.
 
+use alloc::vec::Vec;
 use core::convert::Infallible;
 use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
     dash::{dash_polyline, DashContour, DashError, DashPattern, DashWorkspace},
@@ -23,8 +24,22 @@ use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
 
 const BYTES_PER_PIXEL: u32 = 4;
 
-#[derive(Debug)] pub struct PixmapMut<'a> {
-    data: &'a mut [u8], width: u32, height: u32, stride: u32,
+#[derive(Debug)] enum PixmapData<'a> { Owned(Vec<u8>), Borrowed(&'a mut [u8]) }
+
+/// Owned or borrowed premultiplied sRGBA8 pixel storage.
+///
+/// ```
+/// use ugl_rs::Pixmap;
+///
+/// let owned = Pixmap::new(2, 1).unwrap();
+/// assert_eq!((owned.stride(), owned.as_bytes().len()), (8, 8));
+///
+/// let mut bytes = [0; 12];
+/// let borrowed = Pixmap::from_buffer(&mut bytes, 2, 1, 12).unwrap();
+/// assert_eq!((borrowed.width(), borrowed.height()), (2, 1));
+/// ```
+#[derive(Debug)] pub struct Pixmap<'a> {
+    data: PixmapData<'a>, width: u32, height: u32, stride: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum PixmapError {
@@ -33,14 +48,26 @@ const BYTES_PER_PIXEL: u32 = 4;
     DimensionsOverflow,
 }
 
-impl<'a> PixmapMut<'a> {
-    /// Creates an encoded-premultiplied sRGBA8 target with explicit row stride.
+impl Pixmap<'static> {
+    /// Creates zero-initialized, tightly packed owned storage.
+    pub fn new(width: u32, height: u32) -> Result<Self, PixmapError> {
+        let stride = width.checked_mul(BYTES_PER_PIXEL)
+            .ok_or(PixmapError::DimensionsOverflow)?;
+        let length = usize::try_from(stride).ok().and_then(|stride|
+            usize::try_from(height).ok().and_then(|height| stride.checked_mul(height)))
+            .ok_or(PixmapError::DimensionsOverflow)?;
+        Ok(Self { data: PixmapData::Owned(alloc::vec![0; length]), width, height, stride })
+    }
+}
+
+impl<'a> Pixmap<'a> {
+    /// Borrows an encoded-premultiplied sRGBA8 target with explicit row stride.
     ///
     /// Construction validates only layout and capacity; it does not scan pixel
     /// contents. Before compositing over existing contents, callers must ensure
     /// every destination pixel satisfies `RGB <= alpha`. [`Self::pixel`] can
     /// validate individual pixels without changing their bytes.
-    pub fn new(data: &'a mut [u8], width: u32, height: u32, stride: u32) ->
+    pub fn from_buffer(data: &'a mut [u8], width: u32, height: u32, stride: u32) ->
         Result<Self, PixmapError> {
         let row_bytes = width.checked_mul(BYTES_PER_PIXEL)
             .ok_or(PixmapError::DimensionsOverflow)?;
@@ -59,20 +86,31 @@ impl<'a> PixmapMut<'a> {
         };
         if data.len() < minimum {
             return Err(PixmapError::BufferTooSmall { minimum, actual: data.len() });
-        }   Ok(Self { data, width, height, stride })
+        }   Ok(Self { data: PixmapData::Borrowed(data), width, height, stride })
     }
 
     pub fn  width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
+    pub fn as_bytes(&self) -> &[u8] { match &self.data {
+        PixmapData::Owned(data) => data, PixmapData::Borrowed(data) => data,
+    } }
+
+    /// Returns mutable physical RGBA bytes.
+    ///
+    /// Before subsequent compositing, callers must restore the premultiplied
+    /// invariant `R, G, B <= A` for every modified pixel.
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] { match &mut self.data {
+        PixmapData::Owned(data) => data, PixmapData::Borrowed(data) => data,
+    } }
 
     /// Returns the physical RGBA bytes without interpreting their invariants.
     pub fn pixel_bytes(&self, x: u32, y: u32) -> Option<[u8; 4]> {
         if x >= self.width || y >= self.height { return None; }
         let offset = y as usize * self.stride as usize +
                      x as usize * BYTES_PER_PIXEL as usize;
-        Some([self.data[offset], self.data[offset + 1],
-              self.data[offset + 2], self.data[offset + 3]])
+        let data = self.as_bytes();
+        Some([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
     }
 
     /// Returns a validated encoded-premultiplied sRGB pixel.
@@ -87,7 +125,7 @@ impl<'a> PixmapMut<'a> {
         color: PremulSRGBA8) {
         let offset = y as usize * self.stride as usize +
                      x as usize * BYTES_PER_PIXEL as usize;
-        self.data[offset..offset + BYTES_PER_PIXEL as usize]
+        self.as_bytes_mut()[offset..offset + BYTES_PER_PIXEL as usize]
             .copy_from_slice(&color.to_array());
     }
 
@@ -97,7 +135,7 @@ impl<'a> PixmapMut<'a> {
         let start = y as usize * self.stride as usize
             + x as usize * BYTES_PER_PIXEL as usize;
         let end = start + len as usize * BYTES_PER_PIXEL as usize;
-        blend_solid_bytes(&mut self.data[start..end], terms);
+        blend_solid_bytes(&mut self.as_bytes_mut()[start..end], terms);
     }
 
     fn blend_sampled_span<S: PaintSampler>(&mut self, x: u32, y: u32, len: u32,
@@ -119,7 +157,7 @@ impl<'a> PixmapMut<'a> {
             let start = row as usize * self.stride as usize
                 + x as usize * BYTES_PER_PIXEL as usize;
             let end = start + width as usize * BYTES_PER_PIXEL as usize;
-            blend_solid_bytes(&mut self.data[start..end], terms);
+            blend_solid_bytes(&mut self.as_bytes_mut()[start..end], terms);
         }
     }
 
@@ -332,7 +370,7 @@ pub fn dashed_stroke_requirements(path: &Path, transform: Affine,
 /// The destination is premultiplied RGBA8888. This function performs no
 /// allocation; all geometry and raster storage comes from `workspace`.
 pub fn render_solid_sampled(path: &Path, transform: Affine, color: SRGBA<u8>, options: SampledRenderOptions,
-    target: &mut PixmapMut<'_>, workspace: &mut SampledRenderWorkspace<'_>) ->
+    target: &mut Pixmap<'_>, workspace: &mut SampledRenderWorkspace<'_>) ->
     Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     let paint = SolidPaint::new(color);
@@ -347,7 +385,7 @@ pub fn render_solid_sampled(path: &Path, transform: Affine, color: SRGBA<u8>, op
 
 /// Renders through the sampled reference rasterizer and an antialiased rectangle clip.
 pub fn render_solid_sampled_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
-    clip: Rect, options: SampledRenderOptions, target: &mut PixmapMut<'_>,
+    clip: Rect, options: SampledRenderOptions, target: &mut Pixmap<'_>,
     workspace: &mut SampledRenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     let paint = SolidPaint::new(color);
@@ -362,7 +400,7 @@ pub fn render_solid_sampled_clipped(path: &Path, transform: Affine, color: SRGBA
 
 /// Renders a solid color through the exact-area `f32` rasterizer.
 pub fn render_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
-    options: RenderOptions, target: &mut PixmapMut<'_>,
+    options: RenderOptions, target: &mut Pixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     render_paint(path, transform, &SolidPaint::new(color), options, target, workspace)
 }
@@ -372,7 +410,7 @@ pub fn render_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
 /// Samples are evaluated at device-space pixel centers. Coverage and sampled
 /// premultiplied colors are then composed source-over the target.
 pub fn render_paint<S: PaintSampler>(path: &Path, transform: Affine, sampler: &S,
-    options: RenderOptions, target: &mut PixmapMut<'_>,
+    options: RenderOptions, target: &mut Pixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
@@ -382,7 +420,7 @@ pub fn render_paint<S: PaintSampler>(path: &Path, transform: Affine, sampler: &S
 
 /// Renders a solid analytic stroke without allocating intermediate geometry.
 pub fn render_stroke_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
-    options: StrokePathOptions, target: &mut PixmapMut<'_>,
+    options: StrokePathOptions, target: &mut Pixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     render_stroke_paint(
         path, transform, &SolidPaint::new(color), options, target, workspace)
@@ -390,7 +428,7 @@ pub fn render_stroke_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
 
 /// Renders an analytic stroke through the shared paint compositor.
 pub fn render_stroke_paint<S: PaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, options: StrokePathOptions, target: &mut PixmapMut<'_>,
+    sampler: &S, options: StrokePathOptions, target: &mut Pixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
@@ -401,7 +439,7 @@ pub fn render_stroke_paint<S: PaintSampler>(path: &Path, transform: Affine,
 /// Renders a dashed analytic stroke without allocating intermediate geometry.
 pub fn render_stroke_solid_dashed(path: &Path, transform: Affine,
     color: SRGBA<u8>, options: DashedStrokePathOptions<'_>,
-    target: &mut PixmapMut<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
+    target: &mut Pixmap<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     render_stroke_paint_dashed(path, transform, &SolidPaint::new(color),
         options, target, workspace)
@@ -409,7 +447,7 @@ pub fn render_stroke_solid_dashed(path: &Path, transform: Affine,
 
 pub fn render_stroke_paint_dashed<S: PaintSampler>(path: &Path,
     transform: Affine, sampler: &S, options: DashedStrokePathOptions<'_>,
-    target: &mut PixmapMut<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
+    target: &mut Pixmap<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
@@ -419,7 +457,7 @@ pub fn render_stroke_paint_dashed<S: PaintSampler>(path: &Path,
 
 pub fn render_stroke_paint_dashed_clipped<S: PaintSampler>(path: &Path,
     transform: Affine, sampler: &S, clip: Rect, options: DashedStrokePathOptions<'_>,
-    target: &mut PixmapMut<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
+    target: &mut Pixmap<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
@@ -429,7 +467,7 @@ pub fn render_stroke_paint_dashed_clipped<S: PaintSampler>(path: &Path,
 
 pub fn render_stroke_paint_dashed_masked<S: PaintSampler>(path: &Path,
     transform: Affine, sampler: &S, mask: CoverageMask<'_>,
-    options: DashedStrokePathOptions<'_>, target: &mut PixmapMut<'_>,
+    options: DashedStrokePathOptions<'_>, target: &mut Pixmap<'_>,
     workspace: &mut DashedStrokeWorkspace<'_>) -> Result<(), RenderError> {
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width, target.height);
@@ -440,7 +478,7 @@ pub fn render_stroke_paint_dashed_masked<S: PaintSampler>(path: &Path,
 
 /// Renders a solid analytic stroke through an antialiased rectangle clip.
 pub fn render_stroke_solid_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
-    clip: Rect, options: StrokePathOptions, target: &mut PixmapMut<'_>,
+    clip: Rect, options: StrokePathOptions, target: &mut Pixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     render_stroke_paint_clipped(path, transform,
         &SolidPaint::new(color), clip, options, target, workspace)
@@ -448,7 +486,7 @@ pub fn render_stroke_solid_clipped(path: &Path, transform: Affine, color: SRGBA<
 
 /// Renders analytic stroke paint through an antialiased rectangle clip.
 pub fn render_stroke_paint_clipped<S: PaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, clip: Rect, options: StrokePathOptions, target: &mut PixmapMut<'_>,
+    sampler: &S, clip: Rect, options: StrokePathOptions, target: &mut Pixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
@@ -458,7 +496,7 @@ pub fn render_stroke_paint_clipped<S: PaintSampler>(path: &Path, transform: Affi
 
 /// Renders a solid analytic stroke multiplied by a borrowed path clip mask.
 pub fn render_stroke_solid_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
-    mask: CoverageMask<'_>, options: StrokePathOptions, target: &mut PixmapMut<'_>,
+    mask: CoverageMask<'_>, options: StrokePathOptions, target: &mut Pixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     render_stroke_paint_masked(
         path, transform, &SolidPaint::new(color), mask, options, target, workspace)
@@ -467,7 +505,7 @@ pub fn render_stroke_solid_masked(path: &Path, transform: Affine, color: SRGBA<u
 /// Renders analytic stroke paint multiplied by a borrowed path clip mask.
 pub fn render_stroke_paint_masked<S: PaintSampler>(path: &Path, transform: Affine,
     sampler: &S, mask: CoverageMask<'_>, options: StrokePathOptions,
-    target: &mut PixmapMut<'_>, workspace: &mut StrokeWorkspace<'_>) ->
+    target: &mut Pixmap<'_>, workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width, target.height);
@@ -478,7 +516,7 @@ pub fn render_stroke_paint_masked<S: PaintSampler>(path: &Path, transform: Affin
 
 /// Renders through the exact-area rasterizer and an antialiased rectangle clip.
 pub fn render_solid_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
-    clip: Rect, options: RenderOptions, target: &mut PixmapMut<'_>,
+    clip: Rect, options: RenderOptions, target: &mut Pixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     render_paint_clipped(path, transform,
         &SolidPaint::new(color), clip, options, target, workspace)
@@ -486,7 +524,7 @@ pub fn render_solid_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
 
 /// Renders an analytic paint through an antialiased rectangle clip.
 pub fn render_paint_clipped<S: PaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, clip: Rect, options: RenderOptions, target: &mut PixmapMut<'_>,
+    sampler: &S, clip: Rect, options: RenderOptions, target: &mut Pixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
@@ -513,7 +551,7 @@ pub fn rasterize_path_clip(path: &Path, transform: Affine,
 
 /// Renders analytic solid coverage multiplied by a borrowed path clip mask.
 pub fn render_solid_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
-    mask: CoverageMask<'_>, options: RenderOptions, target: &mut PixmapMut<'_>,
+    mask: CoverageMask<'_>, options: RenderOptions, target: &mut Pixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     render_paint_masked(path, transform, &SolidPaint::new(color), mask,
         options, target, workspace)
@@ -522,7 +560,7 @@ pub fn render_solid_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
 /// Renders analytic paint coverage multiplied by a borrowed path clip mask.
 pub fn render_paint_masked<S: PaintSampler>(path: &Path, transform: Affine,
     sampler: &S, mask: CoverageMask<'_>, options: RenderOptions,
-    target: &mut PixmapMut<'_>, workspace: &mut RenderWorkspace<'_>) ->
+    target: &mut Pixmap<'_>, workspace: &mut RenderWorkspace<'_>) ->
     Result<(), RenderError> {
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width, target.height);
@@ -531,7 +569,7 @@ pub fn render_paint_masked<S: PaintSampler>(path: &Path, transform: Affine,
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
-pub(crate) fn validate_coverage_dimensions(width: u32, height: u32, target: &PixmapMut<'_>) ->
+pub(crate) fn validate_coverage_dimensions(width: u32, height: u32, target: &Pixmap<'_>) ->
     Result<(), RenderError> {
     if (width, height) != (target.width, target.height) {
         return Err(RenderError::CoverageDimensionsMismatch {
@@ -694,7 +732,7 @@ impl<T> EdgeSink<T> for EdgeSliceSink<'_, T> {
 }
 
 pub(crate) struct PaintCompositor<'a, 'b, S> {
-    pub(crate) target: &'a mut PixmapMut<'b>, pub(crate) sampler: &'a S,
+    pub(crate) target: &'a mut Pixmap<'b>, pub(crate) sampler: &'a S,
 }
 
 impl<S: PaintSampler> CoverageSink for PaintCompositor<'_, '_, S> {

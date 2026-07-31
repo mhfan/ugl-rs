@@ -97,7 +97,7 @@ or a renderer. Parsing, codecs, text, and platform integration stay outside.
 ### Production backend families
 
 The project targets two optimized execution families behind the same Path,
-Edge, Paint, CoverageSink, and borrowed Target contracts:
+Edge, Paint, CoverageSink, and borrowed Pixmap contracts:
 
 - **Desktop/mobile high performance:** sparse strips or tiles for locality,
   candidate-edge reduction, and empty/full rejection; analytic cell coverage
@@ -157,15 +157,15 @@ strip IDs, and SIMD layouts do not enter the common `Edge` representation.
 - Compositing is source-over unless explicitly selected otherwise.
 - Coverage multiplies premultiplied source color and alpha.
 - `SRGBA`, `LinearRGBA`, and their premultiplied counterparts make transfer
-  state explicit. `canvas_linear::LinearPixmapMut` retains premultiplied
+  state explicit. `canvas_linear::LinearPixmap` retains premultiplied
   linear-light `f32` through source-over and encodes only when presenting into
-  RGBA8888. `canvas::PixmapMut` remains the compact encoded-domain compatibility
+  RGBA8888. `canvas::Pixmap` remains the compact encoded-domain compatibility
   and performance path.
 - Linear presentation has two explicit modes: `encode_into` is the exact
   transfer-function reference, while `encode_into_with` uses a caller-owned
   4096-entry `Srgb8Encoder` table and is constrained to one RGBA8 code value per
   channel of the reference by tests.
-- `LinearPixmapMut::with_dirty_tiles` optionally borrows one bit per 16×16 tile.
+- `LinearPixmap::with_dirty_tiles` optionally borrows one bit per 16×16 tile.
   Coverage spans mark tiles during composition; incremental presentation
   consumes those bits and preserves untouched destination tiles. At 50% dirty
   tile area it switches to contiguous full-frame encoding. Known-dense callers
@@ -349,7 +349,7 @@ Every rendering stage is tested at three levels:
    reference and, where semantics match, established renderers.
 
 Feature combinations are compiled independently so dev-dependency feature
-unification cannot hide broken `no_std`, `serde`, fixed-point, or allocation
+unification cannot hide broken `no_std`, fixed-point, or allocation
 configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
 32-bit Linux, and a Cortex-M target without an FPU.
 
@@ -512,7 +512,7 @@ and consumption remain allocation-free and no-FPU.
 
 The framebuffer boundary now distinguishes raw storage from valid color:
 solid paint and gradient-stop inputs use straight encoded `SRGBA<u8>`;
-`PixmapMut::pixel_bytes` exposes physical RGBA bytes unchanged; and `pixel`
+`Pixmap::pixel_bytes` exposes physical RGBA bytes unchanged; and `pixel`
 returns only validated `PremulSRGBA8`. Construction remains O(1) with
 respect to image area and therefore does not scan caller-owned destination
 contents. Compositing over existing bytes requires the caller to uphold the
@@ -520,12 +520,13 @@ premultiplied invariant.
 
 ## Context facade and backend organization
 
-`PixmapMut` and `LinearPixmapMut` are borrowed render targets; they should not
-also become state machines. The ergonomic drawing facade is therefore named
-`Context`. It borrows a target and caller-owned workspace, owns small drawing
-state, and delegates to the existing allocation-free functions. Those
-low-level functions remain public expert APIs for retained coverage, custom
-sinks, exact capacity planning, and applications that keep state elsewhere.
+`Pixmap` owns or borrows compact RGBA8888 storage, while `LinearPixmap` borrows
+its linear working buffer. Neither is a drawing state machine. The bounded
+drawing facade is therefore named `Context`: it borrows a target, owns
+caller-supplied workspace slices by value, retains small drawing state, and
+delegates to allocation-free functions. Those low-level functions remain
+public expert APIs for retained coverage, custom sinks, exact capacity
+planning, and applications that keep state elsewhere.
 
 `Canvas` (implemented by `context::Canvas` and re-exported at crate root) is the
 ordinary allocation-backed facade. It owns and reuses f32 scratch, performs

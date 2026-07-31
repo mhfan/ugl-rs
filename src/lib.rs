@@ -21,6 +21,7 @@ pub mod canvas_linear;
 pub mod context;
 pub mod edge;
 
+pub use canvas::{Pixmap, PixmapError};
 pub use context::Canvas;
 
 #[cfg(feature = "fixed")] pub mod fixed;

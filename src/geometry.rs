@@ -21,7 +21,6 @@ impl ScalarConstants for f32 { const ZERO: Self = 0.0; const ONE: Self = 1.0; }
     const  ONE: Self = Self::ONE;
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Point<T = Scalar> { pub x: T, pub y: T, }
 
@@ -38,7 +37,6 @@ impl<T> From<(T, T)> for Point<T> { fn from((x, y): (T, T)) -> Self { Self::new(
 /// assert!(Rect::from_ltrb(3.0, 2.0, 1.0, 4.0).is_none());
 /// assert!(Rect::from_ltrb(1.0, f32::NAN, 3.0, 4.0).is_none());
 /// ```
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Rect<T = Scalar> { min: Point<T>, max: Point<T> }
 
@@ -57,17 +55,6 @@ impl<T> Rect<T> where T: Copy + PartialOrd {
     pub fn bottom(&self) -> T { self.max.y }
 }
 
-#[cfg(feature = "serde")] impl<'de, T> serde::Deserialize<'de> for Rect<T>
-    where T: Copy + PartialOrd + serde::Deserialize<'de> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: serde::Deserializer<'de> {
-        #[derive(serde::Deserialize)] struct Fields<T> { min: Point<T>, max: Point<T> }
-        let Fields { min, max } = Fields::deserialize(deserializer)?;
-        Self::from_ltrb(min.x, min.y, max.x, max.y).ok_or_else(||
-            serde::de::Error::custom("rectangle boundaries must be ordered"))
-    }
-}
-
 /// A 2D affine transform using column-vector convention.
 ///
 /// `x' = a*x + c*y + e`, `y' = b*x + d*y + f`.
@@ -83,7 +70,6 @@ impl<T> Rect<T> where T: Copy + PartialOrd {
 /// assert!((restored.x - 3.0).abs() < 1e-6 && (restored.y - 2.0).abs() < 1e-6);
 /// assert!(Affine::new(1.0, 2.0, 2.0, 4.0, 0.0, 0.0).inverse().is_none());
 /// ```
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct Affine<T = Scalar> {
     pub a: T, pub b: T, pub c: T, pub d: T, pub e: T, pub f: T,
 }
@@ -163,14 +149,12 @@ impl<T> Default for Affine<T> where T: Copy + ScalarConstants {
     fn default() -> Self { Self::identity() }
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum PathSegment<T = Scalar> {
     MoveTo(Point<T>), LineTo(Point<T>), Close,
     QuadTo  { ctrl:  Point<T>, to: Point<T> },
     CubicTo { ctrl1: Point<T>, ctrl2: Point<T>, to: Point<T> },
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Path<T = Scalar> { segments: Vec<PathSegment<T>>, }
 

@@ -6,7 +6,7 @@ use crate::{
     canvas::{DashedStrokePathOptions, DashedStrokePlanningWorkspace,
         DashedStrokeRequirements, DashedStrokeWorkspace, RenderOptions,
         RenderRequirements, RenderWorkspace, StrokePathOptions, StrokePlanningWorkspace,
-        StrokeRequirements, StrokeWorkspace, PixmapMut, RenderError,
+        StrokeRequirements, StrokeWorkspace, Pixmap, RenderError,
         dashed_stroke_requirements as plan_dashed_stroke, rasterize_path_clip,
         render_paint, render_requirements,
         render_paint_clipped, render_paint_masked,
@@ -53,14 +53,14 @@ pub(crate) struct DrawState<T, F, S, P> {
 /// and every draw call has the same capacity and error behavior as the
 /// corresponding low-level function in [`crate::canvas`].
 pub struct Context<'a, 'target, 'workspace, 'clip> {
-    target: &'a mut PixmapMut<'target>,
+    target: &'a mut Pixmap<'target>,
     workspace: Workspace<'workspace>,
     state: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>,
     clip: Clip<'clip>,
 }
 
 impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
-    pub fn new(target: &'a mut PixmapMut<'target>,
+    pub fn new(target: &'a mut Pixmap<'target>,
         workspace: Workspace<'workspace>) -> Self {
         Self {
             target, workspace,
@@ -73,8 +73,8 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         }
     }
 
-    pub fn target(&self) -> &PixmapMut<'target> { self.target }
-    pub fn target_mut(&mut self) -> &mut PixmapMut<'target> { self.target }
+    pub fn target(&self) -> &Pixmap<'target> { self.target }
+    pub fn target_mut(&mut self) -> &mut Pixmap<'target> { self.target }
     pub fn transform(&self) -> Affine { self.state.transform }
     pub fn fill_rule(&self) -> FillRule { self.state.fill_rule }
     pub fn flatten(&self) -> FlattenOptions { self.state.flatten }
@@ -285,7 +285,7 @@ impl CanvasStorage {
 /// before the destination is modified. Use `Context` or [`crate::canvas`]
 /// directly when scratch must be statically supplied.
 pub struct Canvas<'target> {
-    target: Target<'target>, storage: CanvasStorage,
+    target: Pixmap<'target>, storage: CanvasStorage,
     state: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>,
     clip: CanvasClip,
 }
@@ -305,49 +305,10 @@ impl CanvasClip {
     }) }
 }
 
-enum TargetData<'a> { Owned(Vec<u8>), Borrowed(&'a mut [u8]) }
-
-/// Pixel storage and layout owned or borrowed by a [`Canvas`].
-pub struct Target<'a> {
-    data: TargetData<'a>, width: u32, height: u32, stride: u32,
-}
-
-impl Target<'_> {
-    pub fn width(&self) -> u32 { self.width }
-    pub fn height(&self) -> u32 { self.height }
-    pub fn stride(&self) -> u32 { self.stride }
-    pub fn as_bytes(&self) -> &[u8] { match &self.data {
-        TargetData::Owned(data) => data, TargetData::Borrowed(data) => data,
-    } }
-    pub fn as_bytes_mut(&mut self) -> &mut [u8] { match &mut self.data {
-        TargetData::Owned(data) => data, TargetData::Borrowed(data) => data,
-    } }
-    pub fn pixel_bytes(&self, x: u32, y: u32) -> Option<[u8; 4]> {
-        if x >= self.width || y >= self.height { return None; }
-        let offset = y as usize * self.stride as usize + x as usize * 4;
-        let data = self.as_bytes();
-        Some([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-    }
-    pub fn pixel(&self, x: u32, y: u32) -> Option<crate::color::PremulSRGBA8> {
-        crate::color::PremulSRGBA8::from_array(self.pixel_bytes(x, y)?)
-    }
-    fn as_pixmap_mut(&mut self) -> PixmapMut<'_> {
-        let (width, height, stride) = (self.width, self.height, self.stride);
-        PixmapMut::new(self.as_bytes_mut(), width, height, stride)
-            .expect("validated Canvas target")
-    }
-}
-
 impl Canvas<'static> {
     /// Creates a zero-initialized tightly packed RGBA8888 canvas.
     pub fn new(width: u32, height: u32) -> Result<Self, crate::canvas::PixmapError> {
-        let stride = width.checked_mul(4).ok_or(crate::canvas::PixmapError::DimensionsOverflow)?;
-        let length = usize::try_from(stride).ok().and_then(|stride|
-            usize::try_from(height).ok().and_then(|height| stride.checked_mul(height)))
-            .ok_or(crate::canvas::PixmapError::DimensionsOverflow)?;
-        Ok(Self::from_target(Target {
-            data: TargetData::Owned(alloc::vec![0; length]), width, height, stride,
-        }))
+        Ok(Self::from_target(Pixmap::new(width, height)?))
     }
 }
 
@@ -355,13 +316,10 @@ impl<'target> Canvas<'target> {
     /// Creates a canvas over caller-owned RGBA8888 storage.
     pub fn from_buffer(data: &'target mut [u8], width: u32, height: u32, stride: u32) ->
         Result<Self, crate::canvas::PixmapError> {
-        PixmapMut::new(data, width, height, stride)?;
-        Ok(Self::from_target(Target {
-            data: TargetData::Borrowed(data), width, height, stride,
-        }))
+        Ok(Self::from_target(Pixmap::from_buffer(data, width, height, stride)?))
     }
 
-    fn from_target(target: Target<'target>) -> Self {
+    fn from_target(target: Pixmap<'target>) -> Self {
         Self {
             target,
             storage: CanvasStorage::default(),
@@ -374,8 +332,8 @@ impl<'target> Canvas<'target> {
         }
     }
 
-    pub fn target(&self) -> &Target<'target> { &self.target }
-    pub fn target_mut(&mut self) -> &mut Target<'target> { &mut self.target }
+    pub fn target(&self) -> &Pixmap<'target> { &self.target }
+    pub fn target_mut(&mut self) -> &mut Pixmap<'target> { &mut self.target }
     pub fn transform(&self) -> Affine { self.state.transform }
     pub fn fill_rule(&self) -> FillRule { self.state.fill_rule }
     pub fn flatten(&self) -> FlattenOptions { self.state.flatten }
@@ -492,9 +450,8 @@ impl<'target> Canvas<'target> {
         self.plan_fill(path)?;
         let state = self.state;
         let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
-        let mut target = target.as_pixmap_mut();
         let workspace = storage.workspace();
-        let mut context = Context::new(&mut target, workspace);
+        let mut context = Context::new(target, workspace);
         context.state = state; context.clip = clip.as_clip()?; context.fill_with(path, paint)
     }
     pub fn stroke(&mut self, path: &Path) -> Result<(), RenderError> {
@@ -505,9 +462,8 @@ impl<'target> Canvas<'target> {
         self.plan_stroke(path)?;
         let state = self.state;
         let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
-        let mut target = target.as_pixmap_mut();
         let workspace = storage.workspace();
-        let mut context = Context::new(&mut target, workspace);
+        let mut context = Context::new(target, workspace);
         context.state = state; context.clip = clip.as_clip()?; context.stroke_with(path, paint)
     }
     pub fn stroke_dashed(&mut self, path: &Path, dash: DashPattern<'_>) ->
@@ -519,9 +475,8 @@ impl<'target> Canvas<'target> {
         self.plan_dashed(path, dash)?;
         let state = self.state;
         let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
-        let mut target = target.as_pixmap_mut();
         let workspace = storage.workspace();
-        let mut context = Context::new(&mut target, workspace);
+        let mut context = Context::new(target, workspace);
         context.state = state; context.clip = clip.as_clip()?;
         context.stroke_dashed_with(path, paint, dash)
     }
@@ -619,7 +574,7 @@ impl<'target> Canvas<'target> {
 
     #[test] fn context_fill_state_and_clip_match_low_level_pipeline() {
         let mut pixels = [0; 4 * 4 * 4];
-        let mut target = PixmapMut::new(&mut pixels, 4, 4, 16).unwrap();
+        let mut target = Pixmap::from_buffer(&mut pixels, 4, 4, 16).unwrap();
         let mut buffers = Buffers::new();
         let workspace = buffers.workspace();
         let mask_data = [
@@ -649,7 +604,7 @@ impl<'target> Canvas<'target> {
         let gradient = LinearGradient::new((0.0, 0.0), (4.0, 0.0),
             GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
         let mut pixels = [0; 4 * 3 * 4];
-        let mut target = PixmapMut::new(&mut pixels, 4, 3, 16).unwrap();
+        let mut target = Pixmap::from_buffer(&mut pixels, 4, 3, 16).unwrap();
         let mut buffers = Buffers::new();
         let workspace = buffers.workspace();
         let mut context = Context::new(&mut target, workspace);
@@ -669,7 +624,7 @@ impl<'target> Canvas<'target> {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 1.0)).line_to((4.0, 1.0));
         let mut pixels = [0; 4 * 3 * 4];
-        let mut target = PixmapMut::new(&mut pixels, 4, 3, 16).unwrap();
+        let mut target = Pixmap::from_buffer(&mut pixels, 4, 3, 16).unwrap();
         let mut buffers = Buffers::new();
         let workspace = buffers.workspace();
         let mut context = Context::new(&mut target, workspace);

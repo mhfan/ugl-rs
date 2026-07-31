@@ -41,19 +41,21 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     }
 }
 
-#[test] fn pixmap_validates_stride_and_preserves_padding() {
+#[test] fn pixmap_supports_owned_and_borrowed_storage() {
+    let owned = Pixmap::new(2, 1).unwrap();
+    assert_eq!((owned.stride(), owned.as_bytes()), (8, &[0; 8][..]));
     let mut data = [0_u8; 11];
-    assert_eq!(PixmapMut::new(&mut data, 2, 1, 7).unwrap_err(),
+    assert_eq!(Pixmap::from_buffer(&mut data, 2, 1, 7).unwrap_err(),
         PixmapError::StrideTooSmall { minimum: 8, actual: 7 });
-    let mut target = PixmapMut::new(&mut data, 2, 1, 11).unwrap();
+    let mut target = Pixmap::from_buffer(&mut data, 2, 1, 11).unwrap();
     target.blend_solid_span(0, 0, 2, GenericRGBA::<u8>::red().premul(), 255);
     assert_eq!(target.pixel_bytes(1, 0), Some([255, 0, 0, 255]));
-    assert_eq!(&target.data[8..], &[0, 0, 0]);
+    assert_eq!(&target.as_bytes()[8..], &[0, 0, 0]);
 }
 
 #[test] fn pixmap_distinguishes_raw_bytes_from_valid_encoded_premul_pixels() {
     let mut data = [200, 20, 10, 100];
-    let target = PixmapMut::new(&mut data, 1, 1, 4).unwrap();
+    let target = Pixmap::from_buffer(&mut data, 1, 1, 4).unwrap();
     assert_eq!(target.pixel_bytes(0, 0), Some([200, 20, 10, 100]));
     assert_eq!(target.pixel(0, 0), None);
     assert_eq!(target.pixel_bytes(1, 0), None);
@@ -61,7 +63,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 
 #[test] fn source_over_combines_coverage_alpha_and_premultiplied_destination() {
     let mut data = [0, 0, 255, 255];
-    let mut target = PixmapMut::new(&mut data, 1, 1, 4).unwrap();
+    let mut target = Pixmap::from_buffer(&mut data, 1, 1, 4).unwrap();
     target.blend_solid_span(
         0, 0, 1, GenericRGBA::<u8>::new(255, 0, 0, 128).premul(), 255);
     assert_eq!(target.pixel_bytes(0, 0), Some([128, 0, 127, 255]));
@@ -74,7 +76,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 #[test] fn solid_rectangle_renders_end_to_end_without_allocation() {
     let path = rectangle(1.0, 1.0, 3.0, 3.0);
     let mut pixels = vec![0; 4 * 4 * 4];
-    let mut target = PixmapMut::new(&mut pixels, 4, 4, 16).unwrap();
+    let mut target = Pixmap::from_buffer(&mut pixels, 4, 4, 16).unwrap();
     let (mut edges, mut intersections, mut row_coverage) =
         ([Edge::default(); 4], [Intersection::default(); 4], [0.0; 4]);
     render_solid_sampled(&path, Affine::identity(), RGBA::new(255, 0, 0, 128),
@@ -134,7 +136,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 #[test] fn edge_capacity_failure_reports_required_lower_bound() {
     let (mut builder, mut pixels) = (PathBuilder::new(), [0; 16]);
     builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).line_to((2.0, 0.0));
-    let mut target = PixmapMut::new(&mut pixels, 2, 2, 8).unwrap();
+    let mut target = Pixmap::from_buffer(&mut pixels, 2, 2, 8).unwrap();
     let (mut edges, mut intersections, mut row_coverage) =
         ([Edge::default(); 1], [Intersection::default(); 2], [0.0; 2]);
     let result = render_solid_sampled(&builder.build(), Affine::identity(), RGBA::white(),
@@ -150,7 +152,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 #[test] fn analytic_solid_rendering_uses_the_shared_compositor() {
     let (mut builder, mut pixels) = (PathBuilder::new(), [0; 4]);
     builder.move_to((0.0, 0.0)).line_to((1.0, 0.0)).line_to((0.0, 1.0));
-    let mut target = PixmapMut::new(&mut pixels, 1, 1, 4).unwrap();
+    let mut target = Pixmap::from_buffer(&mut pixels, 1, 1, 4).unwrap();
     let mut buffers = AnalyticBuffers::<2, 1>::new();
     render_solid(&builder.build(), Affine::identity(), RGBA::white(),
         RenderOptions::default(), &mut target, &mut buffers.workspace()).unwrap();
@@ -166,7 +168,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     }
 
     let (path, mut pixels) = (rectangle(0.5, 0.0, 2.0, 1.0), [0; 8]);
-    let mut target = PixmapMut::new(&mut pixels, 2, 1, 8).unwrap();
+    let mut target = Pixmap::from_buffer(&mut pixels, 2, 1, 8).unwrap();
     let mut buffers = AnalyticBuffers::<4, 2>::new();
     render_paint(&path, Affine::identity(), &CoordinatePaint,
         RenderOptions::default(), &mut target, &mut buffers.workspace()).unwrap();
@@ -182,7 +184,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let (mut row_coverage, mut pixels) = ([0.0; 3], [0; 12]);
     let (mut points, mut edges) = ([Point::default(); 2], [Edge::default(); 4]);
     render_stroke_solid(&builder.build(), Affine::identity(), RGBA::white(),
-        StrokePathOptions::default(), &mut PixmapMut::new(&mut pixels, 3, 1, 12).unwrap(),
+        StrokePathOptions::default(), &mut Pixmap::from_buffer(&mut pixels, 3, 1, 12).unwrap(),
         &mut StrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut edges,
             intersections: &mut intersections, row_coverage: &mut row_coverage,
@@ -206,7 +208,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         &SolidPaint::new(RGBA::white()), DashedStrokePathOptions {
             flatten: FlattenOptions::default(), stroke: StrokeOptions::default(),
             dash: DashPattern::new(&[1.0, 1.0], 0.0).unwrap(),
-        }, &mut PixmapMut::new(&mut pixels, 5, 1, 20).unwrap(),
+        }, &mut Pixmap::from_buffer(&mut pixels, 5, 1, 20).unwrap(),
         &mut DashedStrokeWorkspace {
             stroke: StrokeWorkspace {
                 points: &mut points, contours: &mut contours, edges: &mut edges,
@@ -228,7 +230,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut points = [Point::default(); 1];
     let error = render_stroke_solid(&builder.build(), Affine::identity(),
         RGBA::white(), StrokePathOptions::default(),
-        &mut PixmapMut::new(&mut pixels, 3, 1, 12).unwrap(),
+        &mut Pixmap::from_buffer(&mut pixels, 3, 1, 12).unwrap(),
         &mut StrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut [],
             intersections: &mut intersections, row_coverage: &mut row_coverage,
@@ -248,7 +250,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     );
     let mut pixels = [17; 12];
     let error = render_stroke_solid(&path, Affine::identity(), RGBA::white(),
-        StrokePathOptions::default(), &mut PixmapMut::new(&mut pixels, 3, 1, 12).unwrap(),
+        StrokePathOptions::default(), &mut Pixmap::from_buffer(&mut pixels, 3, 1, 12).unwrap(),
         &mut StrokeWorkspace {
             points: &mut points, contours: &mut [], edges: &mut [],
             intersections: &mut intersections, row_coverage: &mut row_coverage,
@@ -260,7 +262,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut contours = [StrokeContour::default(); 1];
     let mut edges = [Edge::default(); 1];
     let error = render_stroke_solid(&path, Affine::identity(), RGBA::white(),
-        StrokePathOptions::default(), &mut PixmapMut::new(&mut pixels, 3, 1, 12).unwrap(),
+        StrokePathOptions::default(), &mut Pixmap::from_buffer(&mut pixels, 3, 1, 12).unwrap(),
         &mut StrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut edges,
             intersections: &mut intersections, row_coverage: &mut row_coverage,
@@ -300,7 +302,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         let mut edges = [Edge::default(); 512];
         let mut intersections = [AnalyticIntersection::default(); 512];
         let mut row_coverage = [0.0; 8];
-        let mut target = PixmapMut::new(&mut pixels, 8, 8, 32).unwrap();
+        let mut target = Pixmap::from_buffer(&mut pixels, 8, 8, 32).unwrap();
         render_stroke_solid(&builder.build(), Affine::identity(),
             RGBA::new(37, 149, 211, 173),
             StrokePathOptions { stroke, ..Default::default() }, &mut target,
@@ -339,14 +341,14 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_stroke_paint_clipped(&path, Affine::identity(), &gradient,
         Rect::from_ltrb(0.5, 0.0, 1.5, 1.0).unwrap(),
         StrokePathOptions::default(),
-        &mut PixmapMut::new(&mut clipped, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut clipped, 2, 1, 8).unwrap(),
         &mut workspace).unwrap();
     assert_eq!(clipped, [113, 0, 69, 128, 69, 0, 113, 128]);
 
     render_stroke_paint_masked(&path, Affine::identity(), &gradient,
         CoverageMask::new(&mask_data, 2, 1, 2).unwrap(),
         StrokePathOptions::default(),
-        &mut PixmapMut::new(&mut masked, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut masked, 2, 1, 8).unwrap(),
         &mut workspace).unwrap();
     assert_eq!(masked, [113, 0, 69, 128, 137, 0, 225, 255]);
 }
@@ -356,7 +358,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let stops = red_blue_stops();
     let gradient = LinearGradient::new((0.0, 0.0), (2.0, 0.0),
         GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
-    let mut target = PixmapMut::new(&mut pixels, 2, 1, 8).unwrap();
+    let mut target = Pixmap::from_buffer(&mut pixels, 2, 1, 8).unwrap();
     let mut buffers = AnalyticBuffers::<4, 2>::new();
     render_paint(&path, Affine::identity(), &gradient,
         RenderOptions::default(), &mut target,
@@ -370,7 +372,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let stops = red_blue_stops();
     let gradient = RadialGradient::new((1.5, 0.5), 1.5,
         GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
-    let mut target = PixmapMut::new(&mut pixels, 3, 1, 12).unwrap();
+    let mut target = Pixmap::from_buffer(&mut pixels, 3, 1, 12).unwrap();
     let mut buffers = AnalyticBuffers::<4, 3>::new();
     render_paint(&path, Affine::identity(), &gradient,
         RenderOptions::default(), &mut target,
@@ -392,7 +394,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_paint_clipped(&path, Affine::identity(), &gradient,
         Rect::from_ltrb(0.5, 0.0, 1.5, 1.0).unwrap(),
         RenderOptions::default(),
-        &mut PixmapMut::new(&mut clipped_pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut clipped_pixels, 2, 1, 8).unwrap(),
         &mut workspace).unwrap();
     assert_eq!(clipped_pixels, [113, 0, 69, 128, 69, 0, 113, 128]);
 
@@ -400,14 +402,14 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_paint_masked(&path, Affine::identity(), &gradient,
         CoverageMask::new(&mask_data, 2, 1, 2).unwrap(),
         RenderOptions::default(),
-        &mut PixmapMut::new(&mut masked_pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut masked_pixels, 2, 1, 8).unwrap(),
         &mut workspace).unwrap();
     assert_eq!(masked_pixels, [113, 0, 69, 128, 137, 0, 225, 255]);
 }
 
 #[test] fn analytic_rectangle_clip_multiplies_coverage_end_to_end() {
     let (path, mut pixels) = (rectangle(0.0, 0.0, 3.0, 2.0), [0; 3 * 2 * 4]);
-    let mut target = PixmapMut::new(&mut pixels, 3, 2, 12).unwrap();
+    let mut target = Pixmap::from_buffer(&mut pixels, 3, 2, 12).unwrap();
     let mut buffers = AnalyticBuffers::<4, 3>::new();
     render_solid_clipped(&path, Affine::identity(), RGBA::white(),
         Rect::from_ltrb(0.5, 0.25, 2.5, 1.0).unwrap(),
@@ -434,7 +436,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mask = CoverageMask::new(&mask_data, 2, 1, 4).unwrap();
     render_solid_masked(&shape, Affine::identity(), RGBA::white(),
         mask, RenderOptions::default(),
-        &mut PixmapMut::new(&mut pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut pixels, 2, 1, 8).unwrap(),
         &mut workspace).unwrap();
     assert_eq!(pixels, [128; 8]);
 }

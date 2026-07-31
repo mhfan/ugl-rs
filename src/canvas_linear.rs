@@ -1,15 +1,15 @@
 //! Linear-light premultiplied framebuffer and analytic compositing path.
 //!
-//! Unlike [`crate::canvas::PixmapMut`], this target retains `f32` linear-light
+//! Unlike [`crate::canvas::Pixmap`], this target retains `f32` linear-light
 //! colors through source-over compositing. Encoding and RGBA8 quantization occur
-//! only when [`LinearPixmapMut::encode_into`] presents into the compatibility
+//! only when [`LinearPixmap::encode_into`] presents into the compatibility
 //! framebuffer.
 
 use core::convert::Infallible;
 use crate::{
     canvas::{DashedStrokePathOptions, DashedStrokeWorkspace,
         RenderOptions, RenderWorkspace, StrokePathOptions,
-        StrokeWorkspace, PixmapMut, RenderError, render_path_to,
+        StrokeWorkspace, Pixmap, RenderError, render_path_to,
         render_stroke_dashed_to, render_stroke_to},
     color::{LinearPremulRGBA, Srgb8Encoder, SRGBA}, geometry::{Affine, Path, Rect},
     raster::{CoverageMask, CoverageSink, MaskClipSink, RectClipSink},
@@ -22,7 +22,7 @@ pub const LINEAR_DIRTY_TILE_SIZE: u32 = 16;
 ///
 /// `stride` is measured in pixels, not bytes. Caller-provided pixels must
 /// already satisfy the [`LinearPremulRGBA`] invariant.
-#[derive(Debug)] pub struct LinearPixmapMut<'a> {
+#[derive(Debug)] pub struct LinearPixmap<'a> {
     data: &'a mut [LinearPremulRGBA<f32>], width: u32, height: u32, stride: u32,
     dirty_tiles: Option<&'a mut [u64]>, dirty_tile_columns: u32, dirty_tile_count: u32,
 }
@@ -35,8 +35,8 @@ pub const LINEAR_DIRTY_TILE_SIZE: u32 = 16;
     DimensionsMismatch { source: (u32, u32), destination: (u32, u32) },
 }
 
-impl<'a> LinearPixmapMut<'a> {
-    pub fn new(data: &'a mut [LinearPremulRGBA<f32>], width: u32, height: u32,
+impl<'a> LinearPixmap<'a> {
+    pub fn from_buffer(data: &'a mut [LinearPremulRGBA<f32>], width: u32, height: u32,
         stride: u32) -> Result<Self, LinearPixmapError> {
         Self::new_inner(data, width, height, stride, None)
     }
@@ -95,7 +95,7 @@ impl<'a> LinearPixmapMut<'a> {
     }
 
     /// Encodes the working buffer into premultiplied sRGB RGBA8888.
-    pub fn encode_into(&self, destination: &mut PixmapMut<'_>) ->
+    pub fn encode_into(&self, destination: &mut Pixmap<'_>) ->
         Result<(), LinearPixmapError> {
         self.validate_destination(destination)?;
         for y in 0..self.height {
@@ -107,7 +107,7 @@ impl<'a> LinearPixmapMut<'a> {
     }
 
     /// Presents through a caller-owned transfer LUT instead of per-channel `powf`.
-    pub fn encode_into_with(&self, destination: &mut PixmapMut<'_>,
+    pub fn encode_into_with(&self, destination: &mut Pixmap<'_>,
         encoder: Srgb8Encoder<'_>) -> Result<(), LinearPixmapError> {
         self.validate_destination(destination)?;
         for y in 0..self.height {
@@ -120,18 +120,18 @@ impl<'a> LinearPixmapMut<'a> {
 
     /// Encodes and consumes only tiles modified since construction or the last
     /// incremental presentation. Untouched destination pixels are preserved.
-    pub fn encode_dirty_into(&mut self, destination: &mut PixmapMut<'_>) ->
+    pub fn encode_dirty_into(&mut self, destination: &mut Pixmap<'_>) ->
         Result<(), LinearPixmapError> {
         self.encode_dirty_with(destination, |color| color.to_encoded_srgba8())
     }
 
     /// LUT-accelerated incremental presentation of modified tiles.
-    pub fn encode_dirty_into_with(&mut self, destination: &mut PixmapMut<'_>,
+    pub fn encode_dirty_into_with(&mut self, destination: &mut Pixmap<'_>,
         encoder: Srgb8Encoder<'_>) -> Result<(), LinearPixmapError> {
         self.encode_dirty_with(destination, |color| encoder.encode(color))
     }
 
-    fn encode_dirty_with<F>(&mut self, destination: &mut PixmapMut<'_>,
+    fn encode_dirty_with<F>(&mut self, destination: &mut Pixmap<'_>,
         encode: F) -> Result<(), LinearPixmapError>
         where F: Fn(LinearPremulRGBA<f32>) -> crate::color::PremulSRGBA8 {
         self.validate_destination(destination)?;
@@ -170,7 +170,7 @@ impl<'a> LinearPixmapMut<'a> {
         }   self.dirty_tile_count = 0;  Ok(())
     }
 
-    fn validate_destination(&self, destination: &PixmapMut<'_>) ->
+    fn validate_destination(&self, destination: &Pixmap<'_>) ->
         Result<(), LinearPixmapError> {
         if (self.width, self.height) != (destination.width(), destination.height()) {
             return Err(LinearPixmapError::DimensionsMismatch {
@@ -230,7 +230,7 @@ impl<'a> LinearPixmapMut<'a> {
 
 /// Renders a straight encoded-sRGB solid into a linear-light working target.
 pub fn render_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
-    options: RenderOptions, target: &mut LinearPixmapMut<'_>,
+    options: RenderOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     render_paint(path, transform, &SolidPaint::new(color),
         options, target, workspace)
@@ -238,7 +238,7 @@ pub fn render_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
 
 /// Renders a linear sampler through the exact-area analytic rasterizer.
 pub fn render_paint<S: LinearPaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, options: RenderOptions, target: &mut LinearPixmapMut<'_>,
+    sampler: &S, options: RenderOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = LinearPaintCompositor { target, sampler };
@@ -247,14 +247,14 @@ pub fn render_paint<S: LinearPaintSampler>(path: &Path, transform: Affine,
 }
 
 pub fn render_solid_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
-    clip: Rect, options: RenderOptions, target: &mut LinearPixmapMut<'_>,
+    clip: Rect, options: RenderOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     render_paint_clipped(path, transform, &SolidPaint::new(color),
         clip, options, target, workspace)
 }
 
 pub fn render_paint_clipped<S: LinearPaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, clip: Rect, options: RenderOptions, target: &mut LinearPixmapMut<'_>,
+    sampler: &S, clip: Rect, options: RenderOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = LinearPaintCompositor { target, sampler };
@@ -263,7 +263,7 @@ pub fn render_paint_clipped<S: LinearPaintSampler>(path: &Path, transform: Affin
 }
 
 pub fn render_solid_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
-    mask: CoverageMask<'_>, options: RenderOptions, target: &mut LinearPixmapMut<'_>,
+    mask: CoverageMask<'_>, options: RenderOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     render_paint_masked(path, transform, &SolidPaint::new(color),
         mask, options, target, workspace)
@@ -271,7 +271,7 @@ pub fn render_solid_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
 
 pub fn render_paint_masked<S: LinearPaintSampler>(path: &Path,
     transform: Affine, sampler: &S, mask: CoverageMask<'_>,
-    options: RenderOptions, target: &mut LinearPixmapMut<'_>,
+    options: RenderOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     validate_mask(mask, target)?;
     let (width, height) = (target.width, target.height);
@@ -281,14 +281,14 @@ pub fn render_paint_masked<S: LinearPaintSampler>(path: &Path,
 }
 
 pub fn render_stroke_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
-    options: StrokePathOptions, target: &mut LinearPixmapMut<'_>,
+    options: StrokePathOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     render_stroke_paint(path, transform, &SolidPaint::new(color),
         options, target, workspace)
 }
 
 pub fn render_stroke_paint<S: LinearPaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, options: StrokePathOptions, target: &mut LinearPixmapMut<'_>,
+    sampler: &S, options: StrokePathOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = LinearPaintCompositor { target, sampler };
@@ -298,7 +298,7 @@ pub fn render_stroke_paint<S: LinearPaintSampler>(path: &Path, transform: Affine
 
 pub fn render_stroke_solid_dashed(path: &Path, transform: Affine,
     color: SRGBA<u8>, options: DashedStrokePathOptions<'_>,
-    target: &mut LinearPixmapMut<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
+    target: &mut LinearPixmap<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     render_stroke_paint_dashed(path, transform, &SolidPaint::new(color),
         options, target, workspace)
@@ -306,7 +306,7 @@ pub fn render_stroke_solid_dashed(path: &Path, transform: Affine,
 
 pub fn render_stroke_paint_dashed<S: LinearPaintSampler>(path: &Path,
     transform: Affine, sampler: &S, options: DashedStrokePathOptions<'_>,
-    target: &mut LinearPixmapMut<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
+    target: &mut LinearPixmap<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = LinearPaintCompositor { target, sampler };
@@ -316,7 +316,7 @@ pub fn render_stroke_paint_dashed<S: LinearPaintSampler>(path: &Path,
 
 pub fn render_stroke_solid_clipped(path: &Path, transform: Affine,
     color: SRGBA<u8>, clip: Rect, options: StrokePathOptions,
-    target: &mut LinearPixmapMut<'_>, workspace: &mut StrokeWorkspace<'_>) ->
+    target: &mut LinearPixmap<'_>, workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     render_stroke_paint_clipped(path, transform, &SolidPaint::new(color),
         clip, options, target, workspace)
@@ -324,7 +324,7 @@ pub fn render_stroke_solid_clipped(path: &Path, transform: Affine,
 
 pub fn render_stroke_paint_clipped<S: LinearPaintSampler>(path: &Path,
     transform: Affine, sampler: &S, clip: Rect, options: StrokePathOptions,
-    target: &mut LinearPixmapMut<'_>, workspace: &mut StrokeWorkspace<'_>) ->
+    target: &mut LinearPixmap<'_>, workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = LinearPaintCompositor { target, sampler };
@@ -334,7 +334,7 @@ pub fn render_stroke_paint_clipped<S: LinearPaintSampler>(path: &Path,
 
 pub fn render_stroke_solid_masked(path: &Path, transform: Affine,
     color: SRGBA<u8>, mask: CoverageMask<'_>, options: StrokePathOptions,
-    target: &mut LinearPixmapMut<'_>, workspace: &mut StrokeWorkspace<'_>) ->
+    target: &mut LinearPixmap<'_>, workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     render_stroke_paint_masked(path, transform, &SolidPaint::new(color),
         mask, options, target, workspace)
@@ -342,7 +342,7 @@ pub fn render_stroke_solid_masked(path: &Path, transform: Affine,
 
 pub fn render_stroke_paint_masked<S: LinearPaintSampler>(path: &Path,
     transform: Affine, sampler: &S, mask: CoverageMask<'_>,
-    options: StrokePathOptions, target: &mut LinearPixmapMut<'_>,
+    options: StrokePathOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     validate_mask(mask, target)?;
     let (width, height) = (target.width, target.height);
@@ -351,7 +351,7 @@ pub fn render_stroke_paint_masked<S: LinearPaintSampler>(path: &Path,
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
-fn validate_mask(mask: CoverageMask<'_>, target: &LinearPixmapMut<'_>) ->
+fn validate_mask(mask: CoverageMask<'_>, target: &LinearPixmap<'_>) ->
     Result<(), RenderError> {
     if (mask.width(), mask.height()) != (target.width, target.height) {
         return Err(RenderError::CoverageDimensionsMismatch {
@@ -361,7 +361,7 @@ fn validate_mask(mask: CoverageMask<'_>, target: &LinearPixmapMut<'_>) ->
 }
 
 struct LinearPaintCompositor<'a, 'b, S> {
-    target: &'a mut LinearPixmapMut<'b>, sampler: &'a S,
+    target: &'a mut LinearPixmap<'b>, sampler: &'a S,
 }
 
 impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
@@ -385,7 +385,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         builder.build()
     }
 
-    fn render(color: SRGBA<u8>, target: &mut LinearPixmapMut<'_>) {
+    fn render(color: SRGBA<u8>, target: &mut LinearPixmap<'_>) {
         let (mut edges, mut intersections, mut coverage) =
             ([Edge::default(); 4], [AnalyticIntersection::default(); 2], [0.0; 1]);
         render_solid(&rectangle(), Affine::identity(), color,
@@ -396,30 +396,30 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
     }
 
     #[test] fn linear_pixmap_validates_pixel_stride_and_presentation_dimensions() {
-        assert_eq!(LinearPixmapMut::new(&mut [LinearPremulRGBA::default(); 2], 2, 1, 1)
+        assert_eq!(LinearPixmap::from_buffer(&mut [LinearPremulRGBA::default(); 2], 2, 1, 1)
             .unwrap_err(), LinearPixmapError::StrideTooSmall { minimum: 2, actual: 1 });
-        assert_eq!(LinearPixmapMut::new(&mut [LinearPremulRGBA::default(); 1], 2, 1, 2)
+        assert_eq!(LinearPixmap::from_buffer(&mut [LinearPremulRGBA::default(); 1], 2, 1, 2)
             .unwrap_err(), LinearPixmapError::BufferTooSmall { minimum: 2, actual: 1 });
 
         let mut pixels = [LinearPremulRGBA::default(); 2];
-        let source = LinearPixmapMut::new(&mut pixels, 2, 1, 2).unwrap();
+        let source = LinearPixmap::from_buffer(&mut pixels, 2, 1, 2).unwrap();
         let mut bytes = [0; 4];
-        let mut destination = PixmapMut::new(&mut bytes, 1, 1, 4).unwrap();
+        let mut destination = Pixmap::from_buffer(&mut bytes, 1, 1, 4).unwrap();
         assert_eq!(source.encode_into(&mut destination).unwrap_err(),
             LinearPixmapError::DimensionsMismatch { source: (2, 1), destination: (1, 1) });
-        assert_eq!(LinearPixmapMut::dirty_tile_words(32, 16), Ok(1));
-        assert_eq!(LinearPixmapMut::with_dirty_tiles(
+        assert_eq!(LinearPixmap::dirty_tile_words(32, 16), Ok(1));
+        assert_eq!(LinearPixmap::with_dirty_tiles(
             &mut [LinearPremulRGBA::default(); 1], 32, 16, 32, &mut []).unwrap_err(),
             LinearPixmapError::DirtyTileStorageTooSmall { minimum: 1, actual: 0 });
-        assert_eq!(LinearPixmapMut::new(
+        assert_eq!(LinearPixmap::from_buffer(
             &mut [LinearPremulRGBA::default(); 1], 1, 1, 1).unwrap()
-            .encode_dirty_into(&mut PixmapMut::new(&mut [0; 4], 1, 1, 4).unwrap())
+            .encode_dirty_into(&mut Pixmap::from_buffer(&mut [0; 4], 1, 1, 4).unwrap())
             .unwrap_err(), LinearPixmapError::DirtyTrackingUnavailable);
     }
 
     #[test] fn linear_source_over_differs_from_encoded_domain_and_encodes_once() {
         let mut pixels = [LinearPremulRGBA::default(); 1];
-        let mut target = LinearPixmapMut::new(&mut pixels, 1, 1, 1).unwrap();
+        let mut target = LinearPixmap::from_buffer(&mut pixels, 1, 1, 1).unwrap();
         render(SRGBA::blue(), &mut target);
         render(SRGBA::new(255, 0, 0, 128), &mut target);
 
@@ -430,13 +430,13 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         assert_eq!(a, 1.0);
 
         let mut bytes = [0; 4];
-        target.encode_into(&mut PixmapMut::new(&mut bytes, 1, 1, 4).unwrap()).unwrap();
+        target.encode_into(&mut Pixmap::from_buffer(&mut bytes, 1, 1, 4).unwrap()).unwrap();
         assert_eq!(bytes, [188, 0, 187, 255]);
         assert_ne!(bytes, [128, 0, 127, 255]);
 
         let (mut lut, mut approximate) = ([0; crate::color::SRGB8_ENCODE_LUT_SIZE], [0; 4]);
         target.encode_into_with(
-            &mut PixmapMut::new(&mut approximate, 1, 1, 4).unwrap(),
+            &mut Pixmap::from_buffer(&mut approximate, 1, 1, 4).unwrap(),
             Srgb8Encoder::new(&mut lut).unwrap()).unwrap();
         for channel in 0..4 {
             assert!(approximate[channel].abs_diff(bytes[channel]) <= 1);
@@ -459,7 +459,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         render_solid_clipped(&path, Affine::identity(), SRGBA::white(),
             Rect::from_ltrb(0.5, 0.0, 1.5, 1.0).unwrap(),
             RenderOptions::default(),
-            &mut LinearPixmapMut::new(&mut clipped, 2, 1, 2).unwrap(),
+            &mut LinearPixmap::from_buffer(&mut clipped, 2, 1, 2).unwrap(),
             &mut workspace).unwrap();
         for pixel in clipped {
             assert!((pixel.to_array()[3] - 128.0 / 255.0).abs() < 1e-6);
@@ -469,7 +469,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         render_solid_masked(&path, Affine::identity(), SRGBA::white(),
             CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
             RenderOptions::default(),
-            &mut LinearPixmapMut::new(&mut masked, 2, 1, 2).unwrap(),
+            &mut LinearPixmap::from_buffer(&mut masked, 2, 1, 2).unwrap(),
             &mut workspace).unwrap();
         assert!((masked[0].to_array()[3] - 128.0 / 255.0).abs() < 1e-6);
         assert_eq!(masked[1].to_array()[3], 1.0);
@@ -481,7 +481,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         let mut stroke_pixels = [LinearPremulRGBA::default(); 2];
         render_stroke_solid(&line.build(), Affine::identity(), SRGBA::white(),
             StrokePathOptions::default(),
-            &mut LinearPixmapMut::new(&mut stroke_pixels, 2, 1, 2).unwrap(),
+            &mut LinearPixmap::from_buffer(&mut stroke_pixels, 2, 1, 2).unwrap(),
             &mut StrokeWorkspace {
                 points: &mut points, contours: &mut contours, edges: &mut stroke_edges,
                 intersections: &mut [AnalyticIntersection::default(); 4],
@@ -495,7 +495,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
     #[test] fn dirty_presentation_updates_touched_tiles_once() {
         let mut pixels = [LinearPremulRGBA::default(); 48 * 16];
         let mut dirty = [u64::MAX; 1];
-        let mut target = LinearPixmapMut::with_dirty_tiles(&mut pixels,
+        let mut target = LinearPixmap::with_dirty_tiles(&mut pixels,
             48, 16, 48, &mut dirty).unwrap();
         render_solid(&rectangle(), Affine::identity(), SRGBA::white(),
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
@@ -505,20 +505,20 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
             }).unwrap();
 
         let mut bytes = [17; 48 * 16 * 4];
-        target.encode_dirty_into(&mut PixmapMut::new(&mut bytes,
+        target.encode_dirty_into(&mut Pixmap::from_buffer(&mut bytes,
             48, 16, 192).unwrap()).unwrap();
         assert_eq!(&bytes[..4], &[255; 4]);
         assert_eq!(&bytes[16 * 4..16 * 4 + 4], &[17; 4]);
 
         bytes[..4].fill(9);
-        target.encode_dirty_into(&mut PixmapMut::new(&mut bytes,
+        target.encode_dirty_into(&mut Pixmap::from_buffer(&mut bytes,
             48, 16, 192).unwrap()).unwrap();
         assert_eq!(&bytes[..4], &[9; 4]);
     }
 
     #[test] fn randomized_linear_source_over_matches_f64_reference() {
         let mut pixel = [LinearPremulRGBA::default(); 1];
-        let mut target = LinearPixmapMut::new(&mut pixel, 1, 1, 1).unwrap();
+        let mut target = LinearPixmap::from_buffer(&mut pixel, 1, 1, 1).unwrap();
         let (mut state, mut reference) = (0xA341_316C_u32, [0.0_f64; 4]);
         for _ in 0..4096 {
             let next = |state: &mut u32| {
@@ -569,9 +569,9 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         for coverage in [u8::MAX, 128] {
             let initial = SolidPaint::new(SRGBA::new(20, 200, 40, 160)).linear_color();
             let (mut fast, mut reference) = ([initial; 8], [initial; 8]);
-            LinearPixmapMut::new(&mut fast, 8, 1, 8).unwrap()
+            LinearPixmap::from_buffer(&mut fast, 8, 1, 8).unwrap()
                 .blend_sampled_span(0, 0, 8, &gradient, coverage);
-            LinearPixmapMut::new(&mut reference, 8, 1, 8).unwrap()
+            LinearPixmap::from_buffer(&mut reference, 8, 1, 8).unwrap()
                 .blend_sampled_span(0, 0, 8, &Composite(&gradient), coverage);
             assert_eq!(fast, reference);
         }

@@ -1,7 +1,7 @@
 //! Stateful facade for the fixed-point rendering pipeline.
 
 use crate::{
-    canvas::{PixmapMut, RenderError},
+    canvas::{Pixmap, RenderError},
     color::{PremulSRGBA8, SRGBA}, context::{Clip, DrawState},
     dash::DashContour, fixed::{Scalar, canvas::{DashedStrokePathOptions,
             DashedStrokeRequirements, DashedStrokeWorkspace, GeometryWorkspace,
@@ -48,14 +48,14 @@ impl PaintSampler for SolidPaint {
 /// clipping, whose compatibility coverage adapter currently uses f32. Use a
 /// pre-rasterized fixed path mask when the complete clip path must avoid an FPU.
 pub struct Context<'a, 'target, 'workspace, 'clip> {
-    target: &'a mut PixmapMut<'target>,
+    target: &'a mut Pixmap<'target>,
     workspace: Workspace<'workspace>,
     state: DrawState<Scalar, FlattenOptions, StrokeOptions, SolidPaint>,
     clip: Clip<'clip>,
 }
 
 impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
-    pub fn new(target: &'a mut PixmapMut<'target>,
+    pub fn new(target: &'a mut Pixmap<'target>,
         workspace: Workspace<'workspace>) -> Self {
         Self {
             target, workspace,
@@ -69,8 +69,8 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         }
     }
 
-    pub fn target(&self) -> &PixmapMut<'target> { self.target }
-    pub fn target_mut(&mut self) -> &mut PixmapMut<'target> { self.target }
+    pub fn target(&self) -> &Pixmap<'target> { self.target }
+    pub fn target_mut(&mut self) -> &mut Pixmap<'target> { self.target }
     pub fn transform(&self) -> Affine<Scalar> { self.state.transform }
     pub fn fill_rule(&self) -> FillRule { self.state.fill_rule }
     pub fn flatten(&self) -> FlattenOptions { self.state.flatten }
@@ -266,7 +266,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             0,   0,   0, 0,
         ];
         let mut pixels = [0; 4 * 3 * 4];
-        let mut target = PixmapMut::new(&mut pixels, 4, 3, 16).unwrap();
+        let mut target = Pixmap::from_buffer(&mut pixels, 4, 3, 16).unwrap();
         let mut context = Context::new(&mut target, workspace);
         context.set_color(SRGBA::new(255, 0, 0, 128))
             .set_transform(Affine::translate(fixed(1), Scalar::ZERO))

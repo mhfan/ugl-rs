@@ -72,19 +72,16 @@
     assert_eq!(rgba, RGBA::try_from(&cha[0..3]).unwrap());
     assert_eq!(rgba, cha.into());
  ```
-    https://github.com/linebender/color */
+    <https://github.com/linebender/color> */
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(C)] pub struct RGBA<T: ColorChannel> { pub r: T, pub g: T, pub b: T, pub a: T, }
 
 /// A straight-alpha color encoded with the sRGB transfer function.
 #[derive(Clone, Copy, Debug, PartialEq)] #[allow(non_camel_case_types)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)] pub struct SRGBA<T: ColorChannel = u8>(RGBA<T>);
 
 /// A straight-alpha linear-light sRGB color.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(transparent)] pub struct LinearRGBA<T: ColorChannel = f32>(RGBA<T>);
 
 /// A premultiplied linear-light sRGB color used by the reference pipeline.

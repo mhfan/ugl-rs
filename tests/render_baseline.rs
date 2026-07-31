@@ -2,9 +2,9 @@
 use ugl_rs::{analytic::Intersection as AnalyticIntersection,
     color::{PremulSRGBA8, LinearPremulRGBA, PremulRGBA, SRGBA, SRGBA as RGBA},
     canvas::{RenderOptions, RenderWorkspace, StrokePathOptions,
-        StrokeWorkspace, PixmapMut, render_paint as render_canvas_paint, render_solid,
+        StrokeWorkspace, Pixmap, render_paint as render_canvas_paint, render_solid,
         render_stroke_solid,
-    }, canvas_linear::{LinearPixmapMut, render_paint as render_paint_linear,
+    }, canvas_linear::{LinearPixmap, render_paint as render_paint_linear,
         render_solid as render_solid_linear},
     edge::Edge, geometry::{Affine, PathBuilder}, raster::FillRule,
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions},
@@ -22,7 +22,7 @@ fn legacy_pixel(pixel: PremulSRGBA8) -> PremulRGBA<u8> {
 
 fn render(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
-    let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+    let mut target = Pixmap::from_buffer(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
         [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
     );
@@ -42,7 +42,7 @@ fn render(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>; 16] {
 fn render_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
     [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
-    let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+    let mut target = Pixmap::from_buffer(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
         [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
     );
@@ -61,7 +61,7 @@ fn render_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
 fn render_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
     [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
-    let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+    let mut target = Pixmap::from_buffer(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut contours, mut edges) = ([StrokeContour::default(); 2], [Edge::default(); 64]);
     let (mut points, mut row_coverage) = ([Default::default(); 8], [0.0; WIDTH as usize]);
     let mut intersections = [AnalyticIntersection::default(); 64];
@@ -86,7 +86,7 @@ fn render_linear_layers(builder: PathBuilder, colors: &[SRGBA<u8>]) ->
     [PremulRGBA<u8>; 16] {
     let path = builder.build();
     let mut linear = [LinearPremulRGBA::default(); 16];
-    let mut target = LinearPixmapMut::new(&mut linear, WIDTH, HEIGHT, WIDTH).unwrap();
+    let mut target = LinearPixmap::from_buffer(&mut linear, WIDTH, HEIGHT, WIDTH).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
         [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
     );
@@ -100,7 +100,7 @@ fn render_linear_layers(builder: PathBuilder, colors: &[SRGBA<u8>]) ->
             }).unwrap();
     }
     let mut bytes = [0; 16 * 4];
-    let mut encoded = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+    let mut encoded = Pixmap::from_buffer(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     target.encode_into(&mut encoded).unwrap();
     core::array::from_fn(|index|
         legacy_pixel(encoded.pixel(
@@ -110,7 +110,7 @@ fn render_linear_layers(builder: PathBuilder, colors: &[SRGBA<u8>]) ->
 fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) ->
     [PremulRGBA<u8>; 16] {
     let mut linear = [LinearPremulRGBA::default(); 16];
-    let mut target = LinearPixmapMut::new(&mut linear, WIDTH, HEIGHT, WIDTH).unwrap();
+    let mut target = LinearPixmap::from_buffer(&mut linear, WIDTH, HEIGHT, WIDTH).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
         [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
     );
@@ -122,7 +122,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
         }).unwrap();
     let mut bytes = [0; 16 * 4];
-    let mut encoded = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+    let mut encoded = Pixmap::from_buffer(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     target.encode_into(&mut encoded).unwrap();
     core::array::from_fn(|index|
         legacy_pixel(encoded.pixel(
@@ -302,7 +302,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
         let mut strip_offsets = vec![0; requirements.offsets];
         let mut strip_indices = vec![0; requirements.indices];
         let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
-        let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+        let mut target = Pixmap::from_buffer(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
         render_solid(&lines[..line_count], RGBA::new(20, 200, 40, 160),
             FillRule::NonZero, &mut target, &mut Workspace {
                 segments: &mut segments, trapezoids: &mut trapezoids,

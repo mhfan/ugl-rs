@@ -161,7 +161,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let (mut lines, mut row_area) = ([Line::default(); 2], [0; 2]);
     let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 2]);
     prepare_lines(&edges, &mut lines).unwrap();
-    let mut target = PixmapMut::new(&mut pixels, 2, 1, 8).unwrap();
+    let mut target = Pixmap::from_buffer(&mut pixels, 2, 1, 8).unwrap();
     render_solid(&lines, RGBA::white(), FillRule::NonZero, &mut target,
         &mut Workspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
@@ -179,7 +179,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     }
     let mut painted_pixels = [0; 8];
     render_compat_paint(&lines, &CoordinatePaint, FillRule::NonZero,
-        &mut PixmapMut::new(&mut painted_pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut painted_pixels, 2, 1, 8).unwrap(),
         &mut Workspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
             strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
@@ -189,14 +189,14 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut analytic_pixels = [0; 8];
     render_float_paint(&path, Affine::identity(), &CoordinatePaint,
         FloatRenderOptions::default(),
-        &mut PixmapMut::new(&mut analytic_pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut analytic_pixels, 2, 1, 8).unwrap(),
         &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
     assert_eq!(painted_pixels, analytic_pixels);
 
     let mut clipped_pixels = [0; 8];
     render_compat_paint_clipped(&lines, &CoordinatePaint,
         Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(), FillRule::NonZero,
-        &mut PixmapMut::new(&mut clipped_pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut clipped_pixels, 2, 1, 8).unwrap(),
         &mut Workspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
             strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
@@ -206,14 +206,14 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_float_paint_clipped(&path, Affine::identity(), &CoordinatePaint,
         Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
         FloatRenderOptions::default(),
-        &mut PixmapMut::new(&mut analytic_pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut analytic_pixels, 2, 1, 8).unwrap(),
         &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
     assert_eq!(clipped_pixels, analytic_pixels);
 
     let mut masked_pixels = [0; 8];
     render_compat_paint_masked(&lines, &CoordinatePaint,
         CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(), FillRule::NonZero,
-        &mut PixmapMut::new(&mut masked_pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut masked_pixels, 2, 1, 8).unwrap(),
         &mut Workspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
             strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
@@ -223,7 +223,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_float_paint_masked(&path, Affine::identity(), &CoordinatePaint,
         CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
         FloatRenderOptions::default(),
-        &mut PixmapMut::new(&mut analytic_pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut analytic_pixels, 2, 1, 8).unwrap(),
         &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
     assert_eq!(masked_pixels, analytic_pixels);
 
@@ -238,21 +238,21 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         }).unwrap();
     let mut retained_pixels = [0; 8];
     composite_compat_paint_strips(strips, &CoordinatePaint,
-        &mut PixmapMut::new(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(retained_pixels, painted_pixels);
     retained_pixels.fill(0);
     composite_compat_paint_strips_clipped(strips, &CoordinatePaint,
         Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
-        &mut PixmapMut::new(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(retained_pixels, clipped_pixels);
     retained_pixels.fill(0);
     composite_compat_paint_strips_masked(strips, &CoordinatePaint,
         CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
-        &mut PixmapMut::new(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(retained_pixels, masked_pixels);
 
     let mut tiled_pixels = [0; 8];
-    let mut tiled_target = PixmapMut::new(&mut tiled_pixels, 2, 1, 8).unwrap();
+    let mut tiled_target = Pixmap::from_buffer(&mut tiled_pixels, 2, 1, 8).unwrap();
     let (mut tiles, mut runs, mut pieces) =  ([CoverageTile::default(); 1],
         [CoverageTileRun::default(); 2], [DirectTilePiece::default(); 2]);
     render_solid_tiled(&lines, RGBA::white(), FillRule::NonZero, &mut tiled_target,
@@ -270,7 +270,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 
     let mut painted_tiled_pixels = [0; 8];
     render_compat_paint_tiled(&lines, &CoordinatePaint, FillRule::NonZero,
-        &mut PixmapMut::new(&mut painted_tiled_pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut painted_tiled_pixels, 2, 1, 8).unwrap(),
         &mut Workspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
             strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
@@ -295,17 +295,17 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     ).unwrap();
     let mut cached_pixels = [0; 8];
     composite_solid_tiles(tiled, RGBA::white(),
-        &mut PixmapMut::new(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(cached_pixels, pixels);
     cached_pixels.fill(0);
     composite_compat_paint_tiles_clipped(tiled, &CoordinatePaint,
         Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
-        &mut PixmapMut::new(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(cached_pixels, clipped_pixels);
     cached_pixels.fill(0);
     composite_compat_paint_tiles_masked(tiled, &CoordinatePaint,
         CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
-        &mut PixmapMut::new(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(cached_pixels, masked_pixels);
 
     let ramp = [PremulSRGBA8::new(255, 0, 0, 255).unwrap(),
@@ -315,7 +315,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         &ramp, SpreadMode::Pad).unwrap();
     let mut native_pixels = [0; 8];
     render_paint(&lines, &gradient, FillRule::NonZero,
-        &mut PixmapMut::new(&mut native_pixels, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut native_pixels, 2, 1, 8).unwrap(),
         &mut Workspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
             strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
@@ -324,43 +324,43 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 
     let mut native_retained = [0; 8];
     composite_paint_strips(strips, &gradient,
-        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(native_retained, native_pixels);
     native_retained.fill(0);
     composite_paint_strips_clipped(strips, &gradient,
         Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
-        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 0, 0]);
     native_retained.fill(0);
     composite_paint_strips_masked(strips, &gradient,
         CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
-        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 128, 128]);
     native_retained.fill(0);
     composite_paint_tiles(tiled, &gradient,
-        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(native_retained, native_pixels);
     native_retained.fill(0);
     composite_paint_tiles_clipped(tiled, &gradient,
         Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
-        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 0, 0]);
     native_retained.fill(0);
     composite_paint_tiles_masked(tiled, &gradient,
         CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
-        &mut PixmapMut::new(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
+        &mut Pixmap::from_buffer(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 128, 128]);
 
     let mut mismatched_pixels = [17; 4];
     let error = composite_solid_tiles(tiled, RGBA::white(),
-        &mut PixmapMut::new(&mut mismatched_pixels, 1, 1, 4).unwrap());
+        &mut Pixmap::from_buffer(&mut mismatched_pixels, 1, 1, 4).unwrap());
     assert_eq!(error, Err(RenderError::CoverageDimensionsMismatch {
         coverage: (2, 1), target: (1, 1) }));
     assert_eq!(mismatched_pixels, [17; 4]);
 
     let mut untouched = [17; 8];
     assert!(render_compat_paint(&lines, &CoordinatePaint, FillRule::NonZero,
-        &mut PixmapMut::new(&mut untouched, 2, 1, 8).unwrap(),
+        &mut Pixmap::from_buffer(&mut untouched, 2, 1, 8).unwrap(),
         &mut Workspace { segments: &mut [],
             trapezoids: &mut trapezoids, row_area: &mut row_area,
             strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
@@ -385,7 +385,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut pixels = [0; 4 * 3 * 4];
     render_stroke_polyline(&points, false,
         StrokeOptions::new(fixed(2)).unwrap(), &SolidPaint::new(RGBA::white()),
-        &mut PixmapMut::new(&mut pixels, 4, 3, 16).unwrap(),
+        &mut Pixmap::from_buffer(&mut pixels, 4, 3, 16).unwrap(),
         &mut GeometryWorkspace {
             edges: &mut edge_storage, lines: &mut line_storage,
         },
@@ -394,7 +394,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             row_area: &mut row_area, strip_offsets: &mut strip_offsets,
             strip_indices: &mut strip_indices,
         }).unwrap();
-    let target = PixmapMut::new(&mut pixels, 4, 3, 16).unwrap();
+    let target = Pixmap::from_buffer(&mut pixels, 4, 3, 16).unwrap();
     for y in 0..3 {
         for x in 0..4 {
             let expected = if y < 2 && (1..3).contains(&x) {
@@ -430,7 +430,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             transform: Affine::translate(fixed(2), fixed(2)),
             ..StrokePathOptions::default()
         },
-        &mut PixmapMut::new(&mut pixels, 6, 6, 24).unwrap(),
+        &mut Pixmap::from_buffer(&mut pixels, 6, 6, 24).unwrap(),
         &mut StrokePathWorkspace { points: &mut points, contours: &mut contours },
         &mut GeometryWorkspace { edges: &mut edges, lines: &mut lines },
         &mut Workspace {
@@ -443,7 +443,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut untouched = [17; 6 * 6 * 4];
     assert_eq!(render_stroke_path(&path, &SolidPaint::new(RGBA::white()),
         StrokePathOptions::default(),
-        &mut PixmapMut::new(&mut untouched, 6, 6, 24).unwrap(),
+        &mut Pixmap::from_buffer(&mut untouched, 6, 6, 24).unwrap(),
         &mut StrokePathWorkspace { points: &mut [], contours: &mut contours },
         &mut GeometryWorkspace { edges: &mut edges, lines: &mut lines },
         &mut Workspace {
@@ -479,7 +479,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         &SolidPaint::new(RGBA::white()), DashedStrokePathOptions {
             path: StrokePathOptions::default(),
             dash: Pattern::new(&pattern_lengths, Scalar::ZERO).unwrap(),
-        }, &mut PixmapMut::new(&mut pixels, 5, 1, 20).unwrap(),
+        }, &mut Pixmap::from_buffer(&mut pixels, 5, 1, 20).unwrap(),
         &mut DashedStrokeWorkspace {
             path: StrokePathWorkspace {
                 points: &mut path_points, contours: &mut path_contours,
@@ -515,7 +515,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut pixels = [0; 4 * 4 * 4];
     render_path(&builder.build(), &SolidPaint::new(RGBA::white()),
         RenderOptions::default(),
-        &mut PixmapMut::new(&mut pixels, 4, 4, 16).unwrap(),
+        &mut Pixmap::from_buffer(&mut pixels, 4, 4, 16).unwrap(),
         &mut GeometryWorkspace {
             edges: &mut edge_storage, lines: &mut line_storage,
         },
@@ -524,7 +524,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             row_area: &mut row_area, strip_offsets: &mut strip_offsets,
             strip_indices: &mut strip_indices,
         }).unwrap();
-    let target = PixmapMut::new(&mut pixels, 4, 4, 16).unwrap();
+    let target = Pixmap::from_buffer(&mut pixels, 4, 4, 16).unwrap();
     assert_eq!(target.pixel_bytes(1, 1), Some([255; 4]));
     assert_eq!(target.pixel_bytes(2, 2), Some([255; 4]));
     assert_eq!(target.pixel_bytes(0, 0), Some([0; 4]));
@@ -534,8 +534,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 #[test] fn full_tile_blending_matches_row_spans() {
     let (mut tiled, mut spanned) = ([17; 16 * 16 * 4], [17; 16 * 16 * 4]);
     let color = GenericRGBA::<u8>::new(40, 120, 220, 192).premul();
-    PixmapMut::new(&mut tiled, 16, 16, 64).unwrap().blend_solid_tile(0, 0, 16, 16, color);
-    let mut target = PixmapMut::new(&mut spanned, 16, 16, 64).unwrap();
+    Pixmap::from_buffer(&mut tiled, 16, 16, 64).unwrap().blend_solid_tile(0, 0, 16, 16, color);
+    let mut target = Pixmap::from_buffer(&mut spanned, 16, 16, 64).unwrap();
     for y in 0..16 { target.blend_solid_span(0, y, 16, color, u8::MAX); }
     assert_eq!(tiled, spanned);
 }

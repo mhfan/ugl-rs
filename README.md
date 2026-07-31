@@ -133,7 +133,7 @@ ordinary drawing.
 
 The crate is `no_std` and currently uses `alloc`. The default feature enables
 the Q24.8 fixed backend; use `--no-default-features` for the floating-point
-core alone. Optional `serde` support is independent.
+core alone.
 
 The fixed raster APIs can feed any existing `PaintSampler` through streaming,
 retained-strip, or retained-tile coverage, with rectangle or borrowed path-mask
@@ -162,7 +162,7 @@ composition. Fixed mask production and native fixed mask consumption require
 no FPU.
 
 Color boundaries are explicit: solid paints and gradient stops accept straight
-encoded `SRGBA<u8>`, while `PixmapMut::pixel` returns only validated
+encoded `SRGBA<u8>`, while `Pixmap::pixel` returns only validated
 `PremulSRGBA8`. `pixel_bytes` exposes the physical RGBA bytes unchanged.
 Pixmap construction intentionally validates layout without scanning the image;
 source-over callers are responsible for valid premultiplied destination data.
@@ -448,7 +448,7 @@ The initial caller-owned scratch budgets are:
 | analytic `f32` | 128 `Edge` | 257 `u32` row offsets + 128 `u32` edge indices + 128 `Intersection` | 256 `f32` |
 | Q24.8 fixed | 128 `fixed::raster::Segment` + 64 `fixed::raster::Trapezoid` | one `u32` offset per strip plus one `u32` per line/strip overlap | 256 `u64` |
 
-The compact target uses 4 bytes per pixel. `LinearPixmapMut` deliberately uses
+The compact target uses 4 bytes per pixel. `LinearPixmap` deliberately uses
 16 bytes per pixel (`LinearPremulRGBA<f32>`) and its fast presentation path
 borrows an additional 4096-byte sRGB encoding LUT. This desktop-quality working
 buffer is not the intended MCU storage path. Optional dirty tracking costs one

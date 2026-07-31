@@ -10,9 +10,9 @@ use ugl_rs::{analytic::{BinWorkspace as AnalyticBinWorkspace,
     edge::{Edge, build_fill_edges}, flatten::FlattenOptions,
     raster::{CoverageSink, FillRule, Intersection},
     canvas::{RenderOptions, RenderWorkspace, SampledRenderOptions,
-        SampledRenderWorkspace, StrokePathOptions, StrokeWorkspace, PixmapMut,
+        SampledRenderWorkspace, StrokePathOptions, StrokeWorkspace, Pixmap,
         render_solid, render_solid_sampled, render_stroke_solid,
-    }, canvas_linear::{LinearPixmapMut,
+    }, canvas_linear::{LinearPixmap,
         render_paint as render_paint_linear,
         render_solid as render_solid_linear},
     geometry::{Affine, Path, PathBuilder, Point},
@@ -132,7 +132,7 @@ fn benchmark_f32(c: &mut Criterion) {
     );
     group.bench_function(BenchmarkId::new("sampled", "64_rectangles"), |b| b.iter(|| {
         pixels.fill(0);
-        let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+        let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
         render_solid_sampled(&path, Affine::identity(), RGBA::new(40, 120, 220, 192),
             SampledRenderOptions::default(), &mut target, &mut SampledRenderWorkspace {
                 edges: &mut edges, intersections: &mut intersections,
@@ -147,7 +147,7 @@ fn benchmark_f32(c: &mut Criterion) {
         (vec![0; HEIGHT as usize + 1], vec![0; EDGE_CAPACITY]);
     group.bench_function(BenchmarkId::new("analytic", "64_rectangles"), |b| b.iter(|| {
         pixels.fill(0);
-        let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+        let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
         render_solid(&path, Affine::identity(), RGBA::new(40, 120, 220, 192),
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut analytic_intersections,
@@ -164,7 +164,7 @@ fn benchmark_f32(c: &mut Criterion) {
         |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());
             let mut target =
-                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+                LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
             render_solid_linear(&path, Affine::identity(),
                 SRGBA::new(40, 120, 220, 192), RenderOptions::default(),
                 &mut target, &mut RenderWorkspace {
@@ -185,7 +185,7 @@ fn benchmark_f32(c: &mut Criterion) {
         |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());
             let mut target =
-                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+                LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
             render_paint_linear(&path, Affine::identity(),
                 &PointLinearSampler(&gradient), RenderOptions::default(),
                 &mut target, &mut RenderWorkspace {
@@ -201,7 +201,7 @@ fn benchmark_f32(c: &mut Criterion) {
         "analytic_linear_radial_concentric_point", "64_rectangles"), |b| b.iter(|| {
         linear_pixels.fill(LinearPremulRGBA::default());
         let mut target =
-            LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
         render_paint_linear(&path, Affine::identity(), &PointLinearSampler(&radial),
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut analytic_intersections,
@@ -220,7 +220,7 @@ fn benchmark_f32(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new(name, "64_rectangles"), |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());
             let mut target =
-                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+                LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
             render_paint_linear(&path, Affine::identity(), paint,
                 RenderOptions::default(), &mut target,
                 &mut RenderWorkspace {
@@ -235,7 +235,7 @@ fn benchmark_f32(c: &mut Criterion) {
         "analytic_linear_radial_concentric", "64_rectangles"), |b| b.iter(|| {
         linear_pixels.fill(LinearPremulRGBA::default());
         let mut target =
-            LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
         render_paint_linear(&path, Affine::identity(), &radial,
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut analytic_intersections,
@@ -248,7 +248,7 @@ fn benchmark_f32(c: &mut Criterion) {
         |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());
             let mut target =
-                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+                LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
             render_paint_linear(&path, Affine::identity(), &gradient,
                 RenderOptions::default(), &mut target,
                 &mut RenderWorkspace {
@@ -268,7 +268,7 @@ fn benchmark_f32(c: &mut Criterion) {
         "analytic_linear_gradient_opaque_composite", "64_rectangles"), |b| b.iter(|| {
         linear_pixels.fill(LinearPremulRGBA::default());
         let mut target =
-            LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
         render_paint_linear(&path, Affine::identity(),
             &CompositeLinearSampler(&opaque_gradient), RenderOptions::default(),
             &mut target, &mut RenderWorkspace {
@@ -282,7 +282,7 @@ fn benchmark_f32(c: &mut Criterion) {
         "analytic_linear_gradient_opaque", "64_rectangles"), |b| b.iter(|| {
         linear_pixels.fill(LinearPremulRGBA::default());
         let mut target =
-            LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
         render_paint_linear(&path, Affine::identity(), &opaque_gradient,
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut analytic_intersections,
@@ -295,7 +295,7 @@ fn benchmark_f32(c: &mut Criterion) {
         |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());
             let mut target =
-                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+                LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
             render_solid_linear(&path, Affine::identity(),
                 SRGBA::new(40, 120, 220, 192), RenderOptions::default(),
                 &mut target, &mut RenderWorkspace {
@@ -304,18 +304,18 @@ fn benchmark_f32(c: &mut Criterion) {
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
                 }).unwrap();
             target.encode_into(
-                &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap()).unwrap();
+                &mut Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap()).unwrap();
             black_box(&pixels);
         }));
     let mut transfer_lut = vec![0; SRGB8_ENCODE_LUT_SIZE];
     let encoder = Srgb8Encoder::new(&mut transfer_lut).unwrap();
     let mut dirty_tiles =
-        vec![0; LinearPixmapMut::dirty_tile_words(WIDTH, HEIGHT).unwrap()];
+        vec![0; LinearPixmap::dirty_tile_words(WIDTH, HEIGHT).unwrap()];
     group.bench_function(BenchmarkId::new("analytic_linear_present_lut", "64_rectangles"),
         |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());
             let mut target =
-                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+                LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
             render_solid_linear(&path, Affine::identity(),
                 SRGBA::new(40, 120, 220, 192), RenderOptions::default(),
                 &mut target, &mut RenderWorkspace {
@@ -324,7 +324,7 @@ fn benchmark_f32(c: &mut Criterion) {
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
                 }).unwrap();
             target.encode_into_with(
-                &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
+                &mut Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
                 encoder).unwrap();
             black_box(&pixels);
         }));
@@ -332,7 +332,7 @@ fn benchmark_f32(c: &mut Criterion) {
         BenchmarkId::new("analytic_linear_present_dirty_lut", "64_rectangles"),
         |b| b.iter(|| {
             linear_pixels.fill(LinearPremulRGBA::default());
-            let mut target = LinearPixmapMut::with_dirty_tiles(
+            let mut target = LinearPixmap::with_dirty_tiles(
                 &mut linear_pixels, WIDTH, HEIGHT, WIDTH, &mut dirty_tiles).unwrap();
             render_solid_linear(&path, Affine::identity(),
                 SRGBA::new(40, 120, 220, 192), RenderOptions::default(),
@@ -342,7 +342,7 @@ fn benchmark_f32(c: &mut Criterion) {
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
                 }).unwrap();
             target.encode_dirty_into_with(
-                &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
+                &mut Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
                 encoder).unwrap();
             black_box(&pixels);
         }));
@@ -360,7 +360,7 @@ fn benchmark_linear_presentation(c: &mut Criterion) {
     let mut transfer_lut = vec![0; SRGB8_ENCODE_LUT_SIZE];
     let encoder = Srgb8Encoder::new(&mut transfer_lut).unwrap();
     let mut dirty_tiles =
-        vec![0; LinearPixmapMut::dirty_tile_words(WIDTH, HEIGHT).unwrap()];
+        vec![0; LinearPixmap::dirty_tile_words(WIDTH, HEIGHT).unwrap()];
     let (mut edges, mut intersections, mut row_coverage,
         mut row_offsets, mut edge_indices) = (
         vec![Edge::default(); 4], vec![AnalyticIntersection::default(); 4],
@@ -371,7 +371,7 @@ fn benchmark_linear_presentation(c: &mut Criterion) {
 
     group.bench_function("sparse_full_frame_lut", |b| b.iter(|| {
         let mut target =
-            LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            LinearPixmap::from_buffer(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
         render_solid_linear(&path, Affine::identity(), SRGBA::white(),
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut intersections,
@@ -379,12 +379,12 @@ fn benchmark_linear_presentation(c: &mut Criterion) {
                 row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
             }).unwrap();
         target.encode_into_with(
-            &mut PixmapMut::new(&mut encoded_pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
+            &mut Pixmap::from_buffer(&mut encoded_pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
             encoder).unwrap();
         black_box(&encoded_pixels);
     }));
     group.bench_function("sparse_dirty_tiles_lut", |b| b.iter(|| {
-        let mut target = LinearPixmapMut::with_dirty_tiles(
+        let mut target = LinearPixmap::with_dirty_tiles(
             &mut linear_pixels, WIDTH, HEIGHT, WIDTH, &mut dirty_tiles).unwrap();
         render_solid_linear(&path, Affine::identity(), SRGBA::white(),
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
@@ -393,7 +393,7 @@ fn benchmark_linear_presentation(c: &mut Criterion) {
                 row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
             }).unwrap();
         target.encode_dirty_into_with(
-            &mut PixmapMut::new(&mut encoded_pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
+            &mut Pixmap::from_buffer(&mut encoded_pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
             encoder).unwrap();
         black_box(&encoded_pixels);
     }));
@@ -529,7 +529,7 @@ fn benchmark_stroke(c: &mut Criterion) {
             pixels.fill(0);
             render_stroke_solid(&path, Affine::identity(),
                 RGBA::new(40, 120, 220, 192), options,
-                &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
+                &mut Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap(),
                 &mut StrokeWorkspace {
                     points: &mut points, contours: &mut contours, edges: &mut edges,
                     intersections: &mut intersections, row_coverage: &mut row_coverage,
@@ -917,7 +917,7 @@ fn benchmark_paint(c: &mut Criterion) {
             }).unwrap();
         group.bench_function(BenchmarkId::new("fixed", name), |b| b.iter(|| {
             pixels.fill(0);
-            let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+            let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
             render_solid(&lines[..line_count], RGBA::new(40, 120, 220, 192),
                 FillRule::NonZero, &mut target, &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
@@ -929,7 +929,7 @@ fn benchmark_paint(c: &mut Criterion) {
         }));
         group.bench_function(BenchmarkId::new("fixed_tiled", name), |b| b.iter(|| {
             pixels.fill(0);
-            let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+            let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
             render_solid_tiled(&lines[..line_count], RGBA::new(40, 120, 220, 192),
                 FillRule::NonZero, &mut target, &mut Workspace {
                     segments: &mut segments, trapezoids: &mut trapezoids,
@@ -947,7 +947,7 @@ fn benchmark_paint(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("fixed_tiled_cached", name), |b| b.iter(|| {
             pixels.fill(0);
             composite_solid_tiles(cached, RGBA::new(40, 120, 220, 192),
-                &mut PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap()).unwrap();
+                &mut Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap()).unwrap();
             black_box(&pixels);
         }));
         group.bench_function(BenchmarkId::new("fixed_stream", name), |b| b.iter(|| {

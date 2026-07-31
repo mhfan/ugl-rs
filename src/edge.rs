@@ -9,7 +9,6 @@ use crate::{geometry::{Affine, Path, Point, Scalar},
 /// `winding` preserves the source direction: `1` for downward and `-1` for
 /// upward in the device coordinate system. Horizontal lines do not produce an
 /// edge because they contribute no winding crossing.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Default, PartialEq)] pub struct Edge<T = Scalar> {
     pub upper: Point<T>, pub lower: Point<T>, pub winding: i8,
 }
