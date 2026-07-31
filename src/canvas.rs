@@ -17,6 +17,8 @@ use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
     FixedRenderError, prepare_lines, rasterize_lines,
 };
 #[cfg(feature = "fixed")] use crate::{
+    edge::build_fill_edges_fixed,
+    flatten_fixed::{FixedFlattenError, FixedFlattenOptions},
     geometry::FixedScalar,
     stroke_fixed::{FixedStrokeExpandError, FixedStrokeOptions, stroke_polyline_fixed},
 };
@@ -170,7 +172,7 @@ pub struct AnalyticStrokeWorkspace<'a> {
 }
 
 #[cfg(feature = "fixed")]
-pub struct FixedStrokeGeometryWorkspace<'a> {
+pub struct FixedGeometryWorkspace<'a> {
     pub edges: &'a mut [Edge<FixedScalar>],
     pub lines: &'a mut [FixedLine],
 }
@@ -449,11 +451,25 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
         fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
 }
 
+/// Flattens and fills a device-space Q24.8 path without floating-point operations.
+#[cfg(feature = "fixed")] pub fn render_native_path_fixed<
+    S: crate::sampler::FixedPaintSampler>(path: &Path<FixedScalar>,
+    flatten: FixedFlattenOptions, sampler: &S, fill_rule: FillRule,
+    target: &mut PixmapMut<'_>, geometry: &mut FixedGeometryWorkspace<'_>,
+    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
+    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
+    build_fill_edges_fixed(path, flatten, &mut sink).map_err(map_fixed_flatten_error)?;
+    let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
+        .map_err(RenderError::FixedRaster)?;
+    render_native_paint_fixed(&geometry.lines[..line_count], sampler,
+        fill_rule, target, raster_workspace)
+}
+
 /// Expands and renders a Q24.8 polyline with no floating-point operations.
 #[cfg(feature = "fixed")] pub fn render_native_stroke_polyline_fixed<
     S: crate::sampler::FixedPaintSampler>(points: &[Point<FixedScalar>], closed: bool,
     stroke: FixedStrokeOptions, sampler: &S, target: &mut PixmapMut<'_>,
-    geometry: &mut FixedStrokeGeometryWorkspace<'_>,
+    geometry: &mut FixedGeometryWorkspace<'_>,
     raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
     let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
     stroke_polyline_fixed(points, closed, stroke, &mut sink)
@@ -786,6 +802,20 @@ fn map_fixed_stroke_expand_error(error: FixedStrokeExpandError<EdgeCapacity>) ->
         FixedStrokeExpandError::CoordinateOutOfRange =>
             RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
         FixedStrokeExpandError::Sink(error) =>
+            RenderError::EdgeCapacity { needed_at_least: error.needed_at_least },
+    }
+}
+
+#[cfg(feature = "fixed")]
+fn map_fixed_flatten_error(error: FixedFlattenError<EdgeCapacity>) -> RenderError {
+    match error {
+        FixedFlattenError::NonPositiveTolerance => RenderError::InvalidTolerance,
+        FixedFlattenError::InvalidDepth => RenderError::InvalidDepth,
+        FixedFlattenError::CoordinateOutOfRange =>
+            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
+        FixedFlattenError::DepthLimit => RenderError::FlattenDepthLimit,
+        FixedFlattenError::InvalidPath(error) => RenderError::InvalidPath(error),
+        FixedFlattenError::Sink(error) =>
             RenderError::EdgeCapacity { needed_at_least: error.needed_at_least },
     }
 }

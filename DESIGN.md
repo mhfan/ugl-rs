@@ -483,7 +483,7 @@ Status: planned.
 | `f32` fill | Sampled and analytic coverage, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
 | Stroke | Allocation-free undashed caps and joins | Dashes, fuzzing, and production reliability validation |
-| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, clipping, native fixed paint and all fixed stroke caps/joins | Fixed path flattening/dashes, real-device and range validation |
+| Fixed raster | Device-space Q24.8 path flattening, rational crossings, sparse strips/tiles, clipping, native fixed paint and all fixed stroke caps/joins | Checked fixed transforms/dashes, real-device and range validation |
 | Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
 

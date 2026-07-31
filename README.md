@@ -36,11 +36,12 @@ storage. The project also has an early Q24.8 fixed-point backend. Production
 fixed edge binning and persistent active edges now operate on caller-owned
 sparse strip storage. The fixed backend can optionally retain compact sparse
 coverage strips for batching or caching while keeping the lower-memory
-streaming sink as its default. An optional 16 × 16 tile prototype now classifies empty, full,
-and boundary regions, supports direct tile-major output, and can composite a
-retained tile mask without rasterizing it again. External fuzzing and broader
-golden/benchmark scenes are still under development, so it is not yet suitable
-as a production renderer.
+streaming sink as its default. Device-space Q24.8 paths can now be adaptively
+flattened and filled without an FPU. An optional 16 × 16 tile prototype now
+classifies empty, full, and boundary regions, supports direct tile-major
+output, and can composite a retained tile mask without rasterizing it again.
+External fuzzing and broader golden/benchmark scenes are still under
+development, so it is not yet suitable as a production renderer.
 
 The current MSRV is Rust 1.93. CI checks MSRV and stable builds, independent
 feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
@@ -52,8 +53,8 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | `f32` fill and clipping | Reference path implemented and allocation-free |
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Undashed caps/joins reference implemented; reliability work continues |
-| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, native fixed gradients, and all fixed stroke caps/joins implemented |
-| Production readiness | Pre-release: broader fuzzing, golden scenes, fixed path flattening/dashes, and real-device validation remain |
+| Fixed point | Q24.8 path flattening/raster, sparse strips/tiles, clipping, native fixed gradients, and all fixed stroke caps/joins implemented |
+| Production readiness | Pre-release: broader fuzzing, golden scenes, fixed transforms/dashes, and real-device validation remain |
 
 ## Architecture at a glance
 

@@ -1,6 +1,6 @@
 //! Allocation-free curve flattening for the `f32` reference backend.
 
-use crate::geometry::{Affine, Path, PathError, PathSegment, Point};
+use crate::geometry::{Affine, Path, PathError, PathSegment, Point, Scalar};
 
 const STACK_CAPACITY: usize = 32;
 
@@ -16,10 +16,10 @@ impl Default for FlattenOptions {
     fn default() -> Self { Self { tolerance: 0.25, max_depth: 16 } }
 }
 
-pub trait LineSink { type Error;
-    fn begin_subpath(&mut self, _: Point) -> Result<(), Self::Error> { Ok(()) }
+pub trait LineSink<T = Scalar> { type Error;
+    fn begin_subpath(&mut self, _: Point<T>) -> Result<(), Self::Error> { Ok(()) }
 
-    fn line(&mut self, from: Point, to: Point) -> Result<(), Self::Error>;
+    fn line(&mut self, from: Point<T>, to: Point<T>) -> Result<(), Self::Error>;
 
     /// Reports an explicit path close after its closing line has been emitted.
     fn close_subpath(&mut self) -> Result<(), Self::Error> { Ok(()) }
@@ -27,10 +27,10 @@ pub trait LineSink { type Error;
     fn end_subpath(&mut self) -> Result<(), Self::Error> { Ok(()) }
 }
 
-impl<E, F> LineSink for F where F: FnMut(Point, Point) -> Result<(), E> {
+impl<T, E, F> LineSink<T> for F where F: FnMut(Point<T>, Point<T>) -> Result<(), E> {
     type Error = E;
 
-    fn line(&mut self, from: Point, to: Point) -> Result<(), Self::Error> {
+    fn line(&mut self, from: Point<T>, to: Point<T>) -> Result<(), Self::Error> {
         self(from, to)
     }
 }

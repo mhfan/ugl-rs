@@ -608,7 +608,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     render_native_stroke_polyline_fixed(&points, false,
         FixedStrokeOptions::new(fixed(2)).unwrap(), &SolidPaint::new(RGBA::white()),
         &mut PixmapMut::new(&mut pixels, 4, 3, 16).unwrap(),
-        &mut FixedStrokeGeometryWorkspace {
+        &mut FixedGeometryWorkspace {
             edges: &mut edge_storage, lines: &mut line_storage,
         },
         &mut FixedRasterWorkspace {
@@ -625,6 +625,41 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             assert_eq!(target.pixel(x, y), Some(expected), "pixel=({x}, {y})");
         }
     }
+}
+
+#[cfg(feature = "fixed")]
+#[test] fn native_fixed_curved_path_renders_end_to_end() {
+    use crate::{flatten_fixed::FixedFlattenOptions,
+        geometry::{FixedScalar, PathBuilder},
+        raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid},
+    };
+
+    let fixed = FixedScalar::from_num;
+    let mut builder = PathBuilder::new();
+    builder.move_to((fixed(1), fixed(1)))
+        .quad_to((fixed(2), fixed(0)), (fixed(3), fixed(1)))
+        .line_to((fixed(3), fixed(3))).line_to((fixed(1), fixed(3))).close();
+    let (mut edge_storage, mut line_storage) =
+        ([Edge::default(); 32], [FixedLine::default(); 32]);
+    let (mut segments, mut trapezoids, mut row_area) =
+        ([FixedSegment::default(); 64], [FixedTrapezoid::default(); 32], [0; 5]);
+    let (mut strip_offsets, mut strip_indices) = ([0; 5], [0; 64]);
+    let mut pixels = [0; 4 * 4 * 4];
+    render_native_path_fixed(&builder.build(), FixedFlattenOptions::default(),
+        &SolidPaint::new(RGBA::white()), FillRule::NonZero,
+        &mut PixmapMut::new(&mut pixels, 4, 4, 16).unwrap(),
+        &mut FixedGeometryWorkspace {
+            edges: &mut edge_storage, lines: &mut line_storage,
+        },
+        &mut FixedRasterWorkspace {
+            segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+            strip_indices: &mut strip_indices,
+        }).unwrap();
+    let target = PixmapMut::new(&mut pixels, 4, 4, 16).unwrap();
+    assert_eq!(target.pixel(1, 1), Some(RGBA::<u8>::white().premul()));
+    assert_eq!(target.pixel(2, 2), Some(RGBA::<u8>::white().premul()));
+    assert_eq!(target.pixel(0, 0), Some(PremulRGBA::zeroed()));
 }
 
 #[cfg(feature = "fixed")]

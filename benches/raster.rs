@@ -678,6 +678,7 @@ fn benchmark_paint(c: &mut Criterion) {
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {
     use ugl_rs::{geometry::FixedScalar,
         canvas::{composite_solid_fixed_tiles, render_solid_fixed, render_solid_fixed_tiled},
+        flatten_fixed::{FixedFlattenOptions, flatten_path_fixed},
         raster_fixed::{FixedCoverageRun, FixedCoverageStrip, FixedCoverageWorkspace,
             FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid,
             FIXED_STRIP_HEIGHT, prepare_lines, rasterize_lines, rasterize_lines_to_strips,
@@ -715,6 +716,27 @@ fn benchmark_paint(c: &mut Criterion) {
         black_box(&stroke_edges);
     }));
     stroke_group.finish();
+
+    let mut curve_builder = PathBuilder::new();
+    curve_builder.move_to((FixedScalar::from_num(8), FixedScalar::from_num(128)));
+    for index in 0..8 {
+        let x = index * 28 + 8;
+        curve_builder.cubic_to(
+            (FixedScalar::from_num(x + 7), FixedScalar::from_num(32)),
+            (FixedScalar::from_num(x + 21), FixedScalar::from_num(224)),
+            (FixedScalar::from_num(x + 28), FixedScalar::from_num(128)));
+    }
+    let curve_path = curve_builder.build();
+    let mut flatten_group = c.benchmark_group("flatten_fixed");
+    flatten_group.throughput(Throughput::Elements(8));
+    flatten_group.bench_function("cubic_8", |b| b.iter(|| {
+        let mut line_count = 0_u32;
+        flatten_path_fixed(&curve_path, FixedFlattenOptions::default(), &mut |_, _| {
+            line_count += 1; Ok::<_, core::convert::Infallible>(())
+        }).unwrap();
+        black_box(line_count);
+    }));
+    flatten_group.finish();
 
     let stop_values = [GradientStop::new( 0.0, RGBA::new(240, 20, 80,  32)),
                        GradientStop::new(0.35, RGBA::new(10, 220, 40, 160)),

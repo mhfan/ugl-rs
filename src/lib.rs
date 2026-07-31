@@ -15,6 +15,7 @@ pub mod raster;
 pub mod stroke;
 #[cfg(feature = "fixed")] pub mod stroke_fixed;
 pub mod flatten;
+#[cfg(feature = "fixed")] pub mod flatten_fixed;
 pub mod analytic;
 #[cfg(feature = "fixed")] pub mod raster_fixed;
 #[cfg(feature = "fixed")] pub mod tile_fixed;
