@@ -226,6 +226,14 @@ pub fn render_dashed_stroke_path<
     options: DashedStrokePathOptions<'_>, target: &mut PixmapMut<'_>,
     workspace: &mut DashedStrokeWorkspace<'_>,
     raster_workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
+    let line_count = prepare_dashed_stroke_path(path, options, workspace)?;
+    render_paint(&workspace.geometry.lines[..line_count], sampler,
+        FillRule::NonZero, target, raster_workspace)
+}
+
+pub(crate) fn prepare_dashed_stroke_path(path: &Path<Scalar>,
+    options: DashedStrokePathOptions<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
+    Result<usize, RenderError> {
     let flattened = flatten_stroke_path(path, options.path.transform,
         options.path.flatten, &mut workspace.path)
         .map_err(map_stroke_flatten_error)?;
@@ -241,10 +249,8 @@ pub fn render_dashed_stroke_path<
                 .map_err(map_stroke_expand_error)?;
         }
     }
-    let line_count = prepare_lines(&sink.edges[..sink.len], workspace.geometry.lines)
-        .map_err(RenderError::FixedRaster)?;
-    render_paint(&workspace.geometry.lines[..line_count], sampler,
-        FillRule::NonZero, target, raster_workspace)
+    prepare_lines(&sink.edges[..sink.len], workspace.geometry.lines)
+        .map_err(RenderError::FixedRaster)
 }
 
 /// Renders fixed geometry and no-FPU paint through a rectangle clip.

@@ -1,15 +1,27 @@
 //! Stateful drawing facades over the allocation-free rendering pipelines.
 
 use crate::{
-    canvas::{RenderOptions, RenderWorkspace, StrokePathOptions,
-        StrokeWorkspace, PixmapMut, RenderError, render_paint,
+    canvas::{DashedStrokePathOptions, DashedStrokeWorkspace, RenderOptions,
+        RenderWorkspace, StrokePathOptions, StrokeWorkspace, PixmapMut, RenderError, render_paint,
         render_paint_clipped, render_paint_masked,
+        render_stroke_paint_dashed, render_stroke_paint_dashed_clipped,
+        render_stroke_paint_dashed_masked,
         render_stroke_paint, render_stroke_paint_clipped,
         render_stroke_paint_masked},
-    color::SRGBA, flatten::FlattenOptions, geometry::{Affine, Path, Rect},
+    color::SRGBA, dash::{DashContour, DashPattern}, flatten::FlattenOptions,
+    geometry::{Affine, Path, Point, Rect},
     raster::{CoverageMask, FillRule}, sampler::{PaintSampler, SolidPaint},
     stroke::StrokeOptions,
 };
+
+/// Caller-owned scratch for [`Context`].
+///
+/// Empty dash slices are valid when dashed strokes are not used.
+pub struct ContextWorkspace<'a> {
+    pub stroke: StrokeWorkspace<'a>,
+    pub dash_points: &'a mut [Point],
+    pub dash_contours: &'a mut [DashContour],
+}
 
 #[derive(Clone, Copy, Debug)] pub(crate) enum Clip<'a> {
     None, Rect(Rect), Mask(CoverageMask<'a>),
@@ -28,14 +40,14 @@ pub(crate) struct DrawState<T, F, S, P> {
 /// corresponding low-level function in [`crate::canvas`].
 pub struct Context<'a, 'target, 'workspace, 'clip> {
     target: &'a mut PixmapMut<'target>,
-    workspace: &'a mut StrokeWorkspace<'workspace>,
+    workspace: &'a mut ContextWorkspace<'workspace>,
     state: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>,
     clip: Clip<'clip>,
 }
 
 impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
     pub fn new(target: &'a mut PixmapMut<'target>,
-        workspace: &'a mut StrokeWorkspace<'workspace>) -> Self {
+        workspace: &'a mut ContextWorkspace<'workspace>) -> Self {
         Self {
             target, workspace,
             state: DrawState {
@@ -99,7 +111,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             self.clip,
         );
         let target = &mut *self.target;
-        let mut workspace = analytic_workspace(&mut *self.workspace);
+        let mut workspace = render_workspace(&mut self.workspace.stroke);
         match clip {
             Clip::None => render_paint(
                 path, transform, paint, options, target, &mut workspace),
@@ -127,16 +139,48 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         let target = &mut *self.target;
         match clip {
             Clip::None => render_stroke_paint(
-                path, transform, paint, options, target, self.workspace),
+                path, transform, paint, options, target, &mut self.workspace.stroke),
             Clip::Rect(rect) => render_stroke_paint_clipped(
-                path, transform, paint, rect, options, target, self.workspace),
+                path, transform, paint, rect, options, target, &mut self.workspace.stroke),
             Clip::Mask(mask) => render_stroke_paint_masked(
-                path, transform, paint, mask, options, target, self.workspace),
+                path, transform, paint, mask, options, target, &mut self.workspace.stroke),
+        }
+    }
+
+    pub fn stroke_dashed(&mut self, path: &Path, dash: DashPattern<'_>) ->
+        Result<(), RenderError> {
+        let paint = self.state.paint;
+        self.stroke_dashed_with(path, &paint, dash)
+    }
+
+    pub fn stroke_dashed_with<S: PaintSampler>(&mut self, path: &Path,
+        paint: &S, dash: DashPattern<'_>) -> Result<(), RenderError> {
+        let (transform, options, clip) = (
+            self.state.transform,
+            DashedStrokePathOptions {
+                flatten: self.state.flatten, stroke: self.state.stroke, dash,
+            },
+            self.clip,
+        );
+        let target = &mut *self.target;
+        let workspace = &mut *self.workspace;
+        let mut dashed = DashedStrokeWorkspace {
+            stroke: reborrow_stroke(&mut workspace.stroke),
+            dash_points: workspace.dash_points,
+            dash_contours: workspace.dash_contours,
+        };
+        match clip {
+            Clip::None => render_stroke_paint_dashed(
+                path, transform, paint, options, target, &mut dashed),
+            Clip::Rect(rect) => render_stroke_paint_dashed_clipped(
+                path, transform, paint, rect, options, target, &mut dashed),
+            Clip::Mask(mask) => render_stroke_paint_dashed_masked(
+                path, transform, paint, mask, options, target, &mut dashed),
         }
     }
 }
 
-fn analytic_workspace<'a>(
+fn render_workspace<'a>(
     workspace: &'a mut StrokeWorkspace<'_>) -> RenderWorkspace<'a> {
     RenderWorkspace {
         edges: workspace.edges, intersections: workspace.intersections,
@@ -145,10 +189,18 @@ fn analytic_workspace<'a>(
     }
 }
 
+fn reborrow_stroke<'a>(workspace: &'a mut StrokeWorkspace<'_>) -> StrokeWorkspace<'a> {
+    StrokeWorkspace {
+        points: workspace.points, contours: workspace.contours, edges: workspace.edges,
+        intersections: workspace.intersections, row_coverage: workspace.row_coverage,
+        row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
+    }
+}
+
 #[cfg(test)] mod tests {
     use super::*;
     use crate::{analytic::Intersection as AnalyticIntersection,
-        edge::Edge, geometry::{PathBuilder, Point},
+        dash::DashPattern, edge::Edge, geometry::{PathBuilder, Point},
         raster::CoverageMask,
         sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode},
         stroke::StrokeContour,
@@ -156,6 +208,7 @@ fn analytic_workspace<'a>(
 
     struct Buffers {
         points: [Point; 8], contours: [StrokeContour; 2], edges: [Edge; 32],
+        dash_points: [Point; 16], dash_contours: [DashContour; 8],
         intersections: [AnalyticIntersection; 32], row_coverage: [f32; 4],
         row_offsets: [u32; 5], edge_indices: [u32; 32],
     }
@@ -163,17 +216,24 @@ fn analytic_workspace<'a>(
     impl Buffers {
         fn new() -> Self { Self {
             points: [Point::default(); 8], contours: [StrokeContour::default(); 2],
+            dash_points: [Point::default(); 16],
+            dash_contours: [DashContour::default(); 8],
             edges: [Edge::default(); 32],
             intersections: [AnalyticIntersection::default(); 32], row_coverage: [0.0; 4],
             row_offsets: [0; 5], edge_indices: [0; 32],
         } }
 
-        fn workspace(&mut self) -> StrokeWorkspace<'_> {
-            StrokeWorkspace {
-                points: &mut self.points, contours: &mut self.contours,
-                edges: &mut self.edges, intersections: &mut self.intersections,
-                row_coverage: &mut self.row_coverage, row_offsets: &mut self.row_offsets,
-                edge_indices: &mut self.edge_indices,
+        fn workspace(&mut self) -> ContextWorkspace<'_> {
+            ContextWorkspace {
+                stroke: StrokeWorkspace {
+                    points: &mut self.points, contours: &mut self.contours,
+                    edges: &mut self.edges, intersections: &mut self.intersections,
+                    row_coverage: &mut self.row_coverage,
+                    row_offsets: &mut self.row_offsets,
+                    edge_indices: &mut self.edge_indices,
+                },
+                dash_points: &mut self.dash_points,
+                dash_contours: &mut self.dash_contours,
             }
         }
     }
@@ -228,5 +288,24 @@ fn analytic_workspace<'a>(
             assert_eq!(&row[12..], &[0; 4]);
         }
         assert_eq!(&pixels[32..], &[0; 16]);
+    }
+
+    #[test] fn context_dashed_stroke_uses_current_paint_and_clip() {
+        let mut builder = PathBuilder::new();
+        builder.move_to((0.0, 1.0)).line_to((4.0, 1.0));
+        let mut pixels = [0; 4 * 3 * 4];
+        let mut target = PixmapMut::new(&mut pixels, 4, 3, 16).unwrap();
+        let mut buffers = Buffers::new();
+        let mut workspace = buffers.workspace();
+        let mut context = Context::new(&mut target, &mut workspace);
+        context.set_color(SRGBA::red())
+            .set_stroke(StrokeOptions::new(1.0).unwrap())
+            .set_clip_rect(Rect::from_ltrb(0.0, 0.0, 3.0, 3.0).unwrap());
+        context.stroke_dashed(&builder.build(),
+            DashPattern::new(&[1.0, 1.0], 0.0).unwrap()).unwrap();
+        assert!(pixels[..4].iter().any(|&channel| channel != 0));
+        assert_eq!(&pixels[4..8], &[0; 4]);
+        assert!(pixels[8..12].iter().any(|&channel| channel != 0));
+        assert_eq!(&pixels[12..16], &[0; 4]);
     }
 }

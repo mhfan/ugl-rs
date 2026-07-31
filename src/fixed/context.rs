@@ -3,18 +3,23 @@
 use crate::{
     canvas::{PixmapMut, RenderError},
     color::{PremulSRGBA8, SRGBA}, context::{Clip, DrawState},
-    fixed::{Scalar, canvas::{GeometryWorkspace, RenderOptions, StrokePathOptions,
-            prepare_stroke_path, render_paint, render_paint_clipped, render_paint_masked,
+    dash::DashContour, fixed::{Scalar, canvas::{DashedStrokePathOptions,
+            DashedStrokeWorkspace, GeometryWorkspace, RenderOptions, StrokePathOptions,
+            prepare_dashed_stroke_path, prepare_stroke_path,
+            render_paint, render_paint_clipped, render_paint_masked,
             render_path, render_path_clipped, render_path_masked},
+        dash::Pattern as DashPattern,
         flatten::Options as FlattenOptions, raster::Workspace,
         sampler::PaintSampler, stroke::Options as StrokeOptions},
-    geometry::{Affine, Path, Rect}, raster::{CoverageMask, FillRule},
+    geometry::{Affine, Path, Point, Rect}, raster::{CoverageMask, FillRule},
     stroke::StrokePathWorkspace,
 };
 
 /// Caller-owned scratch for [`Context`].
 pub struct ContextWorkspace<'a> {
     pub path: StrokePathWorkspace<'a, Scalar>,
+    pub dash_points: &'a mut [Point<Scalar>],
+    pub dash_contours: &'a mut [DashContour],
     pub geometry: GeometryWorkspace<'a>,
     pub raster: Workspace<'a>,
 }
@@ -137,6 +142,44 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
                 lines, paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
         }
     }
+
+    pub fn stroke_dashed(&mut self, path: &Path<Scalar>, dash: DashPattern<'_>) ->
+        Result<(), RenderError> {
+        let paint = self.state.paint;
+        self.stroke_dashed_with(path, &paint, dash)
+    }
+
+    pub fn stroke_dashed_with<S: PaintSampler>(&mut self, path: &Path<Scalar>,
+        paint: &S, dash: DashPattern<'_>) -> Result<(), RenderError> {
+        let (options, clip) = (DashedStrokePathOptions {
+            path: StrokePathOptions {
+                transform: self.state.transform, flatten: self.state.flatten,
+                stroke: self.state.stroke,
+            },
+            dash,
+        }, self.clip);
+        let workspace = &mut *self.workspace;
+        let mut dashed = DashedStrokeWorkspace {
+            path: StrokePathWorkspace {
+                points: workspace.path.points, contours: workspace.path.contours,
+            },
+            dash_points: workspace.dash_points,
+            dash_contours: workspace.dash_contours,
+            geometry: GeometryWorkspace {
+                edges: workspace.geometry.edges, lines: workspace.geometry.lines,
+            },
+        };
+        let line_count = prepare_dashed_stroke_path(path, options, &mut dashed)?;
+        let lines = &dashed.geometry.lines[..line_count];
+        match clip {
+            Clip::None => render_paint(
+                lines, paint, FillRule::NonZero, self.target, &mut workspace.raster),
+            Clip::Rect(rect) => render_paint_clipped(
+                lines, paint, rect, FillRule::NonZero, self.target, &mut workspace.raster),
+            Clip::Mask(mask) => render_paint_masked(
+                lines, paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
+        }
+    }
 }
 
 #[cfg(test)] mod tests {
@@ -154,6 +197,10 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             [(Scalar::ZERO, Scalar::ZERO).into(); 8],
             [StrokeContour::default(); 2],
         );
+        let (mut dash_points, mut dash_contours) = (
+            [(Scalar::ZERO, Scalar::ZERO).into(); 16],
+            [DashContour::default(); 8],
+        );
         let (mut edges, mut lines) = (
             [Edge::<Scalar>::default(); 32], [Line::default(); 32],
         );
@@ -165,6 +212,8 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             path: StrokePathWorkspace {
                 points: &mut points, contours: &mut contours,
             },
+            dash_points: &mut dash_points,
+            dash_contours: &mut dash_contours,
             geometry: GeometryWorkspace { edges: &mut edges, lines: &mut lines },
             raster: Workspace {
                 segments: &mut segments, trapezoids: &mut trapezoids,
