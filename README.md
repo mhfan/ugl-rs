@@ -300,24 +300,28 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
-version metadata. The first baseline used ugl-rs `1688f95`, Blend2D
+version metadata. The expanded baseline used ugl-rs `bc21d65`, Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
 rustc 1.97.1 on macOS 15.6 arm64. Nine 2,000-frame samples after 200 warm-up
 frames produced:
 
-| Renderer | Minimum | Median | Maximum |
-| --- | ---: | ---: | ---: |
-| ugl-rs f32 analytic | 115.05 µs | 115.34 µs | 121.78 µs |
-| Blend2D synchronous | 32.76 µs | 32.90 µs | 35.33 µs |
+| Scene | ugl-rs median | Blend2D median | Blend2D speedup | Changed pixels | Mean/max channel error |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 64 fractional rectangles, fill | 119.89 µs | 34.16 µs | 3.51× | 2.246% | 0.021 / 1 |
+| 8 cubic segments, fill | 73.42 µs | 15.61 µs | 4.70× | 1.727% | 0.076 / 30 |
+| 8 cubic segments, width-6 stroke | 1.426 ms | 37.52 µs | 38.02× | 2.948% | 0.149 / 43 |
 
-For this retained 64-rectangle solid-fill scene, Blend2D was about 3.51× faster
-at the median. The normalized premultiplied RGBA images differed in 1,472 of
-65,536 pixels (2.246%), with mean absolute channel error 0.021 and maximum
-channel error 1. The different checksums therefore reflect antialiasing
-quantization, not a channel-order mismatch. This is one deliberately narrow
-baseline, not a general performance ranking; curves, strokes, gradients,
-clipping, memory, and cold-start/JIT cost require separate matched scenes.
+The rectangle result differs only by coverage quantization. Curved fill and
+stroke have larger localized errors because each renderer uses its own curve
+flattening and stroke expansion; the harness explicitly aligns butt caps,
+miter-bevel joins, and miter limit 4, since Blend2D's default miter-clip join
+does not match ugl-rs. The stroke result identifies the current largest
+whole-pipeline performance gap: ugl-rs flattens the curves and constructs a
+polygonal outline on every draw, while Blend2D uses its production stroker and
+JIT raster pipeline. These remain deliberately narrow baselines, not a general
+performance ranking; gradients, clipping, memory, and cold-start/JIT cost
+require separate matched scenes.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the
