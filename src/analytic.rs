@@ -225,8 +225,7 @@ fn prepare_binned_slab(y0: f32, limit: f32, active: &mut [AnalyticIntersection])
             if y > y0 && y < next && y < edge.y_end { next = y; }
         }
     }
-    active.sort_unstable_by(|a, b|
-        a.x0.total_cmp(&b.x0).then_with(|| a.slope.total_cmp(&b.slope)));
+    order_active_edges(active);
     for pair in active.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
         if a.slope == b.slope { continue; }
@@ -237,7 +236,7 @@ fn prepare_binned_slab(y0: f32, limit: f32, active: &mut [AnalyticIntersection])
     for intersection in &mut *active {
         intersection.x1 = intersection.x0 + intersection.slope * height;
     }
-    active.sort_unstable_by(|a, b| (a.x0 + a.x1).total_cmp(&(b.x0 + b.x1)));
+    order_active_midpoints(active);
     next
 }
 
@@ -299,8 +298,7 @@ fn prepare_active_slab(edges: &[Edge], y0: f32, limit: f32,
             if  y >  y0 && y < next && y < edge.y_end { next = y; }
         }
     }
-    active.sort_unstable_by(|a, b|
-        a.x0.total_cmp(&b.x0).then_with(|| a.slope.total_cmp(&b.slope)));
+    order_active_edges(active);
     for pair in active.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
         if a.slope == b.slope { continue; }
@@ -311,8 +309,34 @@ fn prepare_active_slab(edges: &[Edge], y0: f32, limit: f32,
     for intersection in &mut *active {
         intersection.x1 = intersection.x0 + intersection.slope * height;
     }
-    active.sort_unstable_by(|a, b| (a.x0 + a.x1).total_cmp(&(b.x0 + b.x1)));
+    order_active_midpoints(active);
     next
+}
+
+fn order_active_edges(active: &mut [AnalyticIntersection]) {
+    insertion_sort_active_by(active, |previous, edge|
+        previous.x0.total_cmp(&edge.x0)
+            .then_with(|| previous.slope.total_cmp(&edge.slope)).is_gt());
+}
+
+fn order_active_midpoints(active: &mut [AnalyticIntersection]) {
+    insertion_sort_active_by(active, |previous, edge|
+        (previous.x0 + previous.x1).total_cmp(&(edge.x0 + edge.x1)).is_gt());
+}
+
+fn insertion_sort_active_by(active: &mut [AnalyticIntersection],
+    is_after: impl Fn(AnalyticIntersection, AnalyticIntersection) -> bool) {
+    for index in 1..active.len() {
+        let edge = active[index];
+        let mut position = index;
+        while position != 0 {
+            let previous = active[position - 1];
+            if !is_after(previous, edge) { break; }
+            active[position] = previous;
+            position -= 1;
+        }
+        active[position] = edge;
+    }
 }
 
 fn integrate_spans(intersections: &[AnalyticIntersection], height: f32,
@@ -331,6 +355,21 @@ fn integrate_span(left: &AnalyticIntersection,
                  right: &AnalyticIntersection, height: f32, row: &mut [f32]) {
     let start = libm::floorf(left.x0.min( left.x1)).clamp(0.0, row.len() as _) as _;
     let end   = libm::ceilf(right.x0.max(right.x1)).clamp(0.0, row.len() as _) as _;
+    let full_start =
+        libm::ceilf(left.x0.max(left.x1)).clamp(0.0, row.len() as _) as usize;
+    let full_end =
+        libm::floorf(right.x0.min(right.x1)).clamp(0.0, row.len() as _) as usize;
+    if full_start < full_end {
+        integrate_partial_span(left, right, height, row, start, full_start);
+        for coverage in &mut row[full_start..full_end] { *coverage += height; }
+        integrate_partial_span(left, right, height, row, full_end, end);
+    } else {
+        integrate_partial_span(left, right, height, row, start, end);
+    }
+}
+
+fn integrate_partial_span(left: &AnalyticIntersection, right: &AnalyticIntersection,
+    height: f32, row: &mut [f32], start: usize, end: usize) {
     for (x, coverage) in row.iter_mut().enumerate().take(end).skip(start) {
         let x = x as _;
         let overlap0 = (right.x0.min(x + 1.0) - left.x0.max(x)).clamp(0.0, 1.0);
