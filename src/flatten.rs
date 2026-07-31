@@ -227,7 +227,7 @@ fn midpoint(a: Point, b: Point) -> Point {
 }
 
 #[cfg(test)] mod tests { use super::*;
-    use crate::{geometry::PathBuilder, test_support::assert_line_chain};
+    use crate::geometry::PathBuilder;
     use core::convert::Infallible;
     use alloc::vec::Vec;
 
@@ -258,7 +258,10 @@ fn midpoint(a: Point, b: Point) -> Point {
             .cubic_to((0.0, 10.0), (10.0, 10.0), (10.0, 0.0));
         let lines = collect(&builder.build(), Affine::identity(),
             FlattenOptions { tolerance: 0.1, max_depth: 16 }).unwrap();
-        assert_line_chain(&lines, (0.0, 0.0).into(), (10.0, 0.0).into());
+        assert!(lines.len() > 1);
+        assert_eq!(lines.first().unwrap().0, (0.0, 0.0).into());
+        assert_eq!(lines.last().unwrap().1, (10.0, 0.0).into());
+        assert!(lines.windows(2).all(|pair| pair[0].1 == pair[1].0));
     }
 
     #[test] fn collinear_curve_that_reverses_direction_is_not_collapsed() {

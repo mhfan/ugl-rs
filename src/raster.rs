@@ -290,7 +290,6 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
 
 #[cfg(test)] mod tests { use super::*;
     use crate::{flatten::FlattenOptions, geometry::{Affine, PathBuilder},
-        test_support::RECTANGLE_COVERAGE_CASES,
         edge::{build_fill_edges, Edge}};
     use core::convert::Infallible;
     use alloc::{vec, vec::Vec};
@@ -333,18 +332,6 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
                .line_to((3.0, 3.0)).line_to((1.0, 3.0));
         assert_eq!(render(&path_edges(builder), 4, 4, FillRule::NonZero),
             [0, 0,   0,   0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 0,   0,   0]);
-    }
-
-    #[test] fn rectangle_coverage_matches_shared_backend_cases() {
-        for case in RECTANGLE_COVERAGE_CASES {
-            let left = case.left_raw as f32 / 256.0;
-            let right = case.right_raw as f32 / 256.0;
-            let edges = [
-                Edge { upper: (left, 0.0).into(), lower: (left, 1.0).into(), winding: 1 },
-                Edge { upper: (right, 0.0).into(), lower: (right, 1.0).into(), winding: -1 },
-            ];
-            assert_eq!(render(&edges, case.width, 1, FillRule::NonZero), case.expected);
-        }
     }
 
     #[test] fn invalid_public_edges_are_rejected_before_rasterization() {

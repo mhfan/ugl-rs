@@ -216,7 +216,7 @@ fn midpoint(a: Point<Scalar>, b: Point<Scalar>) -> Point<Scalar> {
 #[cfg(test)] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
-    use crate::{geometry::PathBuilder, test_support::assert_line_chain};
+    use crate::geometry::PathBuilder;
 
     type Line = (Point<Scalar>, Point<Scalar>);
 
@@ -273,7 +273,10 @@ fn midpoint(a: Point<Scalar>, b: Point<Scalar>) -> Point<Scalar> {
         builder.move_to(start).cubic_to(
             (fixed(0), fixed(10)), (fixed(10), fixed(10)), end);
         let lines = collect(&builder.build(), Options::default()).unwrap();
-        assert_line_chain(&lines, start, end);
+        assert!(lines.len() > 1);
+        assert_eq!(lines.first().unwrap().0, start);
+        assert_eq!(lines.last().unwrap().1, end);
+        assert!(lines.windows(2).all(|pair| pair[0].1 == pair[1].0));
     }
 
     #[test] fn transform_is_applied_before_device_space_flatness() {

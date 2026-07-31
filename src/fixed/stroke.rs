@@ -345,7 +345,6 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
 #[cfg(test)] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
-    use crate::test_support::x_bounds;
 
     fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }
 
@@ -359,13 +358,19 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
         edges
     }
 
+    fn x_bounds(edges: &[Edge<Scalar>]) -> (Scalar, Scalar) {
+        edges.iter().flat_map(|edge| [edge.upper.x, edge.lower.x])
+            .fold((Scalar::MAX, Scalar::MIN),
+                |(minimum, maximum), x| (minimum.min(x), maximum.max(x)))
+    }
+
     #[test] fn line_caps_have_exact_device_bounds() {
         let options = Options::new(fixed(2.0)).unwrap();
         let butt = collect(&[(2.0, 3.0), (6.0, 3.0)], false, options);
         let square = collect(&[(2.0, 3.0), (6.0, 3.0)], false,
             options.with_cap(LineCap::Square));
-        assert_eq!(x_bounds(&butt), Some((fixed(2.0), fixed(6.0))));
-        assert_eq!(x_bounds(&square), Some((fixed(1.0), fixed(7.0))));
+        assert_eq!(x_bounds(&butt), (fixed(2.0), fixed(6.0)));
+        assert_eq!(x_bounds(&square), (fixed(1.0), fixed(7.0)));
     }
 
     #[test] fn diagonal_offsets_track_the_f32_reference() {
@@ -416,9 +421,9 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
             .with_round_segments(8).unwrap();
         let round = collect(&[(2.0, 3.0), (6.0, 3.0)], false,
             base.with_cap(LineCap::Round));
-        assert_eq!(x_bounds(&round), Some((fixed(1.0), fixed(7.0))));
+        assert_eq!(x_bounds(&round), (fixed(1.0), fixed(7.0)));
         let point = collect(&[(4.0, 5.0)], false, base.with_cap(LineCap::Round));
-        assert_eq!(x_bounds(&point), Some((fixed(3.0), fixed(5.0))));
+        assert_eq!(x_bounds(&point), (fixed(3.0), fixed(5.0)));
 
         let points = [(2.0, 4.0), (4.0, 4.0), (4.0, 6.0)];
         let bevel = collect(&points, false, base.with_join(LineJoin::Bevel));

@@ -420,7 +420,7 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
 #[cfg(test)] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
-    use crate::{geometry::PathBuilder, test_support::x_bounds};
+    use crate::geometry::PathBuilder;
 
     fn collect_line(from: impl Into<Point>,
                       to: impl Into<Point>, cap: LineCap) -> Vec<Edge> {
@@ -488,12 +488,15 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
     }
 
     #[test] fn line_caps_expand_to_expected_bounds_without_allocation() {
-        assert_eq!(x_bounds(&collect_line((2.0, 3.0),
-            (6.0, 3.0), LineCap::Butt)),   Some((2.0, 6.0)));
-        assert_eq!(x_bounds(&collect_line((2.0, 3.0),
-            (6.0, 3.0), LineCap::Square)), Some((1.0, 7.0)));
+        let bounds = |edges: &[Edge]| edges.iter().flat_map(|edge|
+            [edge.upper.x, edge.lower.x]).fold((f32::INFINITY, f32::NEG_INFINITY),
+                |(minimum, maximum), x| (minimum.min(x), maximum.max(x)));
+        assert_eq!(bounds(&collect_line((2.0, 3.0),
+            (6.0, 3.0), LineCap::Butt)),   (2.0, 6.0));
+        assert_eq!(bounds(&collect_line((2.0, 3.0),
+            (6.0, 3.0), LineCap::Square)), (1.0, 7.0));
         let (minimum, maximum) =
-            x_bounds(&collect_line((2.0, 3.0), (6.0, 3.0), LineCap::Round)).unwrap();
+            bounds(&collect_line((2.0, 3.0), (6.0, 3.0), LineCap::Round));
         assert!(minimum > 1.0 && minimum - 1.0 <= StrokeOptions::default().tolerance());
         assert!(maximum < 7.0 && 7.0 - maximum <= StrokeOptions::default().tolerance());
     }
