@@ -1,11 +1,11 @@
 //! Stateful drawing facades over the allocation-free rendering pipelines.
 
 use crate::{
-    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
-        AnalyticStrokeWorkspace, PixmapMut, RenderError, render_paint_analytic,
-        render_paint_analytic_clipped, render_paint_analytic_masked,
-        render_stroke_paint_analytic, render_stroke_paint_analytic_clipped,
-        render_stroke_paint_analytic_masked},
+    canvas::{RenderOptions, RenderWorkspace, StrokePathOptions,
+        StrokeWorkspace, PixmapMut, RenderError, render_paint,
+        render_paint_clipped, render_paint_masked,
+        render_stroke_paint, render_stroke_paint_clipped,
+        render_stroke_paint_masked},
     color::SRGBA, flatten::FlattenOptions, geometry::{Affine, Path, Rect},
     raster::{CoverageMask, FillRule}, sampler::{PaintSampler, SolidPaint},
     stroke::StrokeOptions,
@@ -28,14 +28,14 @@ pub(crate) struct DrawState<T, F, S, P> {
 /// corresponding low-level function in [`crate::canvas`].
 pub struct Context<'a, 'target, 'workspace, 'clip> {
     target: &'a mut PixmapMut<'target>,
-    workspace: &'a mut AnalyticStrokeWorkspace<'workspace>,
+    workspace: &'a mut StrokeWorkspace<'workspace>,
     state: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>,
     clip: Clip<'clip>,
 }
 
 impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
     pub fn new(target: &'a mut PixmapMut<'target>,
-        workspace: &'a mut AnalyticStrokeWorkspace<'workspace>) -> Self {
+        workspace: &'a mut StrokeWorkspace<'workspace>) -> Self {
         Self {
             target, workspace,
             state: DrawState {
@@ -93,7 +93,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         Result<(), RenderError> {
         let (transform, options, clip) = (
             self.state.transform,
-            AnalyticRenderOptions {
+            RenderOptions {
                 fill_rule: self.state.fill_rule, flatten: self.state.flatten,
             },
             self.clip,
@@ -101,11 +101,11 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         let target = &mut *self.target;
         let mut workspace = analytic_workspace(&mut *self.workspace);
         match clip {
-            Clip::None => render_paint_analytic(
+            Clip::None => render_paint(
                 path, transform, paint, options, target, &mut workspace),
-            Clip::Rect(rect) => render_paint_analytic_clipped(
+            Clip::Rect(rect) => render_paint_clipped(
                 path, transform, paint, rect, options, target, &mut workspace),
-            Clip::Mask(mask) => render_paint_analytic_masked(
+            Clip::Mask(mask) => render_paint_masked(
                 path, transform, paint, mask, options, target, &mut workspace),
         }
     }
@@ -119,26 +119,26 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         Result<(), RenderError> {
         let (transform, options, clip) = (
             self.state.transform,
-            AnalyticStrokeOptions {
+            StrokePathOptions {
                 flatten: self.state.flatten, stroke: self.state.stroke,
             },
             self.clip,
         );
         let target = &mut *self.target;
         match clip {
-            Clip::None => render_stroke_paint_analytic(
+            Clip::None => render_stroke_paint(
                 path, transform, paint, options, target, self.workspace),
-            Clip::Rect(rect) => render_stroke_paint_analytic_clipped(
+            Clip::Rect(rect) => render_stroke_paint_clipped(
                 path, transform, paint, rect, options, target, self.workspace),
-            Clip::Mask(mask) => render_stroke_paint_analytic_masked(
+            Clip::Mask(mask) => render_stroke_paint_masked(
                 path, transform, paint, mask, options, target, self.workspace),
         }
     }
 }
 
 fn analytic_workspace<'a>(
-    workspace: &'a mut AnalyticStrokeWorkspace<'_>) -> AnalyticRenderWorkspace<'a> {
-    AnalyticRenderWorkspace {
+    workspace: &'a mut StrokeWorkspace<'_>) -> RenderWorkspace<'a> {
+    RenderWorkspace {
         edges: workspace.edges, intersections: workspace.intersections,
         row_coverage: workspace.row_coverage, row_offsets: workspace.row_offsets,
         edge_indices: workspace.edge_indices,
@@ -168,8 +168,8 @@ fn analytic_workspace<'a>(
             row_offsets: [0; 5], edge_indices: [0; 32],
         } }
 
-        fn workspace(&mut self) -> AnalyticStrokeWorkspace<'_> {
-            AnalyticStrokeWorkspace {
+        fn workspace(&mut self) -> StrokeWorkspace<'_> {
+            StrokeWorkspace {
                 points: &mut self.points, contours: &mut self.contours,
                 edges: &mut self.edges, intersections: &mut self.intersections,
                 row_coverage: &mut self.row_coverage, row_offsets: &mut self.row_offsets,
@@ -229,5 +229,4 @@ fn analytic_workspace<'a>(
         }
         assert_eq!(&pixels[32..], &[0; 16]);
     }
-
 }

@@ -111,8 +111,8 @@ chosen by the caller and insufficient workspace is returned as an error:
 ```rust
 use ugl_rs::{analytic::Intersection,
     color::RGBA, edge::Edge, geometry::{Affine, PathBuilder},
-    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut,
-        render_solid_analytic},
+    canvas::{RenderOptions, RenderWorkspace, PixmapMut,
+        render_solid},
 };
 
 const  WIDTH: u32 = 4;
@@ -128,9 +128,9 @@ let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
 let (mut edges, mut coverage) = ([Edge::default(); 8], [0.0; WIDTH as usize]);
 let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
 
-render_solid_analytic(&path, Affine::identity(), RGBA::new(20, 200, 40, 160),
-    AnalyticRenderOptions::default(), &mut target,
-    &mut AnalyticRenderWorkspace { edges: &mut edges,
+render_solid(&path, Affine::identity(), RGBA::new(20, 200, 40, 160),
+    RenderOptions::default(), &mut target,
+    &mut RenderWorkspace { edges: &mut edges,
         intersections: &mut intersections, row_coverage: &mut coverage,
         row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
     },

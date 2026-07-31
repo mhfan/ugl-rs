@@ -1,8 +1,10 @@
 use super::*;
 use crate::{analytic::Intersection as AnalyticIntersection, canvas::{
-        AnalyticRenderOptions, AnalyticRenderWorkspace, rasterize_path_clip_analytic,
-        render_paint_analytic, render_paint_analytic_clipped,
-        render_paint_analytic_masked},
+        RenderOptions as FloatRenderOptions, RenderWorkspace as FloatRenderWorkspace,
+        rasterize_path_clip as rasterize_float_path_clip,
+        render_paint as render_float_paint,
+        render_paint_clipped as render_float_paint_clipped,
+        render_paint_masked as render_float_paint_masked},
     color::{PremulRGBA, PremulSRGBA8, RGBA as GenericRGBA, SRGBA as RGBA}, edge::Edge,
     geometry::{Affine, Path, PathBuilder}, sampler::SpreadMode};
 
@@ -26,8 +28,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         row_offsets: [0; 9], edge_indices: [0; EDGES],
     } }
 
-    fn workspace(&mut self) -> AnalyticRenderWorkspace<'_> {
-        AnalyticRenderWorkspace {
+    fn workspace(&mut self) -> FloatRenderWorkspace<'_> {
+        FloatRenderWorkspace {
             edges: &mut self.edges, intersections: &mut self.intersections,
             row_coverage: &mut self.row_coverage, row_offsets: &mut self.row_offsets,
             edge_indices: &mut self.edge_indices,
@@ -68,8 +70,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         .quad_to((2.0, -0.5), (3.5, 2.5)).line_to((0.5, 2.5)).close();
     let mut reference_data = [0; 12];
     let mut reference_buffers = AnalyticBuffers::<32, 4>::new();
-    rasterize_path_clip_analytic(&reference_builder.build(), Affine::identity(),
-        AnalyticRenderOptions::default(),
+    rasterize_float_path_clip(&reference_builder.build(), Affine::identity(),
+        FloatRenderOptions::default(),
         &mut CoverageMaskMut::new(&mut reference_data, 4, 3, 4).unwrap(),
         &mut reference_buffers.workspace()).unwrap();
     for (fixed, reference) in mask_data[..12].iter().zip(reference_data) {
@@ -138,8 +140,8 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(painted_pixels, [10, 10, 0, 128, 30, 10, 0, 128]);
     let path = rectangle(0.5, 0.0, 1.5, 1.0);
     let mut analytic_pixels = [0; 8];
-    render_paint_analytic(&path, Affine::identity(), &CoordinatePaint,
-        AnalyticRenderOptions::default(),
+    render_float_paint(&path, Affine::identity(), &CoordinatePaint,
+        FloatRenderOptions::default(),
         &mut PixmapMut::new(&mut analytic_pixels, 2, 1, 8).unwrap(),
         &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
     assert_eq!(painted_pixels, analytic_pixels);
@@ -154,9 +156,9 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         }).unwrap();
     assert_eq!(clipped_pixels, [5, 5, 0, 64, 0, 0, 0, 0]);
     analytic_pixels.fill(0);
-    render_paint_analytic_clipped(&path, Affine::identity(), &CoordinatePaint,
+    render_float_paint_clipped(&path, Affine::identity(), &CoordinatePaint,
         Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
-        AnalyticRenderOptions::default(),
+        FloatRenderOptions::default(),
         &mut PixmapMut::new(&mut analytic_pixels, 2, 1, 8).unwrap(),
         &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
     assert_eq!(clipped_pixels, analytic_pixels);
@@ -171,9 +173,9 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         }).unwrap();
     assert_eq!(masked_pixels, [5, 5, 0, 64, 30, 10, 0, 128]);
     analytic_pixels.fill(0);
-    render_paint_analytic_masked(&path, Affine::identity(), &CoordinatePaint,
+    render_float_paint_masked(&path, Affine::identity(), &CoordinatePaint,
         CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
-        AnalyticRenderOptions::default(),
+        FloatRenderOptions::default(),
         &mut PixmapMut::new(&mut analytic_pixels, 2, 1, 8).unwrap(),
         &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
     assert_eq!(masked_pixels, analytic_pixels);

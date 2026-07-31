@@ -1,11 +1,11 @@
 
 use ugl_rs::{analytic::Intersection as AnalyticIntersection,
     color::{PremulSRGBA8, LinearPremulRGBA, PremulRGBA, SRGBA, SRGBA as RGBA},
-    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
-        AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,
-        render_stroke_solid_analytic,
-    }, canvas_linear::{LinearPixmapMut, render_paint_analytic as render_paint_linear_analytic,
-        render_solid_analytic as render_solid_linear_analytic},
+    canvas::{RenderOptions, RenderWorkspace, StrokePathOptions,
+        StrokeWorkspace, PixmapMut, render_paint as render_canvas_paint, render_solid,
+        render_stroke_solid,
+    }, canvas_linear::{LinearPixmapMut, render_paint as render_paint_linear,
+        render_solid as render_solid_linear},
     edge::Edge, geometry::{Affine, PathBuilder}, raster::FillRule,
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions},
     sampler::{ConicGradient, GradientStop, GradientStops, LinearGradient, LinearPaintSampler,
@@ -20,16 +20,16 @@ fn legacy_pixel(pixel: PremulSRGBA8) -> PremulRGBA<u8> {
     (r, g, b, a).into()
 }
 
-fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>; 16] {
+fn render(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
     let (mut edges, mut intersections, mut row_coverage) = (
         [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
     );
     let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
-    render_solid_analytic(&builder.build(), Affine::identity(), RGBA::new(20, 200, 40, 160),
-        AnalyticRenderOptions { fill_rule, ..Default::default() }, &mut target,
-        &mut AnalyticRenderWorkspace {
+    render_solid(&builder.build(), Affine::identity(), RGBA::new(20, 200, 40, 160),
+        RenderOptions { fill_rule, ..Default::default() }, &mut target,
+        &mut RenderWorkspace {
             edges: &mut edges, intersections: &mut intersections,
             row_coverage: &mut row_coverage,
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
@@ -39,7 +39,7 @@ fn render_analytic(builder: PathBuilder, fill_rule: FillRule) -> [PremulRGBA<u8>
         target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap()))
 }
 
-fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
+fn render_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
     [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
@@ -47,8 +47,8 @@ fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
         [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
     );
     let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
-    render_paint_analytic(&builder.build(), Affine::identity(), sampler,
-        AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+    render_canvas_paint(&builder.build(), Affine::identity(), sampler,
+        RenderOptions::default(), &mut target, &mut RenderWorkspace {
             edges: &mut edges, intersections: &mut intersections,
             row_coverage: &mut row_coverage,
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
@@ -58,7 +58,7 @@ fn render_analytic_paint(builder: PathBuilder, sampler: &impl PaintSampler) ->
         legacy_pixel(target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap()))
 }
 
-fn render_analytic_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
+fn render_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
     [PremulRGBA<u8>; 16] {
     let mut bytes = [0; WIDTH as usize * HEIGHT as usize * 4];
     let mut target = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
@@ -66,10 +66,10 @@ fn render_analytic_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
     let (mut points, mut row_coverage) = ([Default::default(); 8], [0.0; WIDTH as usize]);
     let mut intersections = [AnalyticIntersection::default(); 64];
     let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 64]);
-    render_stroke_solid_analytic(&builder.build(), Affine::identity(),
+    render_stroke_solid(&builder.build(), Affine::identity(),
         RGBA::new(20, 200, 40, 160),
-        AnalyticStrokeOptions { stroke, ..Default::default() }, &mut target,
-        &mut AnalyticStrokeWorkspace {
+        StrokePathOptions { stroke, ..Default::default() }, &mut target,
+        &mut StrokeWorkspace {
             points: &mut points, contours: &mut contours, edges: &mut edges,
             intersections: &mut intersections, row_coverage: &mut row_coverage,
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
@@ -78,8 +78,8 @@ fn render_analytic_stroke_with(builder: PathBuilder, stroke: StrokeOptions) ->
         legacy_pixel(target.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap()))
 }
 
-fn render_analytic_stroke(builder: PathBuilder) -> [PremulRGBA<u8>; 16] {
-    render_analytic_stroke_with(builder, StrokeOptions::default())
+fn render_stroke(builder: PathBuilder) -> [PremulRGBA<u8>; 16] {
+    render_stroke_with(builder, StrokeOptions::default())
 }
 
 fn render_linear_layers(builder: PathBuilder, colors: &[SRGBA<u8>]) ->
@@ -92,8 +92,8 @@ fn render_linear_layers(builder: PathBuilder, colors: &[SRGBA<u8>]) ->
     );
     let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
     for color in colors {
-        render_solid_linear_analytic(&path, Affine::identity(), *color,
-            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+        render_solid_linear(&path, Affine::identity(), *color,
+            RenderOptions::default(), &mut target, &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut intersections,
                 row_coverage: &mut row_coverage,
                 row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
@@ -115,8 +115,8 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
         [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
     );
     let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
-    render_paint_linear_analytic(&builder.build(), Affine::identity(), sampler,
-        AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+    render_paint_linear(&builder.build(), Affine::identity(), sampler,
+        RenderOptions::default(), &mut target, &mut RenderWorkspace {
             edges: &mut edges, intersections: &mut intersections,
             row_coverage: &mut row_coverage,
             row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
@@ -136,7 +136,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
 
     let transparent = PremulRGBA::zeroed();
     let solid: PremulRGBA<u8> = (13, 125, 25, 160).into();
-    assert_eq!(render_analytic(path, FillRule::NonZero), [
+    assert_eq!(render(path, FillRule::NonZero), [
         transparent, transparent, transparent, transparent,
         transparent, solid,       solid,       transparent,
         transparent, solid,       solid,       transparent,
@@ -151,7 +151,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
     let transparent = PremulRGBA::zeroed();
     let solid: PremulRGBA<u8> = (13, 125, 25, 160).into();
     let half: PremulRGBA<u8> = (7, 63, 13, 80).into();
-    assert_eq!(render_analytic(path, FillRule::NonZero), [
+    assert_eq!(render(path, FillRule::NonZero), [
         solid,       half,        transparent, transparent,
         half,        transparent, transparent, transparent,
         transparent, transparent, transparent, transparent,
@@ -190,7 +190,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
         (240, 0, 99, 255).into(), (207, 0, 165, 255).into(),
         (165, 0, 207, 255).into(), (99, 0, 240, 255).into(),
     ];
-    assert_eq!(render_analytic_paint(path, &gradient),
+    assert_eq!(render_paint(path, &gradient),
         core::array::from_fn(|index| row[index % row.len()]));
 }
 
@@ -203,7 +203,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
     }
     fn assert_boundary<S: PaintSampler + LinearPaintSampler>(sampler: &S) {
         assert_eq!(render_linear_paint(rectangle(), sampler),
-            render_analytic_paint(rectangle(), sampler));
+            render_paint(rectangle(), sampler));
     }
 
     let stops = [GradientStop::new(0.0, SRGBA::new(240, 20, 80, 32)),
@@ -229,7 +229,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
     let transparent = PremulRGBA::zeroed();
     let solid: PremulRGBA<u8> = (13, 125, 25, 160).into();
     let half: PremulRGBA<u8> = (7, 63, 13, 80).into();
-    assert_eq!(render_analytic_stroke(path), [
+    assert_eq!(render_stroke(path), [
         transparent, transparent, transparent, transparent,
         half,        solid,       solid,       half,
         transparent, transparent, transparent, transparent,
@@ -240,7 +240,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
 #[test] fn stroke_caps_and_joins_rgba_golden() {
     let mut line = PathBuilder::new();
     line.move_to((1.5, 1.5)).line_to((2.5, 1.5));
-    let alpha = |builder, options| render_analytic_stroke_with(builder, options)
+    let alpha = |builder, options| render_stroke_with(builder, options)
         .map(|pixel| pixel.alpha());
     let options = StrokeOptions::new(2.0).unwrap();
     assert_eq!(alpha(line.clone(), options.with_cap(LineCap::Butt)), [
@@ -266,7 +266,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
 }
 
 #[cfg(feature = "fixed")]
-#[test] fn fixed_triangles_track_the_analytic_pipeline() {
+#[test] fn fixed_triangles_track_the_pipeline() {
     use ugl_rs::{fixed::{canvas::render_solid, raster::{
             Line, Workspace, Segment, Trapezoid, prepare_lines, strip_requirements,
         }}, fixed::Scalar, geometry::Point,
@@ -287,7 +287,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
     for points in scenes {
         let mut path = PathBuilder::new();
         path.move_to(points[0]).line_to(points[1]).line_to(points[2]);
-        let reference = render_analytic(path, FillRule::NonZero);
+        let reference = render(path, FillRule::NonZero);
 
         let fixed_points = points.map(|(x, y)|
             (Scalar::from_num(x), Scalar::from_num(y)).into());

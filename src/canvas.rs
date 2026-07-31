@@ -1,4 +1,8 @@
-//! Borrowed pixel targets and the first complete reference rendering path.
+//! Borrowed pixel targets and allocation-free `f32` rendering paths.
+//!
+//! The exact-area rasterizer is the production path exposed by the unqualified
+//! `render_*` API. The supersampled reference path is explicitly named
+//! `render_*_sampled`.
 
 use core::convert::Infallible;
 use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
@@ -139,13 +143,13 @@ fn blend_solid_bytes(bytes: &mut [u8], (source, alpha, inverse): ([u8; 3], u8, u
     }
 }
 
-pub struct RenderWorkspace<'a> {
+pub struct SampledRenderWorkspace<'a> {
     pub edges: &'a mut [Edge],
     pub intersections: &'a mut [Intersection],
     pub  row_coverage: &'a mut [f32],
 }
 
-pub struct AnalyticRenderWorkspace<'a> {
+pub struct RenderWorkspace<'a> {
     pub intersections: &'a mut [AnalyticIntersection],
     pub  row_coverage: &'a mut [f32],
     pub edges: &'a mut [Edge],
@@ -154,7 +158,7 @@ pub struct AnalyticRenderWorkspace<'a> {
 }
 
 /// Caller-owned storage for the complete analytic stroke pipeline.
-pub struct AnalyticStrokeWorkspace<'a> {
+pub struct StrokeWorkspace<'a> {
     pub points: &'a mut [Point],
     pub  edges: &'a mut [Edge],
     pub contours: &'a mut [StrokeContour],
@@ -165,40 +169,40 @@ pub struct AnalyticStrokeWorkspace<'a> {
 }
 
 /// Caller-owned storage for flattened, dashed analytic strokes.
-pub struct AnalyticDashedStrokeWorkspace<'a> {
-    pub stroke: AnalyticStrokeWorkspace<'a>,
+pub struct DashedStrokeWorkspace<'a> {
+    pub stroke: StrokeWorkspace<'a>,
     pub dash_points: &'a mut [Point],
     pub dash_contours: &'a mut [DashContour],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)] pub struct RenderOptions {
+#[derive(Clone, Copy, Debug, PartialEq)] pub struct SampledRenderOptions {
     pub fill_rule: FillRule,
     pub flatten: FlattenOptions,
     pub  raster:  RasterOptions,
 }
 
-impl Default for RenderOptions { fn default() -> Self {
+impl Default for SampledRenderOptions { fn default() -> Self {
         Self { fill_rule: FillRule::NonZero,
             flatten: FlattenOptions::default(),
              raster:  RasterOptions::default(),
         }
 } }
 
-#[derive(Clone, Copy, Debug, PartialEq)] pub struct AnalyticRenderOptions {
+#[derive(Clone, Copy, Debug, PartialEq)] pub struct RenderOptions {
     pub fill_rule: FillRule, pub flatten: FlattenOptions,
 }
 
-impl Default for AnalyticRenderOptions { fn default() -> Self {
+impl Default for RenderOptions { fn default() -> Self {
     Self { fill_rule: FillRule::NonZero, flatten: FlattenOptions::default() }
 } }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct AnalyticStrokeOptions {
+pub struct StrokePathOptions {
     pub flatten: FlattenOptions,
     pub stroke: StrokeOptions,
 }
 
-#[derive(Clone, Copy, Debug)] pub struct AnalyticDashedStrokeOptions<'a> {
+#[derive(Clone, Copy, Debug)] pub struct DashedStrokePathOptions<'a> {
     pub flatten: FlattenOptions,
     pub stroke: StrokeOptions,
     pub dash: DashPattern<'a>,
@@ -225,8 +229,8 @@ pub struct AnalyticStrokeOptions {
 ///
 /// The destination is premultiplied RGBA8888. This function performs no
 /// allocation; all geometry and raster storage comes from `workspace`.
-pub fn render_solid(path: &Path, transform: Affine, color: SRGBA<u8>, options: RenderOptions,
-    target: &mut PixmapMut<'_>, workspace: &mut RenderWorkspace<'_>) ->
+pub fn render_solid_sampled(path: &Path, transform: Affine, color: SRGBA<u8>, options: SampledRenderOptions,
+    target: &mut PixmapMut<'_>, workspace: &mut SampledRenderWorkspace<'_>) ->
     Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     let paint = SolidPaint::new(color);
@@ -240,9 +244,9 @@ pub fn render_solid(path: &Path, transform: Affine, color: SRGBA<u8>, options: R
 }
 
 /// Renders through the sampled reference rasterizer and an antialiased rectangle clip.
-pub fn render_solid_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
-    clip: Rect, options: RenderOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
+pub fn render_solid_sampled_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
+    clip: Rect, options: SampledRenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut SampledRenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     let paint = SolidPaint::new(color);
     let mut compositor = PaintCompositor { target, sampler: &paint };
@@ -255,136 +259,136 @@ pub fn render_solid_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
 }
 
 /// Renders a solid color through the exact-area `f32` rasterizer.
-pub fn render_solid_analytic(path: &Path, transform: Affine, color: SRGBA<u8>,
-    options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint_analytic(path, transform, &SolidPaint::new(color), options, target, workspace)
+pub fn render_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
+    options: RenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
+    render_paint(path, transform, &SolidPaint::new(color), options, target, workspace)
 }
 
 /// Renders a statically dispatched paint sampler through the exact-area `f32` rasterizer.
 ///
 /// Samples are evaluated at device-space pixel centers. Coverage and sampled
 /// premultiplied colors are then composed source-over the target.
-pub fn render_paint_analytic<S: PaintSampler>(path: &Path, transform: Affine, sampler: &S,
-    options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
+pub fn render_paint<S: PaintSampler>(path: &Path, transform: Affine, sampler: &S,
+    options: RenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_path_analytic_to(path, transform, options, width, height,
+    render_path_to(path, transform, options, width, height,
         &mut compositor, workspace)
 }
 
 /// Renders a solid analytic stroke without allocating intermediate geometry.
-pub fn render_stroke_solid_analytic(path: &Path, transform: Affine, color: SRGBA<u8>,
-    options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
-    render_stroke_paint_analytic(
+pub fn render_stroke_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
+    options: StrokePathOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
+    render_stroke_paint(
         path, transform, &SolidPaint::new(color), options, target, workspace)
 }
 
-/// Renders a sampled analytic stroke through the shared paint compositor.
-pub fn render_stroke_paint_analytic<S: PaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
+/// Renders an analytic stroke through the shared paint compositor.
+pub fn render_stroke_paint<S: PaintSampler>(path: &Path, transform: Affine,
+    sampler: &S, options: StrokePathOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_analytic_to(path, transform, options, width, height,
+    render_stroke_to(path, transform, options, width, height,
         &mut compositor, workspace)
 }
 
 /// Renders a dashed analytic stroke without allocating intermediate geometry.
-pub fn render_stroke_solid_analytic_dashed(path: &Path, transform: Affine,
-    color: SRGBA<u8>, options: AnalyticDashedStrokeOptions<'_>,
-    target: &mut PixmapMut<'_>, workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
+pub fn render_stroke_solid_dashed(path: &Path, transform: Affine,
+    color: SRGBA<u8>, options: DashedStrokePathOptions<'_>,
+    target: &mut PixmapMut<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
-    render_stroke_paint_analytic_dashed(path, transform, &SolidPaint::new(color),
+    render_stroke_paint_dashed(path, transform, &SolidPaint::new(color),
         options, target, workspace)
 }
 
-pub fn render_stroke_paint_analytic_dashed<S: PaintSampler>(path: &Path,
-    transform: Affine, sampler: &S, options: AnalyticDashedStrokeOptions<'_>,
-    target: &mut PixmapMut<'_>, workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
+pub fn render_stroke_paint_dashed<S: PaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, options: DashedStrokePathOptions<'_>,
+    target: &mut PixmapMut<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_analytic_dashed_to(path, transform, options, width, height,
+    render_stroke_dashed_to(path, transform, options, width, height,
         &mut compositor, workspace)
 }
 
-pub fn render_stroke_paint_analytic_dashed_clipped<S: PaintSampler>(path: &Path,
-    transform: Affine, sampler: &S, clip: Rect, options: AnalyticDashedStrokeOptions<'_>,
-    target: &mut PixmapMut<'_>, workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
+pub fn render_stroke_paint_dashed_clipped<S: PaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, clip: Rect, options: DashedStrokePathOptions<'_>,
+    target: &mut PixmapMut<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_analytic_dashed_to(path, transform, options, width, height,
+    render_stroke_dashed_to(path, transform, options, width, height,
         &mut RectClipSink::new(clip, &mut compositor), workspace)
 }
 
-pub fn render_stroke_paint_analytic_dashed_masked<S: PaintSampler>(path: &Path,
+pub fn render_stroke_paint_dashed_masked<S: PaintSampler>(path: &Path,
     transform: Affine, sampler: &S, mask: CoverageMask<'_>,
-    options: AnalyticDashedStrokeOptions<'_>, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticDashedStrokeWorkspace<'_>) -> Result<(), RenderError> {
+    options: DashedStrokePathOptions<'_>, target: &mut PixmapMut<'_>,
+    workspace: &mut DashedStrokeWorkspace<'_>) -> Result<(), RenderError> {
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_analytic_dashed_to(path, transform, options, width, height,
+    render_stroke_dashed_to(path, transform, options, width, height,
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
 /// Renders a solid analytic stroke through an antialiased rectangle clip.
-pub fn render_stroke_solid_analytic_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
-    clip: Rect, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
-    render_stroke_paint_analytic_clipped(path, transform,
+pub fn render_stroke_solid_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
+    clip: Rect, options: StrokePathOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
+    render_stroke_paint_clipped(path, transform,
         &SolidPaint::new(color), clip, options, target, workspace)
 }
 
 /// Renders analytic stroke paint through an antialiased rectangle clip.
-pub fn render_stroke_paint_analytic_clipped<S: PaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, clip: Rect, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
+pub fn render_stroke_paint_clipped<S: PaintSampler>(path: &Path, transform: Affine,
+    sampler: &S, clip: Rect, options: StrokePathOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_analytic_to(path, transform, options, width, height,
+    render_stroke_to(path, transform, options, width, height,
         &mut RectClipSink::new(clip, &mut compositor), workspace)
 }
 
 /// Renders a solid analytic stroke multiplied by a borrowed path clip mask.
-pub fn render_stroke_solid_analytic_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
-    mask: CoverageMask<'_>, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
-    render_stroke_paint_analytic_masked(
+pub fn render_stroke_solid_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
+    mask: CoverageMask<'_>, options: StrokePathOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
+    render_stroke_paint_masked(
         path, transform, &SolidPaint::new(color), mask, options, target, workspace)
 }
 
 /// Renders analytic stroke paint multiplied by a borrowed path clip mask.
-pub fn render_stroke_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, mask: CoverageMask<'_>, options: AnalyticStrokeOptions,
-    target: &mut PixmapMut<'_>, workspace: &mut AnalyticStrokeWorkspace<'_>) ->
+pub fn render_stroke_paint_masked<S: PaintSampler>(path: &Path, transform: Affine,
+    sampler: &S, mask: CoverageMask<'_>, options: StrokePathOptions,
+    target: &mut PixmapMut<'_>, workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_analytic_to(path, transform, options, width, height,
+    render_stroke_to(path, transform, options, width, height,
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
-/// Renders through the analytic reference rasterizer and an antialiased rectangle clip.
-pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
-    clip: Rect, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint_analytic_clipped(path, transform,
+/// Renders through the exact-area rasterizer and an antialiased rectangle clip.
+pub fn render_solid_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
+    clip: Rect, options: RenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
+    render_paint_clipped(path, transform,
         &SolidPaint::new(color), clip, options, target, workspace)
 }
 
 /// Renders an analytic paint through an antialiased rectangle clip.
-pub fn render_paint_analytic_clipped<S: PaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, clip: Rect, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
+pub fn render_paint_clipped<S: PaintSampler>(path: &Path, transform: Affine,
+    sampler: &S, clip: Rect, options: RenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_path_analytic_to(path, transform, options, width, height,
+    render_path_to(path, transform, options, width, height,
         &mut RectClipSink::new(clip, &mut compositor), workspace)
 }
 
@@ -392,12 +396,12 @@ pub fn render_paint_analytic_clipped<S: PaintSampler>(path: &Path, transform: Af
 ///
 /// The valid mask area is cleared after flattening succeeds. Callers must
 /// discard the mask if this function returns an error.
-pub fn rasterize_path_clip_analytic(path: &Path, transform: Affine,
-    options: AnalyticRenderOptions, mask: &mut CoverageMaskMut<'_>,
-    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
+pub fn rasterize_path_clip(path: &Path, transform: Affine,
+    options: RenderOptions, mask: &mut CoverageMaskMut<'_>,
+    workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     mask.clear();
-    rasterize_analytic(&workspace.edges[..edge_count], mask.width(), mask.height(),
+    rasterize(&workspace.edges[..edge_count], mask.width(), mask.height(),
         options.fill_rule, AnalyticWorkspace {
             intersections: workspace.intersections, row_coverage: workspace.row_coverage,
         }, AnalyticBinWorkspace {
@@ -406,22 +410,22 @@ pub fn rasterize_path_clip_analytic(path: &Path, transform: Affine,
 }
 
 /// Renders analytic solid coverage multiplied by a borrowed path clip mask.
-pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
-    mask: CoverageMask<'_>, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
-    workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint_analytic_masked(path, transform, &SolidPaint::new(color), mask,
+pub fn render_solid_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
+    mask: CoverageMask<'_>, options: RenderOptions, target: &mut PixmapMut<'_>,
+    workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
+    render_paint_masked(path, transform, &SolidPaint::new(color), mask,
         options, target, workspace)
 }
 
 /// Renders analytic paint coverage multiplied by a borrowed path clip mask.
-pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Affine,
-    sampler: &S, mask: CoverageMask<'_>, options: AnalyticRenderOptions,
-    target: &mut PixmapMut<'_>, workspace: &mut AnalyticRenderWorkspace<'_>) ->
+pub fn render_paint_masked<S: PaintSampler>(path: &Path, transform: Affine,
+    sampler: &S, mask: CoverageMask<'_>, options: RenderOptions,
+    target: &mut PixmapMut<'_>, workspace: &mut RenderWorkspace<'_>) ->
     Result<(), RenderError> {
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_path_analytic_to(path, transform, options, width, height,
+    render_path_to(path, transform, options, width, height,
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
@@ -443,7 +447,7 @@ pub(crate) fn build_edges(path: &Path, transform: Affine, options: FlattenOption
 }
 
 pub(crate) fn build_stroke_edges(path: &Path, transform: Affine,
-    options: AnalyticStrokeOptions,
+    options: StrokePathOptions,
     points: &mut [Point], contours: &mut [StrokeContour], edges: &mut [Edge]) ->
     Result<usize, RenderError> {
     let mut path_workspace = StrokePathWorkspace { points, contours };
@@ -457,7 +461,7 @@ pub(crate) fn build_stroke_edges(path: &Path, transform: Affine,
 }
 
 fn build_dashed_stroke_edges(path: &Path, transform: Affine,
-    options: AnalyticDashedStrokeOptions<'_>,
+    options: DashedStrokePathOptions<'_>,
     path_workspace: &mut StrokePathWorkspace<'_>,
     dash_workspace: &mut DashWorkspace<'_>, edges: &mut [Edge]) ->
     Result<usize, RenderError> {
@@ -475,23 +479,23 @@ fn build_dashed_stroke_edges(path: &Path, transform: Affine,
     Ok(sink.len)
 }
 
-pub(crate) fn rasterize_analytic<S>(edges: &[Edge], width: u32, height: u32,
+pub(crate) fn rasterize<S>(edges: &[Edge], width: u32, height: u32,
     fill_rule: FillRule,
     mut workspace: AnalyticWorkspace<'_>, bin_workspace: AnalyticBinWorkspace<'_>,
     sink: &mut S) ->
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
     let bins = build_row_bins(edges, height, bin_workspace)
-        .map_err(map_analytic_bin_error)?;
+        .map_err(map_bin_error)?;
     rasterize_edges_binned(edges, bins, width, height, fill_rule,
         &mut workspace, sink).map_err(map_raster_error)
 }
 
-pub(crate) fn render_path_analytic_to<S>(path: &Path, transform: Affine,
-    options: AnalyticRenderOptions, width: u32, height: u32, sink: &mut S,
-    workspace: &mut AnalyticRenderWorkspace<'_>) ->
+pub(crate) fn render_path_to<S>(path: &Path, transform: Affine,
+    options: RenderOptions, width: u32, height: u32, sink: &mut S,
+    workspace: &mut RenderWorkspace<'_>) ->
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    rasterize_analytic(&workspace.edges[..edge_count], width, height, options.fill_rule,
+    rasterize(&workspace.edges[..edge_count], width, height, options.fill_rule,
         AnalyticWorkspace {
             intersections: workspace.intersections, row_coverage: workspace.row_coverage,
         }, AnalyticBinWorkspace {
@@ -499,25 +503,25 @@ pub(crate) fn render_path_analytic_to<S>(path: &Path, transform: Affine,
         }, sink)
 }
 
-pub(crate) fn render_stroke_analytic_to<S>(path: &Path, transform: Affine,
-    options: AnalyticStrokeOptions, width: u32, height: u32, sink: &mut S,
-    workspace: &mut AnalyticStrokeWorkspace<'_>) ->
+pub(crate) fn render_stroke_to<S>(path: &Path, transform: Affine,
+    options: StrokePathOptions, width: u32, height: u32, sink: &mut S,
+    workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
-    let AnalyticStrokeWorkspace {
+    let StrokeWorkspace {
         points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
     } = workspace;
     let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
-    rasterize_analytic(&edges[..edge_count], width, height, FillRule::NonZero,
+    rasterize(&edges[..edge_count], width, height, FillRule::NonZero,
         AnalyticWorkspace { intersections, row_coverage },
         AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
 }
 
-pub(crate) fn render_stroke_analytic_dashed_to<S>(path: &Path, transform: Affine,
-    options: AnalyticDashedStrokeOptions<'_>, width: u32, height: u32, sink: &mut S,
-    workspace: &mut AnalyticDashedStrokeWorkspace<'_>) ->
+pub(crate) fn render_stroke_dashed_to<S>(path: &Path, transform: Affine,
+    options: DashedStrokePathOptions<'_>, width: u32, height: u32, sink: &mut S,
+    workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
-    let AnalyticDashedStrokeWorkspace {
-        stroke: AnalyticStrokeWorkspace {
+    let DashedStrokeWorkspace {
+        stroke: StrokeWorkspace {
             points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
         }, dash_points, dash_contours,
     } = workspace;
@@ -527,12 +531,12 @@ pub(crate) fn render_stroke_analytic_dashed_to<S>(path: &Path, transform: Affine
     };
     let edge_count = build_dashed_stroke_edges(path, transform, options,
         &mut path_workspace, &mut dash_workspace, edges)?;
-    rasterize_analytic(&edges[..edge_count], width, height, FillRule::NonZero,
+    rasterize(&edges[..edge_count], width, height, FillRule::NonZero,
         AnalyticWorkspace { intersections, row_coverage },
         AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
 }
 
-fn map_analytic_bin_error(error: AnalyticBinError) -> RenderError {
+fn map_bin_error(error: AnalyticBinError) -> RenderError {
     match error {
         AnalyticBinError::DimensionsOverflow => RenderError::DimensionsOverflow,
         AnalyticBinError::OffsetCapacity { required } =>
