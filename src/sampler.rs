@@ -768,6 +768,113 @@ impl LinearPaintSampler for RadialGradient<'_> {
     }
 }
 
+/// Unsigned binary angle where the complete `u32` range represents one turn.
+#[cfg(feature = "fixed")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub struct FixedAngle(u32);
+
+#[cfg(feature = "fixed")] impl FixedAngle {
+    pub const ZERO: Self = Self(0);
+    pub const QUARTER_TURN: Self = Self(1 << 30);
+    pub const HALF_TURN: Self = Self(1 << 31);
+    pub const THREE_QUARTER_TURN: Self = Self(3 << 30);
+
+    pub const fn from_bits(bits: u32) -> Self { Self(bits) }
+    pub const fn from_turn_fraction(numerator: u32, denominator: u32) -> Option<Self> {
+        if denominator == 0 { return None; }
+        let turns = ((numerator as u64) << 32) / denominator as u64;
+        Some(Self(turns as u32))
+    }
+    pub const fn to_bits(self) -> u32 { self.0 }
+}
+
+/// Allocation-free, no-FPU conic gradient using a 16-step integer CORDIC.
+#[cfg(feature = "fixed")]
+#[derive(Clone, Copy, Debug)] pub struct FixedConicGradient<'a> {
+    center: [i32; 2], start_angle: FixedAngle,
+    ramp: &'a [EncodedPremulSRGBA8],
+}
+
+#[cfg(feature = "fixed")] impl<'a> FixedConicGradient<'a> {
+    pub fn new(center: impl Into<Point<FixedScalar>>, start_angle: FixedAngle,
+        ramp: &'a [EncodedPremulSRGBA8]) -> Result<Self, GradientError> {
+        validate_fixed_ramp(ramp)?;
+        let center = center.into();
+        let center = [center.x.to_bits(), center.y.to_bits()];
+        if center.iter().any(|value|
+            value.unsigned_abs() > FIXED_DEVICE_RAW_LIMIT as u32) {
+            return Err(GradientError::CoordinateOutOfRange);
+        }
+        Ok(Self { center, start_angle, ramp })
+    }
+
+    pub fn ramp(&self) -> &'a [EncodedPremulSRGBA8] { self.ramp }
+    pub fn start_angle(&self) -> FixedAngle { self.start_angle }
+
+    fn ramp_index(&self, x: u32, y: u32) -> Option<usize> {
+        const HALF_PIXEL_RAW: i64 = 1 << 7;
+        const SUBPIXEL_SCALE: u64 = 1 << 8;
+        const FULL_TURN: u64 = 1_u64 << 32;
+        let (x, y) = (x as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64,
+                      y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64);
+        if x > FIXED_DEVICE_RAW_LIMIT as u64 || y > FIXED_DEVICE_RAW_LIMIT as u64 {
+            return None;
+        }
+        let angle = cordic_turn(x as i64 - self.center[0] as i64,
+                                y as i64 - self.center[1] as i64);
+        let parameter = angle.wrapping_sub(self.start_angle.to_bits()) as u64;
+        let scale = (self.ramp.len() - 1) as u64;
+        Some(((parameter * scale + FULL_TURN / 2) / FULL_TURN) as _)
+    }
+}
+
+#[cfg(feature = "fixed")] impl FixedPaintSampler for FixedConicGradient<'_> {
+    fn sample_fixed(&self, x: u32, y: u32) -> EncodedPremulSRGBA8 {
+        self.ramp_index(x, y).map_or_else(EncodedPremulSRGBA8::zeroed,
+            |index| self.ramp[index])
+    }
+}
+
+#[cfg(feature = "fixed")]
+fn cordic_turn(mut x: i64, mut y: i64) -> u32 {
+    // Round atan(2^-i) / (2π) to the nearest binary-turn `u32`.
+    const ATAN_TURNS: [i64; 16] = [
+        0x2000_0000, 0x12e4_051d, 0x09fb_385b, 0x0511_11d4,
+        0x028b_0d43, 0x0145_d7e1, 0x00a2_f61e, 0x0051_7c55,
+        0x0028_be53, 0x0014_5f2f, 0x000a_2f98, 0x0005_17cc,
+        0x0002_8be6, 0x0001_45f3, 0x0000_a2fa, 0x0000_517d,
+    ];
+    if y == 0 { return if x < 0 { FixedAngle::HALF_TURN.0 } else { 0 }; }
+    if x == 0 {
+        return if y < 0 {
+            FixedAngle::THREE_QUARTER_TURN.0
+        } else { FixedAngle::QUARTER_TURN.0 };
+    }
+    let magnitude = x.unsigned_abs().max(y.unsigned_abs());
+    let shift = 48_u32.saturating_sub(64 - magnitude.leading_zeros());
+    x <<= shift;
+    y <<= shift;
+    let mut angle = 0_i64;
+    if x < 0 {
+        x = -x;
+        y = -y;
+        angle = FixedAngle::HALF_TURN.0 as _;
+    }
+    for (shift, increment) in ATAN_TURNS.into_iter().enumerate() {
+        if y == 0 { break; }
+        let (old_x, old_y) = (x, y);
+        if old_y > 0 {
+            x = old_x + (old_y >> shift);
+            y = old_y - (old_x >> shift);
+            angle += increment;
+        } else {
+            x = old_x - (old_y >> shift);
+            y = old_y + (old_x >> shift);
+            angle -= increment;
+        }
+    }
+    angle.rem_euclid(1_i64 << 32) as _
+}
+
 /// A full-turn conic gradient around `center`.
 #[derive(Clone, Copy, Debug)] pub struct ConicGradient<'a> {
     center: Point, start_turn: f32, stops: GradientStops<'a>, angle_mode: ConicAngleMode,
@@ -1141,6 +1248,67 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
             stops, SpreadMode::Pad).unwrap();
         assert_eq!(tangent.sample(0.5, 0.0), linear(0.75, 0.0, 0.25, 1.0));
         assert_eq!(tangent.sample(0.0, 1.0), EncodedPremulSRGBA8::zeroed());
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_conic_cordic_tracks_exact_angles_and_encoded_ramp() {
+        assert_eq!(cordic_turn( 1,  0), FixedAngle::ZERO.to_bits());
+        assert_eq!(cordic_turn( 0,  1), FixedAngle::QUARTER_TURN.to_bits());
+        assert_eq!(cordic_turn(-1,  0), FixedAngle::HALF_TURN.to_bits());
+        assert_eq!(cordic_turn( 0, -1), FixedAngle::THREE_QUARTER_TURN.to_bits());
+        let mut maximum_error = 0.0_f32;
+        for y in -64_i64..=64 {
+            for x in -64_i64..=64 {
+                if x == 0 && y == 0 { continue; }
+                let actual = cordic_turn(x, y) as f32 / 4_294_967_296.0;
+                let expected = SpreadMode::Repeat.map(
+                    libm::atan2f(y as _, x as _) / TAU);
+                let difference = (actual - expected).abs();
+                maximum_error = maximum_error.max(difference.min(1.0 - difference));
+            }
+        }
+        assert!(maximum_error <= 6e-6, "maximum turn error={maximum_error}");
+
+        let stop_values = red_blue_stops();
+        let mut storage = [EncodedPremulSRGBA8::zeroed(); 257];
+        let stops = GradientStops::with_ramp(&stop_values, &mut storage).unwrap();
+        let ramp = stops.encoded_ramp().unwrap();
+        let fixed = FixedScalar::from_num;
+        for (angle, start_angle) in [
+            (FixedAngle::ZERO, 0.0),
+            (FixedAngle::QUARTER_TURN, TAU / 4.0),
+        ] {
+            let conic = FixedConicGradient::new(
+                (fixed(16), fixed(16)), angle, ramp).unwrap();
+            let reference = ConicGradient::new((16.0, 16.0), start_angle, stops).unwrap();
+            for y in 0..32 {
+                for x in 0..32 {
+                    let (actual, expected) = (conic.sample_fixed(x, y),
+                        reference.sample(x as f32 + 0.5, y as f32 + 0.5));
+                    let actual = ramp.iter().position(|color| *color == actual).unwrap();
+                    let expected = ramp.iter().position(|color| *color == expected).unwrap();
+                    assert!(actual.abs_diff(expected) <= 1,
+                        "point=({x}, {y}), actual={actual}, expected={expected}");
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "fixed")]
+    #[test] fn fixed_conic_validates_ramp_and_device_domain() {
+        let ramp = [encoded(RGBA::<u8>::red()), encoded(RGBA::<u8>::blue())];
+        let fixed = FixedScalar::from_num;
+        assert_eq!(FixedAngle::from_turn_fraction(1, 4), Some(FixedAngle::QUARTER_TURN));
+        assert_eq!(FixedAngle::from_turn_fraction(1, 0), None);
+        assert_eq!(FixedConicGradient::new((fixed(0), fixed(0)),
+            FixedAngle::ZERO, &ramp[..1]).unwrap_err(), GradientError::RampTooSmall);
+        assert_eq!(FixedConicGradient::new(
+            (FixedScalar::from_bits(FIXED_DEVICE_RAW_LIMIT + 1), fixed(0)),
+            FixedAngle::ZERO, &ramp).unwrap_err(), GradientError::CoordinateOutOfRange);
+        let conic = FixedConicGradient::new(
+            (fixed(0), fixed(0)), FixedAngle::ZERO, &ramp).unwrap();
+        assert_eq!(conic.sample_fixed(FIXED_DEVICE_RAW_LIMIT as u32 / 256, 0),
+            EncodedPremulSRGBA8::zeroed());
     }
 
     #[test] fn conic_gradient_wraps_a_full_turn_from_its_start_angle() {

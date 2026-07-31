@@ -686,7 +686,7 @@ fn benchmark_paint(c: &mut Criterion) {
             FixedCoverageTileWorkspace, FixedDirectTilePiece, FixedDirectTileWorkspace,
             encode_fixed_coverage_tiles, fixed_tile_requirements, rasterize_lines_to_tiles,
         },
-        sampler::{FixedLinearGradient, FixedRadialGradient},
+        sampler::{FixedAngle, FixedConicGradient, FixedLinearGradient, FixedRadialGradient},
     };
 
     let stop_values = [GradientStop::new( 0.0, RGBA::new(240, 20, 80,  32)),
@@ -705,6 +705,8 @@ fn benchmark_paint(c: &mut Criterion) {
     let focal = FixedRadialGradient::two_circle(
         (fixed(96), fixed(112)), fixed(8), (fixed(128), fixed(128)), fixed(180),
         ramp, SpreadMode::Pad).unwrap();
+    let conic = FixedConicGradient::new(
+        (fixed(128), fixed(128)), FixedAngle::from_bits(0x0f12_3456), ramp).unwrap();
     let mut paint_group = c.benchmark_group("paint_sample_fixed");
     paint_group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
     paint_group.bench_function("linear",
@@ -713,6 +715,8 @@ fn benchmark_paint(c: &mut Criterion) {
         |b| b.iter(|| black_box(sample_fixed_checksum(&radial))));
     paint_group.bench_function("radial_two_circle",
         |b| b.iter(|| black_box(sample_fixed_checksum(&focal))));
+    paint_group.bench_function("conic",
+        |b| b.iter(|| black_box(sample_fixed_checksum(&conic))));
     paint_group.finish();
 
     let mut group = c.benchmark_group("raster_rgba8888");

@@ -52,8 +52,8 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | `f32` fill and clipping | Reference path implemented and allocation-free |
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Undashed caps/joins reference implemented; reliability work continues |
-| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, encoded composition, and native fixed linear/two-circle-radial gradients implemented |
-| Production readiness | Pre-release: broader fuzzing, golden scenes, native fixed conic paint and stroke, and real-device validation remain |
+| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, encoded composition, and native fixed linear/radial/conic gradients implemented |
+| Production readiness | Pre-release: broader fuzzing, golden scenes, native fixed stroke, and real-device validation remain |
 
 ## Architecture at a glance
 
@@ -130,8 +130,8 @@ projects Q24.8 endpoints with widened integer arithmetic and samples a
 caller-owned encoded ramp; streaming and retained strip/tile compositors support
 the same rectangle and path-mask adapters. `FixedRadialGradient` implements
 both concentric and general two-circle/focal geometry with integer root solving
-and exact integer spread/ramp mapping. Native fixed conic gradients remain
-future MCU work.
+and exact integer spread/ramp mapping. `FixedConicGradient` uses a compact
+binary-turn angle and a fixed 16-step integer CORDIC.
 
 Pending architectural work includes:
 
@@ -141,7 +141,11 @@ Pending architectural work includes:
   packing, and byte layout are explicit at every API boundary;
 - design a `Canvas`/`Context` facade that consolidates target, transform, paint,
   clipping, drawing options, and workspace reuse without removing the bounded,
-  allocation-free low-level APIs.
+  allocation-free low-level APIs;
+- evaluate moving fixed-only implementation into `src/fixed/` as part of that
+  API cleanup. The layout should strengthen feature and backend boundaries
+  without duplicating shared abstractions or accidentally changing public
+  module paths.
 
 Until fixed path-mask generation is implemented, all fixed compositors can
 consume arbitrary path masks, but producing those masks is not yet an
@@ -248,6 +252,13 @@ short 10-sample diagnostic measured about 2.23 ms (29.4 Mpixel/s), improved
 from about 7.03 ms after keeping ordinary discriminants and ramp division on
 proved `u64`/`i64` paths. This remains a scalar reference baseline rather than
 a final MCU performance target.
+
+The native fixed conic diagnostic measured about 2.42 ms (27.1 Mpixel/s).
+Its 16-step shift/add CORDIC stays below `6e-6` turn of angular error on the
+tested integer grid, and the encoded-ramp differential test permits at most one
+adjacent entry of error versus exact `atan2f`. This is also a scalar no-FPU
+baseline; an octant LUT or platform-specific implementation requires benchmark
+and code-size evidence before replacing it.
 
 Conic gradients keep exact `atan2f` as the default and expose
 `ConicAngleMode::Fast` as an explicit quality/performance choice. Fast mode

@@ -191,6 +191,11 @@ and SIMD layouts do not enter the common `Edge` representation.
   to 16 fractional bits, and the same largest-valid-root policy as the `f32`
   reference handles focal cones. Ordinary values take `u64`/`i64` fast paths.
   Static ramps need no allocation or runtime color conversion on an MCU.
+- `FixedAngle` stores one binary turn in `u32`, avoiding unit ambiguity and
+  floating-point conversion at the fixed conic API boundary.
+  `FixedConicGradient` uses 16 integer CORDIC vectoring steps and direct
+  wrapping ramp selection. Tests bound angular error below `6e-6` turn on the
+  integer grid and encoded output to one adjacent ramp entry versus `atan2f`.
 - Solid paint reports its constant color so span and tile compositors retain
   their bulk fast paths.
 - `TransformedPaint` maps device samples into paint-local coordinates through
@@ -469,7 +474,7 @@ Status: planned.
 | `f32` fill | Sampled and analytic coverage, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
 | Stroke | Allocation-free undashed caps and joins | Dashes, fuzzing, and production reliability validation |
-| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, rectangle and path-mask clipping, encoded composition, native fixed linear and two-circle radial paint | Native fixed conic paint, fixed stroke, real-device and range validation |
+| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, rectangle and path-mask clipping, encoded composition, native fixed linear/radial/conic paint | Native fixed stroke, real-device and range validation |
 | Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
 
@@ -492,3 +497,11 @@ Two cross-cutting API reviews also remain:
   consolidate duplicated render entry points; do not merely move the existing
   API matrix into methods or hide capacity errors and fixed/floating backend
   selection.
+- During that API review, evaluate grouping backend-specific implementation
+  under `src/fixed/`. The decision must consider feature-gate clarity, module
+  cohesion, compile-time dependencies, discoverability, and stable public
+  paths. Keep genuinely shared geometry, color, coverage, and compositor
+  contracts outside the backend directory; do not duplicate abstractions just
+  to create a visually isolated tree. If files move, preserve intentional
+  public paths through re-exports or treat changes explicitly as pre-1.0 API
+  cleanup.
