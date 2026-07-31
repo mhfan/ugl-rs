@@ -19,6 +19,10 @@ use crate::{color::{EncodedPremulSRGBA8, LinearPremulRGBA, SRGBA, RGBA},
     geometry::{Affine, Point}};
 #[cfg(feature = "fixed")]
 use crate::geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar};
+#[cfg(feature = "fixed")]
+use crate::math::{integer_sqrt_u64, scaled_integer_sqrt};
+#[cfg(all(feature = "fixed", test))]
+use crate::math::integer_sqrt;
 
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
@@ -552,48 +556,6 @@ fn fixed_ramp_index_i64(parameter: i64, denominator: i64, ramp_len: usize,
     } as u64;
     let (scale, denominator) = ((ramp_len - 1) as u64, denominator as u64);
     ((mapped * scale + denominator / 2) / denominator) as _
-}
-
-#[cfg(feature = "fixed")]
-fn integer_sqrt(value: u128) -> u128 {
-    if value <= u64::MAX as u128 {
-        return integer_sqrt_u64(value as u64) as u128;
-    }
-    if value < 2 { return value; }
-    let mut estimate = 1_u128 << (128 - value.leading_zeros()).div_ceil(2);
-    loop {
-        let next = (estimate + value / estimate) / 2;
-        if next >= estimate { return estimate; }
-        estimate = next;
-    }
-}
-
-#[cfg(feature = "fixed")]
-fn integer_sqrt_u64(value: u64) -> u64 {
-    if value < 2 { return value; }
-    let mut estimate = 1_u64 << (64 - value.leading_zeros()).div_ceil(2);
-    loop {
-        let next = (estimate + value / estimate) / 2;
-        if next >= estimate { return estimate; }
-        estimate = next;
-    }
-}
-
-#[cfg(feature = "fixed")]
-fn scaled_integer_sqrt(value: u128) -> (u128, u128) {
-    const MAX_FRACTION_BITS: u32 = 16;
-    if let Ok(value) = u64::try_from(value) {
-        let fraction_bits = (value.leading_zeros() / 2).min(MAX_FRACTION_BITS);
-        let scaled = value << (fraction_bits * 2);
-        let floor = integer_sqrt_u64(scaled);
-        let root = if scaled - floor * floor > floor { floor + 1 } else { floor };
-        return (root as _, 1 << fraction_bits);
-    }
-    let fraction_bits = (value.leading_zeros() / 2).min(MAX_FRACTION_BITS);
-    let scaled = value << (fraction_bits * 2);
-    let floor = integer_sqrt(scaled);
-    let root = if scaled - floor * floor > floor { floor + 1 } else { floor };
-    (root, 1 << fraction_bits)
 }
 
 #[derive(Clone, Copy, Debug)] pub struct LinearGradient<'a> {

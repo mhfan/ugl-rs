@@ -13,6 +13,7 @@ pub mod geometry;   // shape, curve, free path
 
 pub mod raster;
 pub mod stroke;
+#[cfg(feature = "fixed")] pub mod stroke_fixed;
 pub mod flatten;
 pub mod analytic;
 #[cfg(feature = "fixed")] pub mod raster_fixed;

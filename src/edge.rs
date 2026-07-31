@@ -40,12 +40,12 @@ impl Edge {
     }
 }
 
-pub trait EdgeSink {    type Error;
-    fn edge(&mut self, edge: Edge) -> Result<(), Self::Error>;
+pub trait EdgeSink<T = Scalar> {    type Error;
+    fn edge(&mut self, edge: Edge<T>) -> Result<(), Self::Error>;
 }
 
-impl<E, F> EdgeSink for F where F: FnMut(Edge) -> Result<(), E> {
-    fn edge(&mut self, edge: Edge) -> Result<(), Self::Error> { self(edge) }
+impl<T, E, F> EdgeSink<T> for F where F: FnMut(Edge<T>) -> Result<(), E> {
+    fn edge(&mut self, edge: Edge<T>) -> Result<(), Self::Error> { self(edge) }
     type Error = E;
 }
 

@@ -267,6 +267,12 @@ and SIMD layouts do not enter the common `Edge` representation.
   but must preserve the documented device-space result within its error bound.
 - Stroke expansion can stream consistently wound fill contours into bounded
   caller-owned storage. It must not require an owned intermediate `Path`.
+- `FixedStrokeOptions` and `stroke_polyline_fixed` provide the initial no-FPU
+  Q24.8 path for butt/square caps and bevel/miter joins. Integer square-root
+  normalization and widened intersection tests preserve bounded arithmetic.
+  `render_native_stroke_polyline_fixed` connects caller-owned edge/line scratch
+  directly to fixed raster and paint. Round geometry is rejected before output
+  until its fixed arc subdivision and error contract are implemented.
 - Dash patterns are added only after undashed contour semantics and capacity
   behavior are stable.
 
@@ -474,7 +480,7 @@ Status: planned.
 | `f32` fill | Sampled and analytic coverage, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
 | Stroke | Allocation-free undashed caps and joins | Dashes, fuzzing, and production reliability validation |
-| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, rectangle and path-mask clipping, encoded composition, native fixed linear/radial/conic paint | Native fixed stroke, real-device and range validation |
+| Fixed raster | Q24.8 geometry, rational crossings, sparse strips/tiles, clipping, native fixed paint, butt/square and bevel/miter stroke | Fixed round stroke, real-device and range validation |
 | Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
 

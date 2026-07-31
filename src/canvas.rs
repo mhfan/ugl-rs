@@ -14,7 +14,11 @@ use crate::{color::{PremulRGBA, RGBA}, edge::{build_fill_edges, Edge, EdgeSink},
 };
 #[cfg(feature = "fixed")] use crate::raster_fixed::{
     FixedCoverageStrips, FixedLine, FixedRasterError, FixedRasterWorkspace,
-    FixedRenderError, rasterize_lines,
+    FixedRenderError, prepare_lines, rasterize_lines,
+};
+#[cfg(feature = "fixed")] use crate::{
+    geometry::FixedScalar,
+    stroke_fixed::{FixedStrokeExpandError, FixedStrokeOptions, stroke_polyline_fixed},
 };
 #[cfg(feature = "fixed")] use crate::tile_fixed::{
     FixedCoverageTiles, FixedDirectTileWorkspace, FixedTileKind, rasterize_lines_to_tiles,
@@ -165,6 +169,12 @@ pub struct AnalyticStrokeWorkspace<'a> {
     pub edge_indices: &'a mut [u32],
 }
 
+#[cfg(feature = "fixed")]
+pub struct FixedStrokeGeometryWorkspace<'a> {
+    pub edges: &'a mut [Edge<FixedScalar>],
+    pub lines: &'a mut [FixedLine],
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct RenderOptions {
     pub fill_rule: FillRule,
     pub flatten: FlattenOptions,
@@ -202,6 +212,7 @@ pub struct AnalyticStrokeOptions {
     AnalyticBinOffsetCapacity { required: usize },
     AnalyticBinIndexCapacity { required: usize },
     #[cfg(feature = "fixed")] FixedRaster(FixedRasterError),
+    #[cfg(feature = "fixed")] FixedStrokeUnsupportedRound,
     RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
     CoverageDimensionsMismatch { coverage: (u32, u32), target: (u32, u32), },
 }
@@ -437,6 +448,21 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
     let mut compositor = FixedPaintCompositor { target, sampler };
     rasterize_lines(lines, compositor.target.width, compositor.target.height,
         fill_rule, workspace, &mut compositor).map_err(map_fixed_render_error)
+}
+
+/// Expands and renders a Q24.8 polyline with no floating-point operations.
+#[cfg(feature = "fixed")] pub fn render_native_stroke_polyline_fixed<
+    S: crate::sampler::FixedPaintSampler>(points: &[Point<FixedScalar>], closed: bool,
+    stroke: FixedStrokeOptions, sampler: &S, target: &mut PixmapMut<'_>,
+    geometry: &mut FixedStrokeGeometryWorkspace<'_>,
+    raster_workspace: &mut FixedRasterWorkspace<'_>) -> Result<(), RenderError> {
+    let mut sink = EdgeSliceSink { edges: geometry.edges, len: 0 };
+    stroke_polyline_fixed(points, closed, stroke, &mut sink)
+        .map_err(map_fixed_stroke_expand_error)?;
+    let line_count = prepare_lines(&sink.edges[..sink.len], geometry.lines)
+        .map_err(RenderError::FixedRaster)?;
+    render_native_paint_fixed(&geometry.lines[..line_count], sampler,
+        FillRule::NonZero, target, raster_workspace)
 }
 
 /// Renders fixed geometry and no-FPU paint through a rectangle clip.
@@ -743,14 +769,27 @@ fn map_analytic_bin_error(error: AnalyticBinError) -> RenderError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] struct EdgeCapacity { needed_at_least: usize }
 
-struct EdgeSliceSink<'a> { edges: &'a mut [Edge], len: usize }
+struct EdgeSliceSink<'a, T = crate::geometry::Scalar> {
+    edges: &'a mut [Edge<T>], len: usize,
+}
 
-impl EdgeSink for EdgeSliceSink<'_> {
-    fn edge(&mut self, edge: Edge) -> Result<(), Self::Error> {
+impl<T> EdgeSink<T> for EdgeSliceSink<'_, T> {
+    fn edge(&mut self, edge: Edge<T>) -> Result<(), Self::Error> {
         let slot = self.edges.get_mut(self.len)
             .ok_or(EdgeCapacity { needed_at_least: self.len + 1 })?;
         *slot = edge;   self.len += 1;  Ok(())
     }   type Error = EdgeCapacity;
+}
+
+#[cfg(feature = "fixed")]
+fn map_fixed_stroke_expand_error(error: FixedStrokeExpandError<EdgeCapacity>) -> RenderError {
+    match error {
+        FixedStrokeExpandError::CoordinateOutOfRange =>
+            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
+        FixedStrokeExpandError::UnsupportedRound => RenderError::FixedStrokeUnsupportedRound,
+        FixedStrokeExpandError::Sink(error) =>
+            RenderError::EdgeCapacity { needed_at_least: error.needed_at_least },
+    }
 }
 
 struct PaintCompositor<'a, 'b, S> {

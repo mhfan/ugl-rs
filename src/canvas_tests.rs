@@ -591,6 +591,43 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 #[cfg(feature = "fixed")]
+#[test] fn native_fixed_stroke_renders_end_to_end_without_floating_point() {
+    use crate::{geometry::FixedScalar,
+        raster_fixed::{FixedLine, FixedRasterWorkspace, FixedSegment, FixedTrapezoid},
+        stroke_fixed::FixedStrokeOptions,
+    };
+
+    let fixed = FixedScalar::from_num;
+    let points = [(fixed(1), fixed(1)).into(), (fixed(3), fixed(1)).into()];
+    let (mut edge_storage, mut line_storage) =
+        ([Edge::default(); 2], [FixedLine::default(); 2]);
+    let (mut segments, mut trapezoids, mut row_area) =
+        ([FixedSegment::default(); 2], [FixedTrapezoid::default(); 1], [0; 4]);
+    let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 2]);
+    let mut pixels = [0; 4 * 3 * 4];
+    render_native_stroke_polyline_fixed(&points, false,
+        FixedStrokeOptions::new(fixed(2)).unwrap(), &SolidPaint::new(RGBA::white()),
+        &mut PixmapMut::new(&mut pixels, 4, 3, 16).unwrap(),
+        &mut FixedStrokeGeometryWorkspace {
+            edges: &mut edge_storage, lines: &mut line_storage,
+        },
+        &mut FixedRasterWorkspace {
+            segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+            strip_indices: &mut strip_indices,
+        }).unwrap();
+    let target = PixmapMut::new(&mut pixels, 4, 3, 16).unwrap();
+    for y in 0..3 {
+        for x in 0..4 {
+            let expected = if y < 2 && (1..3).contains(&x) {
+                (255, 255, 255, 255).into()
+            } else { PremulRGBA::zeroed() };
+            assert_eq!(target.pixel(x, y), Some(expected), "pixel=({x}, {y})");
+        }
+    }
+}
+
+#[cfg(feature = "fixed")]
 #[test] fn full_tile_blending_matches_row_spans() {
     let (mut tiled, mut spanned) = ([17; 16 * 16 * 4], [17; 16 * 16 * 4]);
     let color = RGBA::<u8>::new(40, 120, 220, 192).premul();
