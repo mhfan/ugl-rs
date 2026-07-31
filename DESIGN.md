@@ -567,6 +567,7 @@ src/fixed/
     flatten.rs
     math.rs
     raster.rs
+    sampler.rs
     stroke.rs
     tile.rs
     tests.rs

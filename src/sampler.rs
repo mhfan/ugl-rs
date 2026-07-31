@@ -24,7 +24,7 @@ use crate::fixed::math::{integer_sqrt_u64, scaled_integer_sqrt};
 #[cfg(feature = "fixed")]
 use crate::fixed::math::cordic_turn;
 #[cfg(feature = "fixed")]
-pub use crate::fixed::math::FixedAngle;
+pub use crate::fixed::sampler::{FixedAngle, FixedPaintSampler};
 #[cfg(all(feature = "fixed", test))]
 use crate::fixed::math::integer_sqrt;
 
@@ -37,16 +37,6 @@ pub trait PaintSampler {
 
     /// Reports a position-independent color to enable span and tile fast paths.
     fn solid_color(&self) -> Option<PremulSRGBA8> { None }
-}
-
-/// Produces encoded premultiplied sRGB at integer device-pixel coordinates.
-///
-/// Implementations sample the center of pixel `(x, y)` without requiring
-/// floating-point arithmetic. This is separate from [`PaintSampler`] so a
-/// fixed raster pipeline never silently calls an `f32` sampler.
-#[cfg(feature = "fixed")] pub trait FixedPaintSampler {
-    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8;
-    fn solid_color_fixed(&self) -> Option<PremulSRGBA8> { None }
 }
 
 /// Produces premultiplied linear-light colors without an encoded round trip.
@@ -78,15 +68,6 @@ pub trait LinearPaintSampler {
 impl<S: PaintSampler + ?Sized> PaintSampler for &S {
     fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 { (**self).sample(x, y) }
     fn solid_color(&self) -> Option<PremulSRGBA8> { (**self).solid_color() }
-}
-
-#[cfg(feature = "fixed")] impl<S: FixedPaintSampler + ?Sized> FixedPaintSampler for &S {
-    fn sample_fixed(&self, x: u32, y: u32) -> PremulSRGBA8 {
-        (**self).sample_fixed(x, y)
-    }
-    fn solid_color_fixed(&self) -> Option<PremulSRGBA8> {
-        (**self).solid_color_fixed()
-    }
 }
 
 impl<S: LinearPaintSampler + ?Sized> LinearPaintSampler for &S {
@@ -173,11 +154,6 @@ impl From<SRGBA<u8>> for SolidPaint { fn from(color: SRGBA<u8>) -> Self { Self::
 impl PaintSampler for SolidPaint {
     fn sample(&self, _x: f32, _y: f32) -> PremulSRGBA8 { self.encoded }
     fn solid_color(&self) -> Option<PremulSRGBA8> { Some(self.encoded) }
-}
-
-#[cfg(feature = "fixed")] impl FixedPaintSampler for SolidPaint {
-    fn sample_fixed(&self, _x: u32, _y: u32) -> PremulSRGBA8 { self.encoded }
-    fn solid_color_fixed(&self) -> Option<PremulSRGBA8> { Some(self.encoded) }
 }
 
 impl LinearPaintSampler for SolidPaint {

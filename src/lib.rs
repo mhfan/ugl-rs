@@ -34,4 +34,7 @@ pub mod canvas_linear;
 pub mod context;
 pub mod edge;
 
-pub mod math;
+/// Compatibility exports for fixed-point numeric helpers.
+#[cfg(feature = "fixed")] pub mod math {
+    pub use crate::fixed::math::{Fixed, FixedAngle};
+}
