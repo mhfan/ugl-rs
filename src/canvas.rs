@@ -239,15 +239,10 @@ pub fn render_solid_analytic(path: &Path, transform: Affine, color: RGBA<u8>,
 pub fn render_paint_analytic<S: PaintSampler>(path: &Path, transform: Affine, sampler: &S,
     options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
-    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    rasterize_analytic(&workspace.edges[..edge_count], compositor.target.width,
-        compositor.target.height, options.fill_rule, AnalyticWorkspace {
-            intersections: workspace.intersections, row_coverage: workspace.row_coverage,
-        }, AnalyticBinWorkspace {
-            row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
-        },
-        &mut compositor)
+    render_path_analytic_to(path, transform, options, width, height,
+        &mut compositor, workspace)
 }
 
 /// Renders a solid analytic stroke without allocating intermediate geometry.
@@ -262,15 +257,10 @@ pub fn render_stroke_solid_analytic(path: &Path, transform: Affine, color: RGBA<
 pub fn render_stroke_paint_analytic<S: PaintSampler>(path: &Path, transform: Affine,
     sampler: &S, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
-    let AnalyticStrokeWorkspace {
-        points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
-    } = workspace;
-    let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
+    let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    rasterize_analytic(&edges[..edge_count], compositor.target.width,
-        compositor.target.height, FillRule::NonZero,
-        AnalyticWorkspace { intersections, row_coverage },
-        AnalyticBinWorkspace { row_offsets, edge_indices }, &mut compositor)
+    render_stroke_analytic_to(path, transform, options, width, height,
+        &mut compositor, workspace)
 }
 
 /// Renders a solid analytic stroke through an antialiased rectangle clip.
@@ -285,16 +275,10 @@ pub fn render_stroke_solid_analytic_clipped(path: &Path, transform: Affine, colo
 pub fn render_stroke_paint_analytic_clipped<S: PaintSampler>(path: &Path, transform: Affine,
     sampler: &S, clip: Rect, options: AnalyticStrokeOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
-    let AnalyticStrokeWorkspace {
-        points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
-    } = workspace;
-    let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
+    let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    rasterize_analytic(&edges[..edge_count], compositor.target.width,
-        compositor.target.height, FillRule::NonZero,
-        AnalyticWorkspace { intersections, row_coverage },
-        AnalyticBinWorkspace { row_offsets, edge_indices },
-        &mut RectClipSink::new(clip, &mut compositor))
+    render_stroke_analytic_to(path, transform, options, width, height,
+        &mut RectClipSink::new(clip, &mut compositor), workspace)
 }
 
 /// Renders a solid analytic stroke multiplied by a borrowed path clip mask.
@@ -315,16 +299,10 @@ pub fn render_stroke_paint_analytic_masked<S: PaintSampler>(path: &Path, transfo
             coverage: (mask.width(), mask.height()), target: (target.width, target.height),
         });
     }
-    let AnalyticStrokeWorkspace {
-        points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
-    } = workspace;
-    let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
+    let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    rasterize_analytic(&edges[..edge_count], compositor.target.width,
-        compositor.target.height, FillRule::NonZero,
-        AnalyticWorkspace { intersections, row_coverage },
-        AnalyticBinWorkspace { row_offsets, edge_indices },
-        &mut MaskClipSink::new(mask, &mut compositor))
+    render_stroke_analytic_to(path, transform, options, width, height,
+        &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
 /// Renders through the analytic reference rasterizer and an antialiased rectangle clip.
@@ -339,15 +317,10 @@ pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: RGBA
 pub fn render_paint_analytic_clipped<S: PaintSampler>(path: &Path, transform: Affine,
     sampler: &S, clip: Rect, options: AnalyticRenderOptions, target: &mut PixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
-    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    rasterize_analytic(&workspace.edges[..edge_count], compositor.target.width,
-        compositor.target.height, options.fill_rule, AnalyticWorkspace {
-            intersections: workspace.intersections, row_coverage: workspace.row_coverage,
-        }, AnalyticBinWorkspace {
-            row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
-        },
-        &mut RectClipSink::new(clip, &mut compositor))
+    render_path_analytic_to(path, transform, options, width, height,
+        &mut RectClipSink::new(clip, &mut compositor), workspace)
 }
 
 /// Rasterizes an analytic path clip into caller-owned 8-bit coverage.
@@ -385,15 +358,10 @@ pub fn render_paint_analytic_masked<S: PaintSampler>(path: &Path, transform: Aff
             coverage: (mask.width(), mask.height()), target: (target.width, target.height),
         });
     }
-    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    rasterize_analytic(&workspace.edges[..edge_count], compositor.target.width,
-        compositor.target.height, options.fill_rule, AnalyticWorkspace {
-            intersections: workspace.intersections, row_coverage: workspace.row_coverage,
-        }, AnalyticBinWorkspace {
-            row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
-        },
-        &mut MaskClipSink::new(mask, &mut compositor))
+    render_path_analytic_to(path, transform, options, width, height,
+        &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
 /// Renders prepared Q24.8 lines through the allocation-free fixed backend.
@@ -477,6 +445,32 @@ pub(crate) fn rasterize_analytic<S>(edges: &[Edge], width: u32, height: u32,
         .map_err(map_analytic_bin_error)?;
     rasterize_edges_analytic_binned(edges, bins, width, height, fill_rule,
         &mut workspace, sink).map_err(map_raster_error)
+}
+
+pub(crate) fn render_path_analytic_to<S>(path: &Path, transform: Affine,
+    options: AnalyticRenderOptions, width: u32, height: u32, sink: &mut S,
+    workspace: &mut AnalyticRenderWorkspace<'_>) ->
+    Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
+    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    rasterize_analytic(&workspace.edges[..edge_count], width, height, options.fill_rule,
+        AnalyticWorkspace {
+            intersections: workspace.intersections, row_coverage: workspace.row_coverage,
+        }, AnalyticBinWorkspace {
+            row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
+        }, sink)
+}
+
+pub(crate) fn render_stroke_analytic_to<S>(path: &Path, transform: Affine,
+    options: AnalyticStrokeOptions, width: u32, height: u32, sink: &mut S,
+    workspace: &mut AnalyticStrokeWorkspace<'_>) ->
+    Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
+    let AnalyticStrokeWorkspace {
+        points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
+    } = workspace;
+    let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
+    rasterize_analytic(&edges[..edge_count], width, height, FillRule::NonZero,
+        AnalyticWorkspace { intersections, row_coverage },
+        AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
 }
 
 fn map_analytic_bin_error(error: AnalyticBinError) -> RenderError {

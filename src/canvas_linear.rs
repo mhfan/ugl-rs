@@ -6,12 +6,12 @@
 //! framebuffer.
 
 use core::convert::Infallible;
-use crate::{analytic::{AnalyticBinWorkspace, AnalyticWorkspace},
+use crate::{
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
-        AnalyticStrokeWorkspace, PixmapMut, RenderError,
-        build_edges, build_stroke_edges, rasterize_analytic},
+        AnalyticStrokeWorkspace, PixmapMut, RenderError, render_path_analytic_to,
+        render_stroke_analytic_to},
     color::{LinearPremulRGBA, Srgb8Encoder, SRGBA}, geometry::{Affine, Path, Rect},
-    raster::{CoverageMask, CoverageSink, MaskClipSink, RectClipSink, FillRule},
+    raster::{CoverageMask, CoverageSink, MaskClipSink, RectClipSink},
     sampler::{LinearPaintSampler, SolidPaint},
 };
 
@@ -229,14 +229,10 @@ pub fn render_solid_analytic(path: &Path, transform: Affine, color: SRGBA<u8>,
 pub fn render_paint_analytic<S: LinearPaintSampler>(path: &Path, transform: Affine,
     sampler: &S, options: AnalyticRenderOptions, target: &mut LinearPixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
-    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    let (width, height) = (target.width, target.height);
     let mut compositor = LinearPaintCompositor { target, sampler };
-    rasterize_analytic(&workspace.edges[..edge_count], compositor.target.width,
-        compositor.target.height, options.fill_rule, AnalyticWorkspace {
-            intersections: workspace.intersections, row_coverage: workspace.row_coverage,
-        }, AnalyticBinWorkspace {
-            row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
-        }, &mut compositor)
+    render_path_analytic_to(path, transform, options, width, height,
+        &mut compositor, workspace)
 }
 
 pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
@@ -249,14 +245,10 @@ pub fn render_solid_analytic_clipped(path: &Path, transform: Affine, color: SRGB
 pub fn render_paint_analytic_clipped<S: LinearPaintSampler>(path: &Path, transform: Affine,
     sampler: &S, clip: Rect, options: AnalyticRenderOptions, target: &mut LinearPixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
-    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    let (width, height) = (target.width, target.height);
     let mut compositor = LinearPaintCompositor { target, sampler };
-    rasterize_analytic(&workspace.edges[..edge_count], compositor.target.width,
-        compositor.target.height, options.fill_rule, AnalyticWorkspace {
-            intersections: workspace.intersections, row_coverage: workspace.row_coverage,
-        }, AnalyticBinWorkspace {
-            row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
-        }, &mut RectClipSink::new(clip, &mut compositor))
+    render_path_analytic_to(path, transform, options, width, height,
+        &mut RectClipSink::new(clip, &mut compositor), workspace)
 }
 
 pub fn render_solid_analytic_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
@@ -271,14 +263,10 @@ pub fn render_paint_analytic_masked<S: LinearPaintSampler>(path: &Path,
     options: AnalyticRenderOptions, target: &mut LinearPixmapMut<'_>,
     workspace: &mut AnalyticRenderWorkspace<'_>) -> Result<(), RenderError> {
     validate_mask(mask, target)?;
-    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    let (width, height) = (target.width, target.height);
     let mut compositor = LinearPaintCompositor { target, sampler };
-    rasterize_analytic(&workspace.edges[..edge_count], compositor.target.width,
-        compositor.target.height, options.fill_rule, AnalyticWorkspace {
-            intersections: workspace.intersections, row_coverage: workspace.row_coverage,
-        }, AnalyticBinWorkspace {
-            row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
-        }, &mut MaskClipSink::new(mask, &mut compositor))
+    render_path_analytic_to(path, transform, options, width, height,
+        &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
 pub fn render_stroke_solid_analytic(path: &Path, transform: Affine, color: SRGBA<u8>,
@@ -291,9 +279,10 @@ pub fn render_stroke_solid_analytic(path: &Path, transform: Affine, color: SRGBA
 pub fn render_stroke_paint_analytic<S: LinearPaintSampler>(path: &Path, transform: Affine,
     sampler: &S, options: AnalyticStrokeOptions, target: &mut LinearPixmapMut<'_>,
     workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
-    render_stroke_with(path, transform, sampler, options, target, workspace, |sink|
-        rasterize_analytic(sink.edges, sink.width, sink.height,
-            FillRule::NonZero, sink.workspace, sink.bins, sink.output))
+    let (width, height) = (target.width, target.height);
+    let mut compositor = LinearPaintCompositor { target, sampler };
+    render_stroke_analytic_to(path, transform, options, width, height,
+        &mut compositor, workspace)
 }
 
 pub fn render_stroke_solid_analytic_clipped(path: &Path, transform: Affine,
@@ -308,9 +297,10 @@ pub fn render_stroke_paint_analytic_clipped<S: LinearPaintSampler>(path: &Path,
     transform: Affine, sampler: &S, clip: Rect, options: AnalyticStrokeOptions,
     target: &mut LinearPixmapMut<'_>, workspace: &mut AnalyticStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
-    render_stroke_with(path, transform, sampler, options, target, workspace, |sink|
-        rasterize_analytic(sink.edges, sink.width, sink.height, FillRule::NonZero,
-            sink.workspace, sink.bins, &mut RectClipSink::new(clip, sink.output)))
+    let (width, height) = (target.width, target.height);
+    let mut compositor = LinearPaintCompositor { target, sampler };
+    render_stroke_analytic_to(path, transform, options, width, height,
+        &mut RectClipSink::new(clip, &mut compositor), workspace)
 }
 
 pub fn render_stroke_solid_analytic_masked(path: &Path, transform: Affine,
@@ -326,32 +316,10 @@ pub fn render_stroke_paint_analytic_masked<S: LinearPaintSampler>(path: &Path,
     options: AnalyticStrokeOptions, target: &mut LinearPixmapMut<'_>,
     workspace: &mut AnalyticStrokeWorkspace<'_>) -> Result<(), RenderError> {
     validate_mask(mask, target)?;
-    render_stroke_with(path, transform, sampler, options, target, workspace, |sink|
-        rasterize_analytic(sink.edges, sink.width, sink.height, FillRule::NonZero,
-            sink.workspace, sink.bins, &mut MaskClipSink::new(mask, sink.output)))
-}
-
-struct StrokeRaster<'a, 'b, S> {
-    edges: &'a [crate::edge::Edge], width: u32, height: u32,
-    workspace: AnalyticWorkspace<'a>, bins: AnalyticBinWorkspace<'a>,
-    output: &'a mut LinearPaintCompositor<'a, 'b, S>,
-}
-
-fn render_stroke_with<S: LinearPaintSampler, F>(path: &Path, transform: Affine,
-    sampler: &S, options: AnalyticStrokeOptions, target: &mut LinearPixmapMut<'_>,
-    workspace: &mut AnalyticStrokeWorkspace<'_>, rasterize: F) -> Result<(), RenderError>
-    where F: FnOnce(StrokeRaster<'_, '_, S>) -> Result<(), RenderError> {
-    let AnalyticStrokeWorkspace {
-        points, contours, edges, intersections, row_coverage, row_offsets, edge_indices,
-    } = workspace;
-    let edge_count = build_stroke_edges(path, transform, options, points, contours, edges)?;
     let (width, height) = (target.width, target.height);
     let mut compositor = LinearPaintCompositor { target, sampler };
-    rasterize(StrokeRaster { edges: &edges[..edge_count], width, height,
-        workspace: AnalyticWorkspace { intersections, row_coverage },
-        bins: AnalyticBinWorkspace { row_offsets, edge_indices },
-        output: &mut compositor,
-    })
+    render_stroke_analytic_to(path, transform, options, width, height,
+        &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
 fn validate_mask(mask: CoverageMask<'_>, target: &LinearPixmapMut<'_>) ->
@@ -516,5 +484,35 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         target.encode_dirty_into(&mut PixmapMut::new(&mut bytes,
             48, 16, 192).unwrap()).unwrap();
         assert_eq!(&bytes[..4], &[9; 4]);
+    }
+
+    #[test] fn randomized_linear_source_over_matches_f64_reference() {
+        let mut pixel = [LinearPremulRGBA::default(); 1];
+        let mut target = LinearPixmapMut::new(&mut pixel, 1, 1, 1).unwrap();
+        let (mut state, mut reference) = (0xA341_316C_u32, [0.0_f64; 4]);
+        for _ in 0..4096 {
+            let next = |state: &mut u32| {
+                *state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (*state >> 24) as u8
+            };
+            let color = SRGBA::new(
+                next(&mut state), next(&mut state), next(&mut state), next(&mut state));
+            let coverage = next(&mut state);
+            let paint = SolidPaint::from_srgba(color);
+            target.blend_sampled_span(0, 0, 1, &paint, coverage);
+
+            let source = paint.linear_color().to_array().map(f64::from);
+            let factor = f64::from(coverage) / f64::from(u8::MAX);
+            let source = source.map(|channel| channel * factor);
+            let inverse = 1.0 - source[3];
+            for channel in 0..4 {
+                reference[channel] = source[channel] + reference[channel] * inverse;
+            }
+            let actual = target.pixel(0, 0).unwrap().to_array();
+            for channel in 0..4 {
+                assert!((f64::from(actual[channel]) - reference[channel]).abs() < 2e-6);
+            }
+            assert!(actual[0] <= actual[3] && actual[1] <= actual[3] && actual[2] <= actual[3]);
+        }
     }
 }

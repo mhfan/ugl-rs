@@ -1,9 +1,10 @@
 
-use ugl_rs::{analytic::AnalyticIntersection, color::{PremulRGBA, RGBA}, edge::Edge,
+use ugl_rs::{analytic::AnalyticIntersection, color::{LinearPremulRGBA, PremulRGBA, SRGBA, RGBA},
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, render_paint_analytic, render_solid_analytic,
         render_stroke_solid_analytic,
-    }, geometry::{Affine, PathBuilder}, raster::FillRule,
+    }, canvas_linear::{LinearPixmapMut, render_solid_analytic as render_solid_linear_analytic},
+    edge::Edge, geometry::{Affine, PathBuilder}, raster::FillRule,
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions},
     sampler::{GradientStop, GradientStops, LinearGradient, PaintSampler, SpreadMode},
 };
@@ -72,6 +73,30 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PremulRGBA<u8>; 16] {
     render_analytic_stroke_with(builder, StrokeOptions::default())
 }
 
+fn render_linear_layers(builder: PathBuilder, colors: &[SRGBA<u8>]) ->
+    [PremulRGBA<u8>; 16] {
+    let path = builder.build();
+    let mut linear = [LinearPremulRGBA::default(); 16];
+    let mut target = LinearPixmapMut::new(&mut linear, WIDTH, HEIGHT, WIDTH).unwrap();
+    let (mut edges, mut intersections, mut row_coverage) = (
+        [Edge::default(); 8], [AnalyticIntersection::default(); 8], [0.0; WIDTH as usize],
+    );
+    let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
+    for color in colors {
+        render_solid_linear_analytic(&path, Affine::identity(), *color,
+            AnalyticRenderOptions::default(), &mut target, &mut AnalyticRenderWorkspace {
+                edges: &mut edges, intersections: &mut intersections,
+                row_coverage: &mut row_coverage,
+                row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
+            }).unwrap();
+    }
+    let mut bytes = [0; 16 * 4];
+    let mut encoded = PixmapMut::new(&mut bytes, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+    target.encode_into(&mut encoded).unwrap();
+    core::array::from_fn(|index|
+        encoded.pixel(index as u32 % WIDTH, index as u32 / WIDTH).unwrap())
+}
+
 #[test] fn aligned_rectangle_rgba_golden() {
     let mut path = PathBuilder::new();
     path.move_to((1.0, 1.0)).line_to((3.0, 1.0))
@@ -95,6 +120,25 @@ fn render_analytic_stroke(builder: PathBuilder) -> [PremulRGBA<u8>; 16] {
     let solid: PremulRGBA<u8> = (13, 125, 25, 160).into();
     let half: PremulRGBA<u8> = (7, 63, 13, 80).into();
     assert_eq!(render_analytic(path, FillRule::NonZero), [
+        solid,       half,        transparent, transparent,
+        half,        transparent, transparent, transparent,
+        transparent, transparent, transparent, transparent,
+        transparent, transparent, transparent, transparent,
+    ]);
+}
+
+#[test] fn linear_source_over_and_fractional_coverage_rgba_golden() {
+    let mut rectangle = PathBuilder::new();
+    rectangle.move_to((0.0, 0.0)).line_to((4.0, 0.0))
+        .line_to((4.0, 4.0)).line_to((0.0, 4.0));
+    assert_eq!(render_linear_layers(rectangle,
+        &[SRGBA::blue(), SRGBA::new(255, 0, 0, 128)]), [(188, 0, 187, 255).into(); 16]);
+
+    let mut triangle = PathBuilder::new();
+    triangle.move_to((0.0, 0.0)).line_to((2.0, 0.0)).line_to((0.0, 2.0));
+    let (transparent, solid, half): (PremulRGBA<u8>, PremulRGBA<u8>, PremulRGBA<u8>) =
+        (PremulRGBA::zeroed(), (13, 125, 25, 160).into(), (6, 63, 13, 80).into());
+    assert_eq!(render_linear_layers(triangle, &[SRGBA::new(20, 200, 40, 160)]), [
         solid,       half,        transparent, transparent,
         half,        transparent, transparent, transparent,
         transparent, transparent, transparent, transparent,
