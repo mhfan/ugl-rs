@@ -203,6 +203,11 @@ and SIMD layouts do not enter the common `Edge` representation.
   `LinearPremulRGBA<f32>` ramp, avoiding transfer conversion and quantization.
   A 1024-entry linear ramp costs 16 KiB; `GradientStops::new` retains exact
   direct interpolation with no ramp storage for reference and MCU use.
+- `LinearPaintSampler::sample_linear_span` is the zero-allocation stepping
+  boundary. Its default preserves point sampling; linear gradients specialize
+  affine parameter stepping, and transformed paints map the span origin and
+  direction once. Radial/conic specializations require separate recurrences
+  and must remain equivalent to the general point sampler.
 
 ## Strokes
 

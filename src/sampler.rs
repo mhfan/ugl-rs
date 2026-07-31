@@ -36,6 +36,16 @@ pub trait PaintSampler {
 pub trait LinearPaintSampler {
     fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32>;
     fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> { None }
+
+    /// Samples an affine sequence without requiring caller-owned scratch.
+    ///
+    /// Implementations must call `emit` exactly `len` times, in order.
+    fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        mut emit: impl FnMut(LinearPremulRGBA<f32>)) {
+        for offset in 0..len {
+            emit(self.sample_linear(x + offset as f32 * dx, y + offset as f32 * dy));
+        }
+    }
 }
 
 impl<S: PaintSampler + ?Sized> PaintSampler for &S {
@@ -49,6 +59,10 @@ impl<S: LinearPaintSampler + ?Sized> LinearPaintSampler for &S {
     }
     fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> {
         (**self).solid_color_linear()
+    }
+    fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        emit: impl FnMut(LinearPremulRGBA<f32>)) {
+        (**self).sample_linear_span(x, y, dx, dy, len, emit)
     }
 }
 
@@ -89,6 +103,14 @@ impl<S: LinearPaintSampler> LinearPaintSampler for TransformedPaint<S> {
 
     fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> {
         self.sampler.solid_color_linear()
+    }
+
+    fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        emit: impl FnMut(LinearPremulRGBA<f32>)) {
+        let start = self.device_to_paint.transform_point((x, y).into());
+        let step = self.device_to_paint.transform_vector((dx, dy).into());
+        self.sampler.sample_linear_span(
+            start.x, start.y, step.x, step.y, len, emit);
     }
 }
 
@@ -280,6 +302,17 @@ impl LinearPaintSampler for LinearGradient<'_> {
         let t = ((x - self.from.x) * self.delta.x +
                  (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
         self.stops.sample_linear(self.spread.map(t))
+    }
+
+    fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        mut emit: impl FnMut(LinearPremulRGBA<f32>)) {
+        let start = ((x - self.from.x) * self.delta.x +
+                     (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
+        let step = (dx * self.delta.x + dy * self.delta.y) * self.inverse_length_squared;
+        for offset in 0..len {
+            emit(self.stops.sample_linear(
+                self.spread.map(start + offset as f32 * step)));
+        }
     }
 }
 
@@ -559,6 +592,36 @@ impl LinearPaintSampler for ConicGradient<'_> {
         let ellipse = TransformedPaint::new(radial,
             Affine::new(2.0, 0.0, 0.0, 1.0, 0.0, 0.0)).unwrap();
         assert_eq!(ellipse.sample(2.0, 0.0), ellipse.sample(0.0, 1.0));
+    }
+
+    #[test] fn linear_gradient_span_stepping_matches_point_sampling() {
+        fn assert_span<S: LinearPaintSampler>(sampler: &S, start: Point, step: Point) {
+            let mut actual = [LinearPremulRGBA::default(); 32];
+            let mut count = 0;
+            sampler.sample_linear_span(start.x, start.y, step.x, step.y, actual.len() as _,
+                |color| { actual[count] = color; count += 1; });
+            assert_eq!(count, actual.len());
+            for (offset, actual) in actual.into_iter().enumerate() {
+                let expected = sampler.sample_linear(
+                    start.x + offset as f32 * step.x,
+                    start.y + offset as f32 * step.y);
+                let (actual, expected) = (actual.to_array(), expected.to_array());
+                for channel in 0..4 {
+                    assert!((actual[channel] - expected[channel]).abs() <= 2.0 * f32::EPSILON,
+                        "offset={offset}, actual={actual:?}, expected={expected:?}");
+                }
+            }
+        }
+
+        let stops = red_blue_stops();
+        let stops = GradientStops::new(&stops).unwrap();
+        for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {
+            let gradient = LinearGradient::new((-2.0, 1.0), (5.0, 4.0), stops, spread).unwrap();
+            assert_span(&gradient, (-3.25, 2.75).into(), (0.5, -0.125).into());
+            let transformed = TransformedPaint::new(gradient,
+                Affine::new(1.5, 0.25, -0.5, 2.0, 3.0, -4.0)).unwrap();
+            assert_span(&transformed, (-3.25, 2.75).into(), (0.5, -0.125).into());
+        }
     }
 
     #[test] fn exact_gradient_samplers_encode_only_at_the_compatibility_boundary() {

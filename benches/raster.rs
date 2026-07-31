@@ -9,7 +9,9 @@ use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWork
     canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, AnalyticStrokeOptions,
         AnalyticStrokeWorkspace, PixmapMut, RenderOptions, RenderWorkspace,
         render_solid, render_solid_analytic, render_stroke_solid_analytic,
-    }, canvas_linear::{LinearPixmapMut, render_solid_analytic as render_solid_linear_analytic},
+    }, canvas_linear::{LinearPixmapMut,
+        render_paint_analytic as render_paint_linear_analytic,
+        render_solid_analytic as render_solid_linear_analytic},
     geometry::{Affine, Path, PathBuilder},
     sampler::{ConicGradient, GradientStop, GradientStops, LinearGradient, LinearPaintSampler,
         PaintSampler, RadialGradient, SolidPaint, SpreadMode},
@@ -17,6 +19,13 @@ use ugl_rs::{analytic::{AnalyticBinWorkspace, AnalyticIntersection, AnalyticWork
         flatten_stroke_path, stroke_polyline},
 };
 #[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
+struct PointLinearSampler<'a, S>(&'a S);
+
+impl<S: LinearPaintSampler> LinearPaintSampler for PointLinearSampler<'_, S> {
+    fn sample_linear(&self, x: f32, y: f32) -> LinearPremulRGBA<f32> {
+        self.0.sample_linear(x, y)
+    }
+}
 
 impl ugl_rs::raster::CoverageSink for RunCounter {
     type Error = core::convert::Infallible;
@@ -90,6 +99,40 @@ fn benchmark_f32(c: &mut Criterion) {
             render_solid_linear_analytic(&path, Affine::identity(),
                 SRGBA::new(40, 120, 220, 192), AnalyticRenderOptions::default(),
                 &mut target, &mut AnalyticRenderWorkspace {
+                    edges: &mut edges, intersections: &mut analytic_intersections,
+                    row_coverage: &mut row_coverage,
+                    row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+                }).unwrap();
+            black_box(&linear_pixels);
+        }));
+    let gradient_stops = [GradientStop::new(0.0, RGBA::new(240, 20, 80, 32)),
+                          GradientStop::new(1.0, RGBA::new(30, 60, 250, 224))];
+    let mut gradient_ramp = vec![LinearPremulRGBA::default(); 1024];
+    let gradient = LinearGradient::new((0.0, 0.0), (WIDTH as _, HEIGHT as _),
+        GradientStops::with_linear_ramp(&gradient_stops, &mut gradient_ramp).unwrap(),
+        SpreadMode::Pad).unwrap();
+    group.bench_function(BenchmarkId::new("analytic_linear_gradient_point", "64_rectangles"),
+        |b| b.iter(|| {
+            linear_pixels.fill(LinearPremulRGBA::default());
+            let mut target =
+                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            render_paint_linear_analytic(&path, Affine::identity(),
+                &PointLinearSampler(&gradient), AnalyticRenderOptions::default(),
+                &mut target, &mut AnalyticRenderWorkspace {
+                    edges: &mut edges, intersections: &mut analytic_intersections,
+                    row_coverage: &mut row_coverage,
+                    row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+                }).unwrap();
+            black_box(&linear_pixels);
+        }));
+    group.bench_function(BenchmarkId::new("analytic_linear_gradient", "64_rectangles"),
+        |b| b.iter(|| {
+            linear_pixels.fill(LinearPremulRGBA::default());
+            let mut target =
+                LinearPixmapMut::new(&mut linear_pixels, WIDTH, HEIGHT, WIDTH).unwrap();
+            render_paint_linear_analytic(&path, Affine::identity(), &gradient,
+                AnalyticRenderOptions::default(), &mut target,
+                &mut AnalyticRenderWorkspace {
                     edges: &mut edges, intersections: &mut analytic_intersections,
                     row_coverage: &mut row_coverage,
                     row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
@@ -402,6 +445,15 @@ fn sample_linear_checksum(sampler: &impl LinearPaintSampler) -> u64 {
             checksum = color.to_array().into_iter().fold(checksum,
                 |checksum, channel| checksum.rotate_left(7) ^ channel.to_bits() as u64);
         }
+}       checksum
+}
+
+fn sample_linear_span_checksum(sampler: &impl LinearPaintSampler) -> u64 {
+    let mut checksum = 0_u64;
+    for y in 0..HEIGHT {
+        sampler.sample_linear_span(0.5, y as f32 + 0.5, 1.0, 0.0, WIDTH,
+            |color| checksum = color.to_array().into_iter().fold(checksum,
+                |checksum, channel| checksum.rotate_left(7) ^ channel.to_bits() as u64));
     }       checksum
 }
 
@@ -437,7 +489,10 @@ fn benchmark_paint(c: &mut Criterion) {
     let mut group = c.benchmark_group("paint_sample_linear");
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
     group.bench_function("solid",  |b| b.iter(|| black_box(sample_linear_checksum(&solid))));
-    group.bench_function("linear", |b| b.iter(|| black_box(sample_linear_checksum(&linear))));
+    group.bench_function("linear_point",
+        |b| b.iter(|| black_box(sample_linear_checksum(&linear))));
+    group.bench_function("linear_span",
+        |b| b.iter(|| black_box(sample_linear_span_checksum(&linear))));
     group.bench_function("radial", |b| b.iter(|| black_box(sample_linear_checksum(&radial))));
     group.bench_function("conic",  |b| b.iter(|| black_box(sample_linear_checksum(&conic))));
     group.finish();

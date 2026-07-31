@@ -126,6 +126,15 @@ the smaller exact path for MCU/reference use. A short Criterion diagnostic on
 linear ramp versus 627.4 µs with exact stop lookup over 65,536 samples
 (approximately 3.0× faster).
 
+The linear sampler also exposes allocation-free affine span sampling.
+`LinearGradient` computes one start parameter and one per-pixel step;
+`TransformedPaint` maps both into paint space once per span. A short diagnostic
+measured 65,536 ramp samples at about 200.3 µs through the span path versus
+211.6 µs point-by-point. In the 64-rectangle analytic render benchmark, span
+stepping reduced linear-gradient rendering from about 443.1 µs to 409.2 µs
+(approximately 7.7%). General radial and conic paints retain the point-sampling
+fallback until dedicated, equivalence-tested recurrences are available.
+
 These are scalar reference costs, not optimized paint targets. In particular,
 the general radial sampler performs stable two-circle root solving per pixel;
 future specialized concentric/span-stepping paths must retain byte-equivalent

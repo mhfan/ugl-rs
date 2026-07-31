@@ -192,12 +192,12 @@ impl<'a> LinearPixmapMut<'a> {
             }   return;
         }
         let row = y as usize * self.stride as usize;
-        for pixel_x in x..x + len {
-            let source = sampler.sample_linear(pixel_x as f32 + 0.5, y as f32 + 0.5)
-                .scale(factor);
-            let pixel = &mut self.data[row + pixel_x as usize];
-            *pixel = source.src_over(*pixel);
-        }
+        let pixels = &mut self.data[row + x as usize..row + (x + len) as usize];
+        let mut pixels = pixels.iter_mut();
+        sampler.sample_linear_span(x as f32 + 0.5, y as f32 + 0.5, 1.0, 0.0, len,
+            |source| if let Some(pixel) = pixels.next() {
+                *pixel = source.scale(factor).src_over(*pixel);
+            });
     }
 
     fn mark_dirty_span(&mut self, x: u32, y: u32, len: u32) {

@@ -84,6 +84,12 @@ impl<T> Affine<T> {
         (self.a * point.x + self.c * point.y + self.e,
          self.b * point.x + self.d * point.y + self.f).into()
     }
+
+    pub fn transform_vector(&self, vector: Point<T>) -> Point<T>
+        where T: Copy + Add<Output = T> + Mul<Output = T> {
+        (self.a * vector.x + self.c * vector.y,
+         self.b * vector.x + self.d * vector.y).into()
+    }
 }
 
 impl<T> Affine<T> where T: Copy + ScalarConstants {
@@ -246,6 +252,7 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
     #[test] fn affine_uses_documented_column_vector_convention() {
         let transform = Affine::new(2.0, 0.5, -1.0, 3.0, 4.0, -2.0);
         assert_eq!(transform.transform_point((3.0, 2.0).into()), (8.0, 5.5).into());
+        assert_eq!(transform.transform_vector((3.0, 2.0).into()), (4.0, 7.5).into());
         let restored = transform.inverse().unwrap()
             .transform_point(transform.transform_point((3.0, 2.0).into()));
         assert!((restored.x - 3.0).abs() < 1e-6 && (restored.y - 2.0).abs() < 1e-6);
