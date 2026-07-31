@@ -1,15 +1,17 @@
 //! No-FPU stroke expansion for Q24.8 polylines.
 
 use crate::{edge::{Edge, EdgeSink}, geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar, Point},
-    math::integer_sqrt_u64, stroke::{LineCap, LineJoin}};
+    math::{FixedAngle, cordic_turn, cordic_unit_vector, integer_sqrt_u64},
+    stroke::{LineCap, LineJoin}};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FixedStrokeError {
-    NonPositiveWidth, WidthOutOfRange, MiterLimitTooSmall,
+    NonPositiveWidth, WidthOutOfRange, MiterLimitTooSmall, RoundSegmentLimitZero,
 }
 
 /// Validated Q24.8 stroke parameters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub struct FixedStrokeOptions {
-    width: i32, miter_limit: i32, cap: LineCap, join: LineJoin,
+    width: i32, miter_limit: i32, round_segments: u16,
+    cap: LineCap, join: LineJoin,
 }
 
 impl FixedStrokeOptions {
@@ -29,21 +31,28 @@ impl FixedStrokeOptions {
         self.miter_limit = limit.to_bits();   Ok(self)
     }
 
+    /// Sets the number of segments used for a half circle.
+    pub fn with_round_segments(mut self, segments: u16) -> Result<Self, FixedStrokeError> {
+        if segments == 0 { return Err(FixedStrokeError::RoundSegmentLimitZero); }
+        self.round_segments = segments;   Ok(self)
+    }
+
     pub fn width(&self) -> FixedScalar { FixedScalar::from_bits(self.width) }
     pub fn miter_limit(&self) -> FixedScalar { FixedScalar::from_bits(self.miter_limit) }
     pub fn cap(&self) -> LineCap { self.cap }
     pub fn join(&self) -> LineJoin { self.join }
+    pub fn round_segments(&self) -> u16 { self.round_segments }
 }
 
 impl Default for FixedStrokeOptions {
     fn default() -> Self { Self {
         width: FixedScalar::ONE.to_bits(), miter_limit: FixedScalar::ONE.to_bits() * 4,
-        cap: LineCap::Butt, join: LineJoin::Miter,
+        round_segments: 8, cap: LineCap::Butt, join: LineJoin::Miter,
     } }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum FixedStrokeExpandError<E> {
-    CoordinateOutOfRange, UnsupportedRound, Sink(E),
+    CoordinateOutOfRange, Sink(E),
 }
 
 #[derive(Clone, Copy)] struct Direction { dx: i64, dy: i64, length: u64 }
@@ -56,14 +65,10 @@ pub fn stroke_line_fixed<S: EdgeSink<FixedScalar>>(from: Point<FixedScalar>,
 
 /// Expands a fixed open or closed polyline into consistently wound fill edges.
 ///
-/// Butt/square caps and bevel/miter joins are supported without floating point.
-/// Round geometry returns `UnsupportedRound` before writing to `sink`.
+/// All cap and join styles are supported without floating point.
 pub fn stroke_polyline_fixed<S: EdgeSink<FixedScalar>>(points: &[Point<FixedScalar>],
     closed: bool, options: FixedStrokeOptions, sink: &mut S) ->
     Result<(), FixedStrokeExpandError<S::Error>> {
-    if options.cap == LineCap::Round || options.join == LineJoin::Round {
-        return Err(FixedStrokeExpandError::UnsupportedRound);
-    }
     if points.iter().any(|point| !point_in_range(*point)) {
         return Err(FixedStrokeExpandError::CoordinateOutOfRange);
     }
@@ -81,9 +86,12 @@ pub fn stroke_polyline_fixed<S: EdgeSink<FixedScalar>>(points: &[Point<FixedScal
     }
     let (Some((first_point, first_direction)), Some((last_point, last_direction))) =
         (first, previous) else {
-            return if closed || options.cap == LineCap::Butt {
-                Ok(())
-            } else { emit_square_point(point, options.width, sink) };
+            if closed { return Ok(()) }
+            return match options.cap {
+                LineCap::Butt => Ok(()),
+                LineCap::Square => emit_square_point(point, options.width, sink),
+                LineCap::Round => emit_round_point(point, options, sink),
+            };
         };
     if closed {
         emit_join(first_point, last_direction, first_direction, options, sink)
@@ -152,6 +160,15 @@ fn emit_cap<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>, direction: Dire
     start: bool, options: FixedStrokeOptions, sink: &mut S) ->
     Result<(), FixedStrokeExpandError<S::Error>> {
     if options.cap == LineCap::Butt { return Ok(()) }
+    if options.cap == LineCap::Round {
+        let tangent = cordic_turn(direction.dx, direction.dy);
+        let start_angle = tangent.wrapping_sub(FixedAngle::QUARTER_TURN.to_bits());
+        let sweep = if start {
+            -(FixedAngle::HALF_TURN.to_bits() as i64)
+        } else { FixedAngle::HALF_TURN.to_bits() as i64 };
+        return emit_round_wedge(point, options.width, start_angle, sweep,
+            options.round_segments as _, sink);
+    }
     let sign = if start { -1 } else { 1 };
     let denominator = direction.length as i128 * 2;
     let (dx, dy) = (
@@ -173,6 +190,20 @@ fn emit_square_point<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>, width:
     ], sink)
 }
 
+fn emit_round_point<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>,
+    options: FixedStrokeOptions, sink: &mut S) ->
+    Result<(), FixedStrokeExpandError<S::Error>> {
+    let segments = options.round_segments as usize * 2;
+    let mut contour = FixedEdgeContour::new(sink);
+    contour.point(circle_point(point, options.width, FixedAngle::ZERO)?)?;
+    for index in 1..segments {
+        let angle = ((index as u64) << 32) / segments as u64;
+        contour.point(circle_point(point, options.width,
+            FixedAngle::from_bits(angle as _))?)?;
+    }
+    contour.close()
+}
+
 fn emit_join<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>,
     before: Direction, after: Direction, options: FixedStrokeOptions, sink: &mut S) ->
     Result<(), FixedStrokeExpandError<S::Error>> {
@@ -184,8 +215,25 @@ fn emit_join<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>,
     let (after_x, after_y) = normal(after, options.width);
     let before_outer = offset(point, before_x * side, before_y * side)?;
     let after_outer = offset(point, after_x * side, after_y * side)?;
-    if options.join == LineJoin::Bevel {
-        return emit_polygon(&[point, before_outer, after_outer], sink);
+    match options.join {
+        LineJoin::Bevel =>
+            return emit_polygon(&[point, before_outer, after_outer], sink),
+        LineJoin::Round => {
+            let start = cordic_turn(
+                before_outer.x.to_bits() as i64 - point.x.to_bits() as i64,
+                before_outer.y.to_bits() as i64 - point.y.to_bits() as i64);
+            let end = cordic_turn(
+                after_outer.x.to_bits() as i64 - point.x.to_bits() as i64,
+                after_outer.y.to_bits() as i64 - point.y.to_bits() as i64);
+            let sweep = if cross > 0 {
+                end.wrapping_sub(start) as i64
+            } else { -(start.wrapping_sub(end) as i64) };
+            let segments = (options.round_segments as u64 * sweep.unsigned_abs())
+                .div_ceil(FixedAngle::HALF_TURN.to_bits() as u64).max(1) as usize;
+            return emit_round_wedge(
+                point, options.width, start, sweep, segments, sink);
+        }
+        LineJoin::Miter => {}
     }
     let (delta_x, delta_y) = (
         after_outer.x.to_bits() as i128 - before_outer.x.to_bits() as i128,
@@ -204,6 +252,29 @@ fn emit_join<S: EdgeSink<FixedScalar>>(point: Point<FixedScalar>,
     } else { emit_polygon(&[point, before_outer, after_outer], sink) }
 }
 
+fn circle_point<E>(center: Point<FixedScalar>, width: i32, angle: FixedAngle) ->
+    Result<Point<FixedScalar>, FixedStrokeExpandError<E>> {
+    let (cosine, sine) = cordic_unit_vector(angle);
+    let denominator = 2_i128 << 30;
+    offset(center,
+        round_ratio(cosine as i128 * width as i128, denominator),
+        round_ratio(  sine as i128 * width as i128, denominator))
+}
+
+fn emit_round_wedge<S: EdgeSink<FixedScalar>>(center: Point<FixedScalar>, width: i32,
+    start: u32, sweep: i64, segments: usize, sink: &mut S) ->
+    Result<(), FixedStrokeExpandError<S::Error>> {
+    let mut contour = FixedEdgeContour::new(sink);
+    contour.point(center)?;
+    contour.point(circle_point(center, width, FixedAngle::from_bits(start))?)?;
+    for index in 1..=segments {
+        let offset = sweep as i128 * index as i128 / segments as i128;
+        contour.point(circle_point(center, width,
+            FixedAngle::from_bits(start.wrapping_add(offset as _)))?)?;
+    }
+    contour.close()
+}
+
 fn emit_polygon<S: EdgeSink<FixedScalar>>(points: &[Point<FixedScalar>], sink: &mut S) ->
     Result<(), FixedStrokeExpandError<S::Error>> {
     for pair in points.windows(2) {
@@ -216,6 +287,34 @@ fn emit_polygon<S: EdgeSink<FixedScalar>>(points: &[Point<FixedScalar>], sink: &
         sink.edge(edge).map_err(FixedStrokeExpandError::Sink)?;
     }
     Ok(())
+}
+
+struct FixedEdgeContour<'a, S> {
+    sink: &'a mut S, first: Option<Point<FixedScalar>>, previous: Option<Point<FixedScalar>>,
+}
+
+impl<'a, S> FixedEdgeContour<'a, S> {
+    fn new(sink: &'a mut S) -> Self { Self { sink, first: None, previous: None } }
+}
+
+impl<S: EdgeSink<FixedScalar>> FixedEdgeContour<'_, S> {
+    fn point(&mut self, point: Point<FixedScalar>) ->
+        Result<(), FixedStrokeExpandError<S::Error>> {
+        if let Some(previous) = self.previous {
+            if let Some(edge) = Edge::from_line(previous, point) {
+                self.sink.edge(edge).map_err(FixedStrokeExpandError::Sink)?;
+            }
+        } else { self.first = Some(point); }
+        self.previous = Some(point);   Ok(())
+    }
+
+    fn close(self) -> Result<(), FixedStrokeExpandError<S::Error>> {
+        if let (Some(previous), Some(first)) = (self.previous, self.first)
+            && let Some(edge) = Edge::from_line(previous, first) {
+            self.sink.edge(edge).map_err(FixedStrokeExpandError::Sink)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)] mod tests { use super::*;
@@ -292,17 +391,27 @@ fn emit_polygon<S: EdgeSink<FixedScalar>>(points: &[Point<FixedScalar>], sink: &
         assert!(!collect(&[(1.0, 2.0), (5.0, 2.0)], true, base).is_empty());
     }
 
-    #[test] fn fixed_stroke_rejects_unsupported_and_out_of_range_before_writing() {
+    #[test] fn fixed_round_caps_and_joins_are_bounded_and_configurable() {
+        let base = FixedStrokeOptions::new(fixed(2.0)).unwrap()
+            .with_round_segments(8).unwrap();
+        let round = collect(&[(2.0, 3.0), (6.0, 3.0)], false,
+            base.with_cap(LineCap::Round));
+        assert_eq!(x_bounds(&round), (fixed(1.0), fixed(7.0)));
+        let point = collect(&[(4.0, 5.0)], false, base.with_cap(LineCap::Round));
+        assert_eq!(x_bounds(&point), (fixed(3.0), fixed(5.0)));
+
+        let points = [(2.0, 4.0), (4.0, 4.0), (4.0, 6.0)];
+        let bevel = collect(&points, false, base.with_join(LineJoin::Bevel));
+        let round = collect(&points, false, base.with_join(LineJoin::Round));
+        assert!(round.len() > bevel.len());
+        assert_eq!(base.with_round_segments(0),
+            Err(FixedStrokeError::RoundSegmentLimitZero));
+    }
+
+    #[test] fn fixed_stroke_rejects_out_of_range_before_writing() {
         assert_eq!(FixedStrokeOptions::new(FixedScalar::ZERO),
             Err(FixedStrokeError::NonPositiveWidth));
         let mut edges = Vec::new();
-        let round = FixedStrokeOptions::default().with_cap(LineCap::Round);
-        assert_eq!(stroke_line_fixed((fixed(0.0), fixed(0.0)).into(),
-            (fixed(1.0), fixed(0.0)).into(), round, &mut |edge| {
-                edges.push(edge); Ok::<_, Infallible>(())
-            }), Err(FixedStrokeExpandError::UnsupportedRound));
-        assert!(edges.is_empty());
-
         let outside = FixedScalar::from_bits(FIXED_DEVICE_RAW_LIMIT + 1);
         assert_eq!(stroke_line_fixed((outside, fixed(0.0)).into(),
             (fixed(1.0), fixed(0.0)).into(), FixedStrokeOptions::default(),

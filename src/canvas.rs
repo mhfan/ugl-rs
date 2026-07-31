@@ -212,7 +212,6 @@ pub struct AnalyticStrokeOptions {
     AnalyticBinOffsetCapacity { required: usize },
     AnalyticBinIndexCapacity { required: usize },
     #[cfg(feature = "fixed")] FixedRaster(FixedRasterError),
-    #[cfg(feature = "fixed")] FixedStrokeUnsupportedRound,
     RasterWorkspaceTooSmall { intersections: usize, row_coverage: usize },
     CoverageDimensionsMismatch { coverage: (u32, u32), target: (u32, u32), },
 }
@@ -786,7 +785,6 @@ fn map_fixed_stroke_expand_error(error: FixedStrokeExpandError<EdgeCapacity>) ->
     match error {
         FixedStrokeExpandError::CoordinateOutOfRange =>
             RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
-        FixedStrokeExpandError::UnsupportedRound => RenderError::FixedStrokeUnsupportedRound,
         FixedStrokeExpandError::Sink(error) =>
             RenderError::EdgeCapacity { needed_at_least: error.needed_at_least },
     }

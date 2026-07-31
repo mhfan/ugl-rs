@@ -21,6 +21,10 @@ use crate::{color::{EncodedPremulSRGBA8, LinearPremulRGBA, SRGBA, RGBA},
 use crate::geometry::{FIXED_DEVICE_RAW_LIMIT, FixedScalar};
 #[cfg(feature = "fixed")]
 use crate::math::{integer_sqrt_u64, scaled_integer_sqrt};
+#[cfg(feature = "fixed")]
+use crate::math::cordic_turn;
+#[cfg(feature = "fixed")]
+pub use crate::math::FixedAngle;
 #[cfg(all(feature = "fixed", test))]
 use crate::math::integer_sqrt;
 
@@ -730,25 +734,6 @@ impl LinearPaintSampler for RadialGradient<'_> {
     }
 }
 
-/// Unsigned binary angle where the complete `u32` range represents one turn.
-#[cfg(feature = "fixed")]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub struct FixedAngle(u32);
-
-#[cfg(feature = "fixed")] impl FixedAngle {
-    pub const ZERO: Self = Self(0);
-    pub const QUARTER_TURN: Self = Self(1 << 30);
-    pub const HALF_TURN: Self = Self(1 << 31);
-    pub const THREE_QUARTER_TURN: Self = Self(3 << 30);
-
-    pub const fn from_bits(bits: u32) -> Self { Self(bits) }
-    pub const fn from_turn_fraction(numerator: u32, denominator: u32) -> Option<Self> {
-        if denominator == 0 { return None; }
-        let turns = ((numerator as u64) << 32) / denominator as u64;
-        Some(Self(turns as u32))
-    }
-    pub const fn to_bits(self) -> u32 { self.0 }
-}
-
 /// Allocation-free, no-FPU conic gradient using a 16-step integer CORDIC.
 #[cfg(feature = "fixed")]
 #[derive(Clone, Copy, Debug)] pub struct FixedConicGradient<'a> {
@@ -794,47 +779,6 @@ impl LinearPaintSampler for RadialGradient<'_> {
         self.ramp_index(x, y).map_or_else(EncodedPremulSRGBA8::zeroed,
             |index| self.ramp[index])
     }
-}
-
-#[cfg(feature = "fixed")]
-fn cordic_turn(mut x: i64, mut y: i64) -> u32 {
-    // Round atan(2^-i) / (2π) to the nearest binary-turn `u32`.
-    const ATAN_TURNS: [i64; 16] = [
-        0x2000_0000, 0x12e4_051d, 0x09fb_385b, 0x0511_11d4,
-        0x028b_0d43, 0x0145_d7e1, 0x00a2_f61e, 0x0051_7c55,
-        0x0028_be53, 0x0014_5f2f, 0x000a_2f98, 0x0005_17cc,
-        0x0002_8be6, 0x0001_45f3, 0x0000_a2fa, 0x0000_517d,
-    ];
-    if y == 0 { return if x < 0 { FixedAngle::HALF_TURN.0 } else { 0 }; }
-    if x == 0 {
-        return if y < 0 {
-            FixedAngle::THREE_QUARTER_TURN.0
-        } else { FixedAngle::QUARTER_TURN.0 };
-    }
-    let magnitude = x.unsigned_abs().max(y.unsigned_abs());
-    let shift = 48_u32.saturating_sub(64 - magnitude.leading_zeros());
-    x <<= shift;
-    y <<= shift;
-    let mut angle = 0_i64;
-    if x < 0 {
-        x = -x;
-        y = -y;
-        angle = FixedAngle::HALF_TURN.0 as _;
-    }
-    for (shift, increment) in ATAN_TURNS.into_iter().enumerate() {
-        if y == 0 { break; }
-        let (old_x, old_y) = (x, y);
-        if old_y > 0 {
-            x = old_x + (old_y >> shift);
-            y = old_y - (old_x >> shift);
-            angle += increment;
-        } else {
-            x = old_x - (old_y >> shift);
-            y = old_y + (old_x >> shift);
-            angle -= increment;
-        }
-    }
-    angle.rem_euclid(1_i64 << 32) as _
 }
 
 /// A full-turn conic gradient around `center`.

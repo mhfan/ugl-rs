@@ -52,8 +52,8 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | `f32` fill and clipping | Reference path implemented and allocation-free |
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Undashed caps/joins reference implemented; reliability work continues |
-| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, native fixed gradients, and non-round fixed strokes implemented |
-| Production readiness | Pre-release: broader fuzzing, golden scenes, fixed round stroke, and real-device validation remain |
+| Fixed point | Q24.8 raster, sparse strips/tiles, clipping, native fixed gradients, and all fixed stroke caps/joins implemented |
+| Production readiness | Pre-release: broader fuzzing, golden scenes, fixed path flattening/dashes, and real-device validation remain |
 
 ## Architecture at a glance
 
@@ -415,11 +415,13 @@ cross-renderer performance comparison.
 
 The no-FPU `stroke_expand_fixed` group measures a 64-point Q24.8 zig-zag with
 square caps and miter joins, excluding rasterization and destination writes.
-A short 10-sample diagnostic on 2026-07-31 measured about 3.23 µs
-(19.8 million input points/s). The fixed stroker currently supports butt and
-square caps plus bevel and miter joins; round caps/joins return
-`UnsupportedRound` before emitting edges. Its end-to-end canvas entry borrows
-both edge and prepared-line storage and feeds the native fixed paint pipeline.
+A short 10-sample diagnostic on 2026-07-31 measured Square/Miter at about
+3.23 µs (19.8 million input points/s) and Round at about 18.26 µs
+(3.51 million input points/s). Round geometry defaults to eight segments per
+half circle and uses the shared integer CORDIC; callers can trade edge capacity
+and the explicit chord-error bound with `with_round_segments`. The end-to-end
+canvas entry borrows both edge and prepared-line storage and feeds the native
+fixed paint pipeline.
 
 The `analytic_active` group isolates binned scan conversion from path expansion
 and pixel compositing. A 1-second/10-sample diagnostic run on 2026-07-31

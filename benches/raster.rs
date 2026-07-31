@@ -695,12 +695,21 @@ fn benchmark_paint(c: &mut Criterion) {
          FixedScalar::from_num(if index & 1 == 0 { 96 } else { 112 })).into()).collect();
     let stroke_options = FixedStrokeOptions::new(FixedScalar::from_num(3)).unwrap()
         .with_cap(LineCap::Square).with_join(LineJoin::Miter);
+    let round_stroke_options = stroke_options
+        .with_cap(LineCap::Round).with_join(LineJoin::Round);
     let mut stroke_edges = Vec::with_capacity(512);
     let mut stroke_group = c.benchmark_group("stroke_expand_fixed");
     stroke_group.throughput(Throughput::Elements(stroke_points.len() as _));
     stroke_group.bench_function("square_miter_64", |b| b.iter(|| {
         stroke_edges.clear();
         stroke_polyline_fixed(&stroke_points, false, stroke_options, &mut |edge| {
+            stroke_edges.push(edge); Ok::<_, core::convert::Infallible>(())
+        }).unwrap();
+        black_box(&stroke_edges);
+    }));
+    stroke_group.bench_function("round_64", |b| b.iter(|| {
+        stroke_edges.clear();
+        stroke_polyline_fixed(&stroke_points, false, round_stroke_options, &mut |edge| {
             stroke_edges.push(edge); Ok::<_, core::convert::Infallible>(())
         }).unwrap();
         black_box(&stroke_edges);
