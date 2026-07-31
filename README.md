@@ -124,9 +124,11 @@ let pixels = canvas.target().as_bytes();
 `Canvas::from_buffer` renders into caller-owned storage when integrating with a
 window surface, framebuffer, or existing image. `target()` and `target_mut()`
 provide dimensions and raw pixel access without exposing raster scratch.
-`save()` and `restore()` preserve transform, paint, stroke, fill, and clip
-state. Consecutive `set_clip_rect`, `set_clip_mask`, and `set_clip_path` calls
-intersect with the current clip; `clear_clip()` explicitly resets it.
+`save()` and `restore()` preserve transform, paint, global alpha, stroke, fill,
+and clip state. `set_global_alpha` uses the RGBA8 opacity range `0..=255` and
+applies uniformly to solid and custom paints. Consecutive `set_clip_rect`,
+`set_clip_mask`, and `set_clip_path` calls intersect with the current clip;
+`clear_clip()` explicitly resets it.
 
 `Context` is the allocation-free facade for callers that provide bounded
 scratch explicitly. The lower-level `canvas::*` functions expose individual

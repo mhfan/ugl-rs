@@ -2,7 +2,7 @@
 
 use crate::{
     canvas::{Pixmap, RenderError},
-    color::{PremulSRGBA8, SRGBA}, context::{Clip, DrawState},
+    color::{PremulSRGBA8, SRGBA}, context::{Clip, DrawState, GlobalAlphaPaint},
     dash::DashContour, fixed::{Scalar, canvas::{DashedStrokePathOptions,
             DashedStrokeRequirements, DashedStrokeWorkspace, GeometryWorkspace,
             RenderOptions, RenderRequirements, StrokePathOptions,
@@ -64,6 +64,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
                 flatten: FlattenOptions::default(),
                 stroke: StrokeOptions::default(),
                 paint: SolidPaint(SRGBA::black().premul_encoded()),
+                global_alpha: u8::MAX,
             },
             clip: Clip::None,
         }
@@ -75,6 +76,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
     pub fn fill_rule(&self) -> FillRule { self.state.fill_rule }
     pub fn flatten(&self) -> FlattenOptions { self.state.flatten }
     pub fn stroke_options(&self) -> StrokeOptions { self.state.stroke }
+    pub fn global_alpha(&self) -> u8 { self.state.global_alpha }
 
     pub fn set_transform(&mut self, transform: Affine<Scalar>) -> &mut Self {
         self.state.transform = transform; self
@@ -94,6 +96,11 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
 
     pub fn set_color(&mut self, color: SRGBA<u8>) -> &mut Self {
         self.state.paint = SolidPaint(color.premul_encoded()); self
+    }
+
+    /// Sets the global opacity applied with integer arithmetic (`255` is opaque).
+    pub fn set_global_alpha(&mut self, alpha: u8) -> &mut Self {
+        self.state.global_alpha = alpha; self
     }
 
     pub fn clear_clip(&mut self) -> &mut Self { self.clip = Clip::None; self }
@@ -127,13 +134,14 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             transform: self.state.transform, flatten: self.state.flatten,
             fill_rule: self.state.fill_rule,
         }, self.clip);
-        let workspace = &mut self.workspace;
+        let (workspace, paint) = (&mut self.workspace,
+            GlobalAlphaPaint::new(paint, self.state.global_alpha));
         match clip {
-            Clip::None => render_path(path, paint, options, self.target,
+            Clip::None => render_path(path, &paint, options, self.target,
                 &mut workspace.geometry, &mut workspace.raster),
-            Clip::Rect(rect) => render_path_clipped(path, paint, rect, options,
+            Clip::Rect(rect) => render_path_clipped(path, &paint, rect, options,
                 self.target, &mut workspace.geometry, &mut workspace.raster),
-            Clip::Mask(mask) => render_path_masked(path, paint, mask, options,
+            Clip::Mask(mask) => render_path_masked(path, &paint, mask, options,
                 self.target, &mut workspace.geometry, &mut workspace.raster),
         }
     }
@@ -158,17 +166,18 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             transform: self.state.transform, flatten: self.state.flatten,
             stroke: self.state.stroke,
         }, self.clip);
-        let workspace = &mut self.workspace;
+        let (workspace, paint) = (&mut self.workspace,
+            GlobalAlphaPaint::new(paint, self.state.global_alpha));
         let usage = prepare_stroke_path(
             path, options, &mut workspace.path, &mut workspace.geometry)?;
         let lines = &workspace.geometry.lines[..usage.lines];
         match clip {
             Clip::None => render_paint(
-                lines, paint, FillRule::NonZero, self.target, &mut workspace.raster),
+                lines, &paint, FillRule::NonZero, self.target, &mut workspace.raster),
             Clip::Rect(rect) => render_paint_clipped(
-                lines, paint, rect, FillRule::NonZero, self.target, &mut workspace.raster),
+                lines, &paint, rect, FillRule::NonZero, self.target, &mut workspace.raster),
             Clip::Mask(mask) => render_paint_masked(
-                lines, paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
+                lines, &paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
         }
     }
 
@@ -199,7 +208,8 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             },
             dash,
         }, self.clip);
-        let workspace = &mut self.workspace;
+        let (workspace, paint) = (&mut self.workspace,
+            GlobalAlphaPaint::new(paint, self.state.global_alpha));
         let mut dashed = DashedStrokeWorkspace {
             path: StrokePathWorkspace {
                 points: workspace.path.points, contours: workspace.path.contours,
@@ -214,11 +224,11 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         let lines = &dashed.geometry.lines[..usage.lines];
         match clip {
             Clip::None => render_paint(
-                lines, paint, FillRule::NonZero, self.target, &mut workspace.raster),
+                lines, &paint, FillRule::NonZero, self.target, &mut workspace.raster),
             Clip::Rect(rect) => render_paint_clipped(
-                lines, paint, rect, FillRule::NonZero, self.target, &mut workspace.raster),
+                lines, &paint, rect, FillRule::NonZero, self.target, &mut workspace.raster),
             Clip::Mask(mask) => render_paint_masked(
-                lines, paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
+                lines, &paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
         }
     }
 }

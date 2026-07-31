@@ -45,6 +45,32 @@ impl<'a> Workspace<'a> {
 pub(crate) struct DrawState<T, F, S, P> {
     pub(crate) transform: Affine<T>, pub(crate) fill_rule: FillRule,
     pub(crate) flatten: F, pub(crate) stroke: S, pub(crate) paint: P,
+    pub(crate) global_alpha: u8,
+}
+
+pub(crate) struct GlobalAlphaPaint<'a, S> { sampler: &'a S, alpha: u8 }
+
+impl<'a, S> GlobalAlphaPaint<'a, S> {
+    pub(crate) fn new(sampler: &'a S, alpha: u8) -> Self { Self { sampler, alpha } }
+}
+
+impl<S: PaintSampler> PaintSampler for GlobalAlphaPaint<'_, S> {
+    fn sample(&self, x: f32, y: f32) -> crate::color::PremulSRGBA8 {
+        self.sampler.sample(x, y).scale_alpha(self.alpha)
+    }
+    fn solid_color(&self) -> Option<crate::color::PremulSRGBA8> {
+        self.sampler.solid_color().map(|color| color.scale_alpha(self.alpha))
+    }
+}
+
+#[cfg(feature = "fixed")] impl<S: crate::fixed::sampler::PaintSampler>
+    crate::fixed::sampler::PaintSampler for GlobalAlphaPaint<'_, S> {
+    fn sample(&self, x: u32, y: u32) -> crate::color::PremulSRGBA8 {
+        self.sampler.sample(x, y).scale_alpha(self.alpha)
+    }
+    fn solid_color(&self) -> Option<crate::color::PremulSRGBA8> {
+        self.sampler.solid_color().map(|color| color.scale_alpha(self.alpha))
+    }
 }
 
 /// Stateful analytic f32 drawing facade.
@@ -68,6 +94,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
                 transform: Affine::identity(), fill_rule: FillRule::NonZero,
                 flatten: FlattenOptions::default(), stroke: StrokeOptions::default(),
                 paint: SolidPaint::new(SRGBA::black()),
+                global_alpha: u8::MAX,
             },
             clip: Clip::None,
         }
@@ -79,6 +106,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
     pub fn fill_rule(&self) -> FillRule { self.state.fill_rule }
     pub fn flatten(&self) -> FlattenOptions { self.state.flatten }
     pub fn stroke_options(&self) -> StrokeOptions { self.state.stroke }
+    pub fn global_alpha(&self) -> u8 { self.state.global_alpha }
 
     pub fn set_transform(&mut self, transform: Affine) -> &mut Self {
         self.state.transform = transform; self
@@ -98,6 +126,11 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
 
     pub fn set_color(&mut self, color: SRGBA<u8>) -> &mut Self {
         self.state.paint = SolidPaint::new(color); self
+    }
+
+    /// Sets the global opacity applied to every paint sample (`255` is opaque).
+    pub fn set_global_alpha(&mut self, alpha: u8) -> &mut Self {
+        self.state.global_alpha = alpha; self
     }
 
     pub fn clear_clip(&mut self) -> &mut Self { self.clip = Clip::None; self }
@@ -131,15 +164,16 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             },
             self.clip,
         );
-        let target = &mut *self.target;
+        let (target, paint) = (&mut *self.target,
+            GlobalAlphaPaint::new(paint, self.state.global_alpha));
         let mut workspace = render_workspace(&mut self.workspace.stroke);
         match clip {
             Clip::None => render_paint(
-                path, transform, paint, options, target, &mut workspace),
+                path, transform, &paint, options, target, &mut workspace),
             Clip::Rect(rect) => render_paint_clipped(
-                path, transform, paint, rect, options, target, &mut workspace),
+                path, transform, &paint, rect, options, target, &mut workspace),
             Clip::Mask(mask) => render_paint_masked(
-                path, transform, paint, mask, options, target, &mut workspace),
+                path, transform, &paint, mask, options, target, &mut workspace),
         }
     }
 
@@ -165,14 +199,15 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             },
             self.clip,
         );
-        let target = &mut *self.target;
+        let (target, paint) = (&mut *self.target,
+            GlobalAlphaPaint::new(paint, self.state.global_alpha));
         match clip {
             Clip::None => render_stroke_paint(
-                path, transform, paint, options, target, &mut self.workspace.stroke),
+                path, transform, &paint, options, target, &mut self.workspace.stroke),
             Clip::Rect(rect) => render_stroke_paint_clipped(
-                path, transform, paint, rect, options, target, &mut self.workspace.stroke),
+                path, transform, &paint, rect, options, target, &mut self.workspace.stroke),
             Clip::Mask(mask) => render_stroke_paint_masked(
-                path, transform, paint, mask, options, target, &mut self.workspace.stroke),
+                path, transform, &paint, mask, options, target, &mut self.workspace.stroke),
         }
     }
 
@@ -199,7 +234,8 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
             },
             self.clip,
         );
-        let target = &mut *self.target;
+        let (target, paint) = (&mut *self.target,
+            GlobalAlphaPaint::new(paint, self.state.global_alpha));
         let workspace = &mut self.workspace;
         let mut dashed = DashedStrokeWorkspace {
             stroke: reborrow_stroke(&mut workspace.stroke),
@@ -208,11 +244,11 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         };
         match clip {
             Clip::None => render_stroke_paint_dashed(
-                path, transform, paint, options, target, &mut dashed),
+                path, transform, &paint, options, target, &mut dashed),
             Clip::Rect(rect) => render_stroke_paint_dashed_clipped(
-                path, transform, paint, rect, options, target, &mut dashed),
+                path, transform, &paint, rect, options, target, &mut dashed),
             Clip::Mask(mask) => render_stroke_paint_dashed_masked(
-                path, transform, paint, mask, options, target, &mut dashed),
+                path, transform, &paint, mask, options, target, &mut dashed),
         }
     }
 }
@@ -384,6 +420,7 @@ impl<'target> Canvas<'target> {
                 transform: Affine::identity(), fill_rule: FillRule::NonZero,
                 flatten: FlattenOptions::default(), stroke: StrokeOptions::default(),
                 paint: SolidPaint::new(SRGBA::black()),
+                global_alpha: u8::MAX,
             },
             clip: CanvasClip::None,
             saved: Vec::new(),
@@ -396,6 +433,7 @@ impl<'target> Canvas<'target> {
     pub fn fill_rule(&self) -> FillRule { self.state.fill_rule }
     pub fn flatten(&self) -> FlattenOptions { self.state.flatten }
     pub fn stroke_options(&self) -> StrokeOptions { self.state.stroke }
+    pub fn global_alpha(&self) -> u8 { self.state.global_alpha }
 
     pub fn set_transform(&mut self, value: Affine) -> &mut Self {
         self.state.transform = value; self
@@ -411,6 +449,10 @@ impl<'target> Canvas<'target> {
     }
     pub fn set_color(&mut self, value: SRGBA<u8>) -> &mut Self {
         self.state.paint = SolidPaint::new(value); self
+    }
+    /// Sets the global opacity applied to every paint sample (`255` is opaque).
+    pub fn set_global_alpha(&mut self, value: u8) -> &mut Self {
+        self.state.global_alpha = value; self
     }
 
     /// Saves the complete drawing state, including the current clip.
@@ -668,9 +710,14 @@ impl<'target> Canvas<'target> {
             .line_to((4.0, 4.0)).line_to((0.0, 4.0));
         let path = shape.build();
         let mut canvas = Canvas::new(4, 4).unwrap();
-        canvas.set_color(SRGBA::red())
+        let saved_transform = Affine::translate(0.25, 0.0);
+        canvas.set_transform(saved_transform)
+            .set_global_alpha(192)
+            .set_color(SRGBA::red())
             .set_clip_rect(Rect::from_ltrb(0.0, 0.0, 3.0, 4.0).unwrap())
             .save()
+            .set_transform(Affine::identity())
+            .set_global_alpha(64)
             .set_color(SRGBA::green())
             .set_clip_rect(Rect::from_ltrb(1.0, 0.0, 4.0, 4.0).unwrap());
         canvas.fill(&path).unwrap();
@@ -679,11 +726,28 @@ impl<'target> Canvas<'target> {
         assert_eq!(canvas.target().pixel_bytes(3, 1).unwrap(), [0; 4]);
 
         assert!(canvas.restore());
+        assert_eq!(canvas.transform(), saved_transform);
+        assert_eq!(canvas.global_alpha(), 192);
         assert_eq!(canvas.state.paint, SolidPaint::new(SRGBA::red()));
         assert!(!canvas.restore());
         canvas.fill(&path).unwrap();
         assert_ne!(canvas.target().pixel_bytes(0, 1).unwrap(), [0; 4]);
         assert_eq!(canvas.target().pixel_bytes(3, 1).unwrap(), [0; 4]);
+    }
+
+    #[test] fn global_alpha_applies_to_solid_and_custom_paint() {
+        let mut canvas = Canvas::new(2, 1).unwrap();
+        canvas.set_color(SRGBA::red()).set_global_alpha(128)
+            .fill(&rectangle()).unwrap();
+        assert_eq!(canvas.target().pixel_bytes(0, 0).unwrap(), [128, 0, 0, 128]);
+
+        canvas.target_mut().as_bytes_mut().fill(0);
+        let stops = [GradientStop::new(0.0, SRGBA::green()),
+                     GradientStop::new(1.0, SRGBA::green())];
+        let gradient = LinearGradient::new((0.0, 0.0), (2.0, 0.0),
+            GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
+        canvas.fill_with(&rectangle(), &gradient).unwrap();
+        assert_eq!(canvas.target().pixel_bytes(0, 0).unwrap(), [0, 128, 0, 128]);
     }
 
     #[test] fn canvas_path_clips_intersect_instead_of_replacing() {

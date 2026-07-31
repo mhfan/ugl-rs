@@ -559,8 +559,10 @@ introduced only after two implementations demonstrate a useful common body.
 
 The first stable method vocabulary is small:
 
-- `set_transform`, `set_fill_rule`, `set_flatten`, `set_stroke`, and
-  `set_color` update current state and return `&mut Self` for compact setup.
+- `set_transform`, `set_fill_rule`, `set_flatten`, `set_stroke`, `set_color`,
+  and byte-valued `set_global_alpha` update current state and return `&mut Self`
+  for compact setup. Global alpha applies after sampling, so custom paints and
+  solid colors follow the same rule.
 - `fill` and `stroke` use the current solid paint.
 - `fill_with` and `stroke_with` accept a statically dispatched sampler without
   storing trait objects or allocating.

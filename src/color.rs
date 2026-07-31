@@ -380,6 +380,13 @@ impl PremulSRGBA8 {
     pub fn to_linear(self) -> LinearPremulRGBA<f32> {
         SRGBA::from(self.0.unpremul()).to_linear().premul()
     }
+    pub(crate) fn scale_alpha(self, alpha: u8) -> Self {
+        if alpha == u8::MAX { return self; }
+        let scale = |channel| (channel as u16 * alpha as u16 + 127).div_euclid(255) as _;
+        let [r, g, b, a] = self.to_array();
+        Self::new(scale(r), scale(g), scale(b), scale(a))
+            .expect("scaling preserves premultiplied channels")
+    }
     pub(crate) fn into_legacy(self) -> PremulRGBA<u8> { self.0 }
 }
 
