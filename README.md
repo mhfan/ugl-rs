@@ -71,6 +71,9 @@ Both implementations locate every cut from the original segment and cumulative
 distance instead of repeatedly advancing rounded cut points. The f32 backend
 returns `DashPrecisionExhausted` when a requested dash is too short to advance
 at the segment's current magnitude rather than looping or silently dropping it.
+`dash_requirements` and `fixed_dash_requirements` return exact point/contour
+capacities. Both decomposition entry points run this preflight before writing,
+so capacity and numeric errors leave caller-owned dash scratch untouched.
 
 ## Architecture at a glance
 

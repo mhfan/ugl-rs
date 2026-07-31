@@ -443,6 +443,8 @@ ongoing (2026-07-31).
   patterns, and closed-contour seam merging.
 - Non-accumulating segment-relative cut placement, explicit f32 precision
   exhaustion, and randomized f32/fixed bounded-output validation.
+- Exact f32/fixed dash workspace requirements and transactional capacity
+  preflight before caller-owned output is modified.
 
 ### M4 — Fixed-point backend
 
