@@ -199,6 +199,14 @@ fn integrate_binned_row_cells(edges: &[Edge], row_edges: &[u32], row_y: f32,
 
 fn prepare_cell_slab(y0: f32, limit: f32, active: &mut [Intersection]) -> f32 {
     let mut next = limit;
+    if active.iter().all(|edge| edge.slope == 0.0) {
+        for edge in &*active {
+            if edge.y_end > y0 { next = next.min(edge.y_end); }
+        }
+        order_active_edges(active);
+        for edge in active { edge.x1 = edge.x0; }
+        return next;
+    }
     for edge in &*active {
         if edge.y_end > y0 { next = next.min(edge.y_end); }
     }
@@ -245,49 +253,29 @@ fn integrate_cell_span(left: &Intersection, right: &Intersection,
 
 fn integrate_partial_cells(left: &Intersection, right: &Intersection,
     height: f32, cells: &mut [Cell], start: usize, end: usize) {
-    let trapezoid = [
-        (left.x0, 0.0), (right.x0, 0.0),
-        (right.x1, height), (left.x1, height),
-    ];
     for (x, cell) in cells.iter_mut().enumerate().take(end).skip(start) {
-        cell.coverage += clipped_trapezoid_area(trapezoid, x as f32);
+        let x = x as f32;
+        let right_area = integrate_clamped_line(right.x0 - x, right.x1 - x, height);
+        let left_area = integrate_clamped_line(left.x0 - x, left.x1 - x, height);
+        cell.coverage += (right_area - left_area).max(0.0);
     }
 }
 
-fn clipped_trapezoid_area(trapezoid: [(f32, f32); 4], left: f32) -> f32 {
-    let (mut first, mut second) = ([(0.0, 0.0); 8], [(0.0, 0.0); 8]);
-    first[..4].copy_from_slice(&trapezoid);
-    let count = clip_polygon_x(&first[..4], &mut second, left, true);
-    let count = clip_polygon_x(&second[..count], &mut first, left + 1.0, false);
-    if count < 3 { return 0.0; }
-    let mut twice_area = 0.0;
-    for index in 0..count {
-        let (a, b) = (first[index], first[(index + 1) % count]);
-        twice_area += a.0 * b.1 - b.0 * a.1;
-    }
-    twice_area.abs() * 0.5
-}
-
-fn clip_polygon_x(input: &[(f32, f32)], output: &mut [(f32, f32); 8],
-    boundary: f32, keep_greater: bool) -> usize {
-    if input.is_empty() { return 0; }
-    let inside = |point: (f32, f32)|
-        if keep_greater { point.0 >= boundary } else { point.0 <= boundary };
-    let intersection = |from: (f32, f32), to: (f32, f32)| {
-        let t = (boundary - from.0) / (to.0 - from.0);
-        (boundary, from.1 + (to.1 - from.1) * t)
+fn integrate_clamped_line(start: f32, end: f32, height: f32) -> f32 {
+    // For a cell [x, x + 1], its instantaneous covered width is
+    // clamp(right - x, 0, 1) - clamp(left - x, 0, 1).  Integrating each
+    // affine clamp independently reduces boundary-cell clipping to the
+    // piecewise primitive 0, z²/2, z - 1/2.
+    let (low, high) = if start < end { (start, end) } else { (end, start) };
+    if high <= 0.0 { return 0.0; }
+    if low >= 1.0 { return height; }
+    if low >= 0.0 && high <= 1.0 { return (start + end) * 0.5 * height; }
+    let primitive = |value: f32| {
+        if value <= 0.0 { 0.0 }
+        else if value < 1.0 { value * value * 0.5 }
+        else { value - 0.5 }
     };
-    let (mut count, mut previous) = (0, input[input.len() - 1]);
-    let mut previous_inside = inside(previous);
-    for &current in input {
-        let current_inside = inside(current);
-        if current_inside != previous_inside {
-            output[count] = intersection(previous, current);  count += 1;
-        }
-        if current_inside { output[count] = current;  count += 1; }
-        previous = current;  previous_inside = current_inside;
-    }
-    count
+    (primitive(high) - primitive(low)) * height / (high - low)
 }
 
 fn emit_cell_runs<S>(cells: &[Cell], y: u32,
@@ -714,6 +702,19 @@ fn integrate_partial_span(left: &Intersection, right: &Intersection,
         builder.move_to((0.25, 0.0)).line_to((1.75, 0.0))
                .line_to((1.75, 1.0)).line_to((0.25, 1.0));
         assert_eq!(render_analytic(&edges(builder), 2, 1, FillRule::NonZero), [191, 191]);
+    }
+
+    #[test] fn clamped_line_integral_covers_each_piecewise_region() {
+        for (start, end, expected) in [
+            (-1.0, -0.5, 0.0), (1.5, 2.0, 1.0), (0.25, 0.75, 0.5),
+            (-1.0, 2.0, 0.5), (-1.0, 0.5, 1.0 / 12.0),
+            (0.5, 2.0, 11.0 / 12.0),
+        ] {
+            let actual = integrate_clamped_line(start, end, 1.0);
+            let reverse = integrate_clamped_line(end, start, 1.0);
+            assert!((actual - expected).abs() < 1e-6, "{start}..{end}: {actual}");
+            assert!((reverse - expected).abs() < 1e-6, "{end}..{start}: {reverse}");
+        }
     }
 
     #[test] fn crossing_edges_are_split_inside_the_row() {

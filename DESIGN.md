@@ -403,12 +403,14 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   guaranteed-full intervals with two range deltas; and combines the prefix scan
   with run emission. Random, coincident-crossing, NonZero, and EvenOdd tests
   agree with the primary analytic path to its 8-bit quantization tolerance.
-  This establishes the intended sparse accumulation semantics, but the generic
-  polygon clip is not production-fast: on the current Apple Silicon baseline,
-  stable 16-edge rows measured about 148 us versus 104 us and stable 64-edge
-  rows about 498 us versus 232 us. Keep this path experimental. Its next gate
-  is a closed-form boundary-cell integral that beats the existing integer-event
-  slabs before any Canvas integration or replacement of the primary backend.
+  The initial generic polygon clip was not production-fast. Replacing it with
+  the closed-form integral of `clamp(edge_x - cell_x, 0, 1)` reduced stable
+  16-edge rows from about 148 us to 109 us, versus 105 us for the primary path.
+  Churning short vertical edges are statistically even, while a 32-edge
+  crossing scene fell from about 1.97 ms to 283 us and the representative
+  480-edge stroke coverage stage from about 218 us to 97 us. Keep this path
+  separate until broader scenes validate its extra row memory and a deliberate
+  workspace/API migration, but use it as the leading f32 production candidate.
 
 ## Implementation rules
 
