@@ -300,28 +300,40 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
-version metadata. The expanded baseline used ugl-rs `bc21d65`, Blend2D
+version metadata. The three-backend baseline used ugl-rs `b800491`, Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
 rustc 1.97.1 on macOS 15.6 arm64. Nine 2,000-frame samples after 200 warm-up
 frames produced:
 
-| Scene | ugl-rs median | Blend2D median | Blend2D speedup | Changed pixels | Mean/max channel error |
+| Scene | f32 median | fixed median | Blend2D median | Blend2D vs f32 | fixed vs f32 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 64 fractional rectangles, fill | 119.89 µs | 34.16 µs | 3.51× | 2.246% | 0.021 / 1 |
-| 8 cubic segments, fill | 73.42 µs | 15.61 µs | 4.70× | 1.727% | 0.076 / 30 |
-| 8 cubic segments, width-6 stroke | 1.426 ms | 37.52 µs | 38.02× | 2.948% | 0.149 / 43 |
+| 64 fractional rectangles, fill | 118.15 µs | 228.71 µs | 32.84 µs | 3.60× faster | 1.94× slower |
+| 8 gentle cubic arches, fill | 23.51 µs | 30.21 µs | 8.40 µs | 2.80× faster | 1.28× slower |
+| 8 gentle cubic arches, width-6 stroke | 298.41 µs | 288.60 µs | 13.62 µs | 21.92× faster | 0.97× |
 
-The rectangle result differs only by coverage quantization. Curved fill and
-stroke have larger localized errors because each renderer uses its own curve
-flattening and stroke expansion; the harness explicitly aligns butt caps,
-miter-bevel joins, and miter limit 4, since Blend2D's default miter-clip join
-does not match ugl-rs. The stroke result identifies the current largest
-whole-pipeline performance gap: ugl-rs flattens the curves and constructs a
-polygonal outline on every draw, while Blend2D uses its production stroker and
-JIT raster pipeline. These remain deliberately narrow baselines, not a general
-performance ranking; gradients, clipping, memory, and cold-start/JIT cost
-require separate matched scenes.
+| Scene | f32 pixels changed from Blend2D | fixed pixels changed from f32 | fixed mean/max error from f32 |
+| --- | ---: | ---: | ---: |
+| rectangles | 2.246% | 0% | 0 / 0 |
+| cubic fill | 0.452% | 0.061% | 0.00024 / 1 |
+| cubic stroke | 1.321% | 0.208% | 0.00124 / 1 |
+
+The fixed results are reported separately: f32 versus Blend2D measures desktop
+competitiveness, while fixed versus f32 measures the Q24.8 cost and output
+delta. Same-host fixed versus Blend2D numbers are not evidence about an MCU or
+a no-FPU target. Rectangle output is byte-identical between the ugl-rs
+backends; the gentle curves differ only by one code value at a small number of
+boundary pixels.
+
+The harness explicitly aligns butt caps, miter-bevel joins, and miter limit 4,
+since Blend2D's default miter-clip join does not match ugl-rs. More strongly
+inflected cubic strokes currently make the fixed backend return
+`CrossingEdges`; they remain a production-reliability task rather than being
+timed as if all backends supported the same input. The stroke result still
+identifies the largest whole-pipeline performance gap: ugl-rs flattens curves
+and constructs a polygonal outline on every draw, while Blend2D uses its
+production stroker and JIT raster pipeline. Gradients, clipping, memory, and
+cold-start/JIT cost require separate matched scenes.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the
