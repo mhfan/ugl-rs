@@ -132,6 +132,7 @@ impl<'a> CoverageMask<'a> {
     pub fn  width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
+    pub fn as_bytes(&self) -> &[u8] { self.data }
 
     fn coverage(&self, x: u32, y: u32) -> u8 {
         self.data[y as usize * self.stride as usize + x as usize]

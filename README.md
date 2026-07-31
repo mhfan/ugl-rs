@@ -116,10 +116,14 @@ let mut builder = PathBuilder::new();
 builder.move_to((0.5, 0.5)).line_to((3.5, 0.5))
        .line_to((3.5, 3.5)).line_to((0.5, 3.5));
 let path = builder.build();
-let mut pixels = [0; WIDTH as usize * HEIGHT as usize * 4];
-let mut canvas = Canvas::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+let mut canvas = Canvas::new(WIDTH, HEIGHT).unwrap();
 canvas.set_color(SRGBA::new(20, 200, 40, 160)).fill(&path).unwrap();
+let pixels = canvas.target().as_bytes();
 ```
+
+`Canvas::from_buffer` renders into caller-owned storage when integrating with a
+window surface, framebuffer, or existing image. `target()` and `target_mut()`
+provide dimensions and raw pixel access without exposing raster scratch.
 
 `Context` is the allocation-free facade for callers that provide bounded
 scratch explicitly. The lower-level `canvas::*` functions expose individual
@@ -183,8 +187,9 @@ Choose the narrowest layer that owns the required state:
 - `canvas_linear` for a premultiplied linear-light working framebuffer;
 - `fixed::canvas` for explicit Q24.8 streaming, retained strips, and tiles.
 
-No layer allocates the destination. `Canvas` owns reusable raster scratch and
-grows it transactionally before drawing. Context construction takes a
+`Canvas::new` allocates its destination, while `Canvas::from_buffer` borrows an
+existing one. It owns reusable raster scratch and grows it transactionally
+before drawing. Context construction takes a
 `context::Workspace` containing caller-owned slices; dash buffers may be empty
 when dashed strokes are not used.
 

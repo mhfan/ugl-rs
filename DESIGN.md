@@ -534,6 +534,11 @@ Consequently its public workflow does not expose edge, intersection, row-bin,
 or coverage-row storage. `Context` remains the bounded zero-allocation
 boundary; low-level workspace layout belongs to expert APIs.
 
+`Canvas::new` owns a tightly packed zero-initialized RGBA8888 destination;
+`Canvas::from_buffer` borrows an externally managed destination with explicit
+stride. Both use the same internal target abstraction, and `target()` exposes
+only layout and pixel bytes rather than a raster pipeline object.
+
 The facade uses two concrete, deliberately parallel entry points:
 
 - `Context` selects the analytic f32 geometry/raster path and the encoded

@@ -284,33 +284,86 @@ impl CanvasStorage {
 /// allocation-free [`Context`]. Geometry or capacity failure therefore occurs
 /// before the destination is modified. Use `Context` or [`crate::canvas`]
 /// directly when scratch must be statically supplied.
-pub struct Canvas<'target, 'clip> {
-    target: PixmapMut<'target>, storage: CanvasStorage,
+pub struct Canvas<'target> {
+    target: Target<'target>, storage: CanvasStorage,
     state: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>,
-    clip: CanvasClip<'clip>,
+    clip: CanvasClip,
 }
 
-enum CanvasClip<'a> {
-    None, Rect(Rect), Borrowed(CoverageMask<'a>),
-    Path { data: Vec<u8>, width: u32, height: u32 },
+enum CanvasClip {
+    None, Rect(Rect),
+    Path { data: Vec<u8>, width: u32, height: u32, stride: u32 },
 }
 
-impl CanvasClip<'_> {
+impl CanvasClip {
     fn as_clip(&self) -> Result<Clip<'_>, RenderError> { Ok(match self {
         Self::None => Clip::None,
         Self::Rect(rect) => Clip::Rect(*rect),
-        Self::Borrowed(mask) => Clip::Mask(*mask),
-        Self::Path { data, width, height } => Clip::Mask(
-            CoverageMask::new(data, *width, *height, *width)
+        Self::Path { data, width, height, stride } => Clip::Mask(
+            CoverageMask::new(data, *width, *height, *stride)
                 .map_err(|_| RenderError::DimensionsOverflow)?),
     }) }
 }
 
-impl<'target, 'clip> Canvas<'target, 'clip> {
-    pub fn new(data: &'target mut [u8], width: u32, height: u32, stride: u32) ->
+enum TargetData<'a> { Owned(Vec<u8>), Borrowed(&'a mut [u8]) }
+
+/// Pixel storage and layout owned or borrowed by a [`Canvas`].
+pub struct Target<'a> {
+    data: TargetData<'a>, width: u32, height: u32, stride: u32,
+}
+
+impl Target<'_> {
+    pub fn width(&self) -> u32 { self.width }
+    pub fn height(&self) -> u32 { self.height }
+    pub fn stride(&self) -> u32 { self.stride }
+    pub fn as_bytes(&self) -> &[u8] { match &self.data {
+        TargetData::Owned(data) => data, TargetData::Borrowed(data) => data,
+    } }
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] { match &mut self.data {
+        TargetData::Owned(data) => data, TargetData::Borrowed(data) => data,
+    } }
+    pub fn pixel_bytes(&self, x: u32, y: u32) -> Option<[u8; 4]> {
+        if x >= self.width || y >= self.height { return None; }
+        let offset = y as usize * self.stride as usize + x as usize * 4;
+        let data = self.as_bytes();
+        Some([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+    }
+    pub fn pixel(&self, x: u32, y: u32) -> Option<crate::color::PremulSRGBA8> {
+        crate::color::PremulSRGBA8::from_array(self.pixel_bytes(x, y)?)
+    }
+    fn as_pixmap_mut(&mut self) -> PixmapMut<'_> {
+        let (width, height, stride) = (self.width, self.height, self.stride);
+        PixmapMut::new(self.as_bytes_mut(), width, height, stride)
+            .expect("validated Canvas target")
+    }
+}
+
+impl Canvas<'static> {
+    /// Creates a zero-initialized tightly packed RGBA8888 canvas.
+    pub fn new(width: u32, height: u32) -> Result<Self, crate::canvas::PixmapError> {
+        let stride = width.checked_mul(4).ok_or(crate::canvas::PixmapError::DimensionsOverflow)?;
+        let length = usize::try_from(stride).ok().and_then(|stride|
+            usize::try_from(height).ok().and_then(|height| stride.checked_mul(height)))
+            .ok_or(crate::canvas::PixmapError::DimensionsOverflow)?;
+        Ok(Self::from_target(Target {
+            data: TargetData::Owned(alloc::vec![0; length]), width, height, stride,
+        }))
+    }
+}
+
+impl<'target> Canvas<'target> {
+    /// Creates a canvas over caller-owned RGBA8888 storage.
+    pub fn from_buffer(data: &'target mut [u8], width: u32, height: u32, stride: u32) ->
         Result<Self, crate::canvas::PixmapError> {
-        Ok(Self {
-            target: PixmapMut::new(data, width, height, stride)?,
+        PixmapMut::new(data, width, height, stride)?;
+        Ok(Self::from_target(Target {
+            data: TargetData::Borrowed(data), width, height, stride,
+        }))
+    }
+
+    fn from_target(target: Target<'target>) -> Self {
+        Self {
+            target,
             storage: CanvasStorage::default(),
             state: DrawState {
                 transform: Affine::identity(), fill_rule: FillRule::NonZero,
@@ -318,11 +371,11 @@ impl<'target, 'clip> Canvas<'target, 'clip> {
                 paint: SolidPaint::new(SRGBA::black()),
             },
             clip: CanvasClip::None,
-        })
+        }
     }
 
-    pub fn target(&self) -> &PixmapMut<'target> { &self.target }
-    pub fn target_mut(&mut self) -> &mut PixmapMut<'target> { &mut self.target }
+    pub fn target(&self) -> &Target<'target> { &self.target }
+    pub fn target_mut(&mut self) -> &mut Target<'target> { &mut self.target }
     pub fn transform(&self) -> Affine { self.state.transform }
     pub fn fill_rule(&self) -> FillRule { self.state.fill_rule }
     pub fn flatten(&self) -> FlattenOptions { self.state.flatten }
@@ -347,8 +400,11 @@ impl<'target, 'clip> Canvas<'target, 'clip> {
     pub fn set_clip_rect(&mut self, value: Rect) -> &mut Self {
         self.clip = CanvasClip::Rect(value); self
     }
-    pub fn set_clip_mask(&mut self, value: CoverageMask<'clip>) -> &mut Self {
-        self.clip = CanvasClip::Borrowed(value); self
+    pub fn set_clip_mask(&mut self, value: CoverageMask<'_>) -> &mut Self {
+        self.clip = CanvasClip::Path {
+            data: value.as_bytes().to_vec(), width: value.width(),
+            height: value.height(), stride: value.stride(),
+        }; self
     }
 
     /// Rasterizes and retains an antialiased path clip using internal storage.
@@ -366,7 +422,7 @@ impl<'target, 'clip> Canvas<'target, 'clip> {
         rasterize_path_clip(path, self.state.transform, RenderOptions {
             fill_rule: self.state.fill_rule, flatten: self.state.flatten,
         }, &mut mask, &mut workspace)?;
-        self.clip = CanvasClip::Path { data, width, height };
+        self.clip = CanvasClip::Path { data, width, height, stride: width };
         Ok(self)
     }
 
@@ -436,8 +492,9 @@ impl<'target, 'clip> Canvas<'target, 'clip> {
         self.plan_fill(path)?;
         let state = self.state;
         let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
+        let mut target = target.as_pixmap_mut();
         let workspace = storage.workspace();
-        let mut context = Context::new(target, workspace);
+        let mut context = Context::new(&mut target, workspace);
         context.state = state; context.clip = clip.as_clip()?; context.fill_with(path, paint)
     }
     pub fn stroke(&mut self, path: &Path) -> Result<(), RenderError> {
@@ -448,8 +505,9 @@ impl<'target, 'clip> Canvas<'target, 'clip> {
         self.plan_stroke(path)?;
         let state = self.state;
         let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
+        let mut target = target.as_pixmap_mut();
         let workspace = storage.workspace();
-        let mut context = Context::new(target, workspace);
+        let mut context = Context::new(&mut target, workspace);
         context.state = state; context.clip = clip.as_clip()?; context.stroke_with(path, paint)
     }
     pub fn stroke_dashed(&mut self, path: &Path, dash: DashPattern<'_>) ->
@@ -461,8 +519,9 @@ impl<'target, 'clip> Canvas<'target, 'clip> {
         self.plan_dashed(path, dash)?;
         let state = self.state;
         let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
+        let mut target = target.as_pixmap_mut();
         let workspace = storage.workspace();
-        let mut context = Context::new(target, workspace);
+        let mut context = Context::new(&mut target, workspace);
         context.state = state; context.clip = clip.as_clip()?;
         context.stroke_dashed_with(path, paint, dash)
     }
@@ -513,8 +572,7 @@ impl<'target, 'clip> Canvas<'target, 'clip> {
     }
 
     #[test] fn canvas_manages_fill_stroke_and_dash_scratch_internally() {
-        let mut pixels = [0; 4 * 4 * 4];
-        let mut canvas = Canvas::new(&mut pixels, 4, 4, 16).unwrap();
+        let mut canvas = Canvas::new(4, 4).unwrap();
         canvas.set_color(SRGBA::new(255, 0, 0, 128));
         canvas.fill(&rectangle()).unwrap();
 
@@ -526,6 +584,7 @@ impl<'target, 'clip> Canvas<'target, 'clip> {
         canvas.stroke_dashed(&line,
             DashPattern::new(&[1.0, 1.0], 0.0).unwrap()).unwrap();
         assert!(canvas.target().pixel_bytes(0, 0).unwrap()[3] != 0);
+        assert_eq!(canvas.target().as_bytes().len(), 4 * 4 * 4);
     }
 
     #[test] fn canvas_owns_free_path_clip_storage() {
@@ -536,9 +595,24 @@ impl<'target, 'clip> Canvas<'target, 'clip> {
         shape.move_to((0.0, 0.0)).line_to((4.0, 0.0))
             .line_to((4.0, 4.0)).line_to((0.0, 4.0));
         let mut pixels = [0; 4 * 4 * 4];
-        let mut canvas = Canvas::new(&mut pixels, 4, 4, 16).unwrap();
+        let mut canvas = Canvas::from_buffer(&mut pixels, 4, 4, 16).unwrap();
         canvas.set_color(SRGBA::red()).set_clip_path(&clip.build()).unwrap();
         canvas.fill(&shape.build()).unwrap();
+        assert_ne!(canvas.target().pixel_bytes(0, 1).unwrap(), [0; 4]);
+        assert_eq!(canvas.target().pixel_bytes(3, 1).unwrap(), [0; 4]);
+    }
+
+    #[test] fn canvas_copies_external_clip_masks() {
+        let mut canvas = Canvas::new(4, 4).unwrap();
+        {
+            let data = [255, 255, 0, 0, 255, 255, 0, 0,
+                        255, 255, 0, 0, 255, 255, 0, 0];
+            canvas.set_clip_mask(CoverageMask::new(&data, 4, 4, 4).unwrap());
+        }
+        let mut shape = PathBuilder::new();
+        shape.move_to((0.0, 0.0)).line_to((4.0, 0.0))
+            .line_to((4.0, 4.0)).line_to((0.0, 4.0));
+        canvas.set_color(SRGBA::red()).fill(&shape.build()).unwrap();
         assert_ne!(canvas.target().pixel_bytes(0, 1).unwrap(), [0; 4]);
         assert_eq!(canvas.target().pixel_bytes(3, 1).unwrap(), [0; 4]);
     }
