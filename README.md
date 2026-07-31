@@ -45,7 +45,17 @@ as a production renderer.
 The current MSRV is Rust 1.93. CI checks MSRV and stable builds, independent
 feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 
-## Direction
+## Current status
+
+| Area | Status |
+| --- | --- |
+| `f32` fill and clipping | Reference path implemented and allocation-free |
+| Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
+| Stroke | Undashed caps/joins reference implemented; reliability work continues |
+| Fixed point | Q24.8 raster, sparse strips, retained coverage, and tile prototype implemented |
+| Production readiness | Pre-release: broader fuzzing, golden scenes, fixed paint/stroke, and real-device validation remain |
+
+## Architecture at a glance
 
 The first complete rendering path is intentionally small:
 
@@ -73,7 +83,51 @@ order, and milestones are maintained in [DESIGN.md](DESIGN.md). External
 renderer research and explicit adoption decisions are tracked in
 [RESEARCH.md](RESEARCH.md).
 
+## Quick start
+
+The rendering APIs borrow both destination and scratch storage. Capacities are
+chosen by the caller and insufficient workspace is returned as an error:
+
+```rust
+use ugl_rs::{analytic::AnalyticIntersection,
+    color::RGBA, edge::Edge, geometry::{Affine, PathBuilder},
+    canvas::{AnalyticRenderOptions, AnalyticRenderWorkspace, PixmapMut,
+        render_solid_analytic},
+};
+
+const  WIDTH: u32 = 4;
+const HEIGHT: u32 = 4;
+
+let mut builder = PathBuilder::new();
+builder.move_to((0.5, 0.5)).line_to((3.5, 0.5))
+       .line_to((3.5, 3.5)).line_to((0.5, 3.5));
+let path = builder.build();
+let mut pixels = [0; WIDTH as usize * HEIGHT as usize * 4];
+let mut intersections = [AnalyticIntersection::default(); 8];
+let mut target = PixmapMut::new(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+let (mut edges, mut coverage) = ([Edge::default(); 8], [0.0; WIDTH as usize]);
+let (mut row_offsets, mut edge_indices) = ([0; HEIGHT as usize + 1], [0; 8]);
+
+render_solid_analytic(&path, Affine::identity(), RGBA::new(20, 200, 40, 160),
+    AnalyticRenderOptions::default(), &mut target,
+    &mut AnalyticRenderWorkspace { edges: &mut edges,
+        intersections: &mut intersections, row_coverage: &mut coverage,
+        row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
+    },
+).unwrap();
+```
+
+The crate is `no_std` and currently uses `alloc`. The default feature enables
+the Q24.8 fixed backend; use `--no-default-features` for the floating-point
+core alone. Optional `serde` support is independent.
+
 ## Benchmarking
+
+The figures below are development regression baselines from one Darwin arm64
+host, not cross-renderer rankings. Each subsection states what is included in
+its timed loop; compare only measurements with compatible scenes and settings.
+
+### Running the benchmarks
 
 Run the scalar rasterizer comparison with:
 
@@ -93,6 +147,8 @@ Run only the paint-sampler comparison with:
 ```text
 cargo bench --bench raster --all-features -- paint_sample_rgba8888
 ```
+
+### Paint sampling and gradient kernels
 
 The paint benchmark directly samples 65,536 device-space pixel centers and
 accumulates the resulting premultiplied RGBA channels. It excludes path
@@ -194,6 +250,8 @@ the general radial sampler performs stable two-circle root solving per pixel;
 future specialized concentric/span-stepping paths must retain byte-equivalent
 tests and report their code-size and memory costs.
 
+### Raster and compositing baselines
+
 The baseline scene contains 64 fractional rectangles in a 256 × 256
 premultiplied RGBA8888 target. Path construction, fixed-line preparation, and
 all heap allocation happen before Criterion starts each measured iteration.
@@ -244,6 +302,8 @@ and persistent active edges, the same scenes measured 65.34 µs and 621.64 µs,
 respectively. These numbers are a regression reference for this machine, not a
 cross-platform ranking.
 
+### Scratch memory and allocation
+
 The initial caller-owned scratch budgets are:
 
 | Backend | Edge/segment storage | Strip/crossing storage | Row storage |
@@ -262,6 +322,8 @@ Renderer allocation count inside the measured path is zero by API
 construction: every mutable geometry, crossing, area, and destination buffer
 is borrowed from the benchmark. Criterion's own allocations are outside that
 contract.
+
+### Stroke and active-edge scalability
 
 The analytic stroke baseline can be reproduced with:
 
@@ -326,6 +388,8 @@ from about 898 µs to 783 µs and `churn_512` from about 46.5 µs to 41.8 µs.
 The standard 64-rectangle linear render measured about 105.8 µs versus
 110.2 µs before this specialization; the crossing scene remained near
 2.42 ms.
+
+### Fixed retained coverage and tiles
 
 The optional retained fixed output groups only non-empty 16-row strips. Each
 strip descriptor is 12 bytes and each uniform non-zero coverage run is 12

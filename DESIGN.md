@@ -1,10 +1,13 @@
-# ugl-rs rendering contract
+# ugl-rs design and rendering contract
 
 This document defines the invariants of the rendering core. Changes to these
 rules are observable API changes and require tests and release notes.
 External techniques and their adopt/adapt/defer/reject decisions are tracked in
 [RESEARCH.md](RESEARCH.md). A major rendering stage is not implemented without
 first recording the relevant algorithm and fixed-point/memory implications.
+User-facing project status, commands, and measured baselines belong in
+[README.md](README.md); this file records normative behavior and engineering
+decisions.
 
 ## Goal and differentiation
 
@@ -36,7 +39,7 @@ scene representation. Rasterization algorithms are not made generically
 numeric until the required fixed-point operations and overflow behavior are
 known.
 
-### Core capabilities, in order
+### Core capabilities
 
 1. Paths, affine transforms, curve flattening, filling, and clipping.
 2. Solid paint and source-over compositing into premultiplied RGBA8888.
@@ -138,7 +141,7 @@ and SIMD layouts do not enter the common `Edge` representation.
 - `Close` connects the current point to the subpath start and is idempotent;
   without a current subpath it is a no-op.
 - Zero-length edges are accepted but contribute no winding or coverage.
-- Both non-zero winding and even-odd fill rules will be supported.
+- Both non-zero winding and even-odd fill rules are supported.
 - Open subpaths are implicitly closed for filling, but not for stroking.
 - Curve flattening tolerance is measured in device pixels after transformation.
 
@@ -226,25 +229,6 @@ and SIMD layouts do not enter the common `Edge` representation.
   values and coverage/interpolation factors are in `[0, 1]`. Debug assertions
   and randomized invariant tests guard that contract, so release kernels do
   not repeat the public constructor's per-channel validation and clamping.
-- SIMD remains measurement-gated. On the 64-rectangle translucent-solid
-  diagnostic, scalar invariant-closed arithmetic measured about 112.6 µs.
-  Packing each pixel's four channels into NEON measured about 116.6 µs, while
-  a four-pixel interleaved load/store kernel measured about 124.5 µs. Both
-  experiments were rejected: the current array-of-structures target and short
-  spans do not amortize packing or deinterleaving. Revisit SIMD with long
-  batches or a structure-of-arrays tile working buffer, not as a per-pixel
-  substitution.
-- The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
-  The canonical rectangle scene has one-pixel boundary runs around 16–21-pixel
-  interiors; full-coverage runs contain about 83% of covered pixels. Future
-  batching should leave boundary runs scalar and measure layout conversion
-  only on full interior runs.
-- Pixel share alone is not sufficient evidence for another branch. A dedicated
-  translucent full-coverage source-over closure, intended to omit
-  `scale(1.0)`, regressed the solid diagnostic by about 6% and the gradient
-  diagnostic by about 49%; LLVM already eliminates the trivial scale in the
-  compact general expression, while duplicating closures harms code shape.
-  The specialization was rejected.
 
 ## Strokes
 
@@ -327,6 +311,27 @@ unification cannot hide broken `no_std`, `serde`, fixed-point, or allocation
 configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
 32-bit Linux, and a Cortex-M target without an FPU.
 
+## Performance decisions
+
+- SIMD remains measurement-gated. Per-pixel channel packing and four-pixel
+  interleaved NEON kernels both regressed the scalar linear compositor. The
+  current array-of-structures target and short spans do not amortize packing or
+  deinterleaving; revisit SIMD with long batches or a structure-of-arrays tile
+  working buffer.
+- The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
+  The canonical rectangle scene has one-pixel boundary runs around 16–21-pixel
+  interiors; full-coverage runs contain about 83% of covered pixels. Future
+  batching should leave boundary runs scalar and convert layouts only for
+  measured long interior work.
+- A separate translucent full-coverage closure intended to omit `scale(1.0)`
+  regressed both solid and gradient diagnostics. LLVM already removes the
+  trivial scale from the compact general expression; that specialization stays
+  rejected.
+- Analytic slabs special-case all-vertical active sets only after ordering new
+  edges by x. Vertical edges cannot cross pixel boundaries or one another, so
+  crossing-event and midpoint-order passes are unnecessary. Sloped sets retain
+  the numerically coalesced event algorithm and both ordering passes.
+
 ## Implementation rules
 
 - Correctness and documented semantics precede performance.
@@ -341,17 +346,14 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
 - Do not add `#[inline]` by default. The compiler decides ordinary inlining;
   annotations require benchmark or code-size evidence.
 - Do not introduce SIMD before scalar equivalence tests exist.
-- Analytic slabs special-case all-vertical active sets only after ordering new
-  edges by x. Vertical edges cannot cross pixel boundaries or one another, so
-  crossing-event and midpoint-order passes are unnecessary. Sloped sets retain
-  the general numerically coalesced event algorithm and both ordering passes.
 - Public types must not expose large third-party math or rendering dependencies.
 - Data-dependent input returns `Result`; it must not panic or abort.
 - Every optimization states its time, memory, allocation, and code-size tradeoff.
 
-## Rendering pipeline delivery order
+## Delivery sequence and gates
 
-The first vertical slice is implemented and validated in this order:
+The first vertical slice was implemented and validated in this dependency
+order. New backends should preserve the same gates:
 
 1. Define `Point`, `Affine`, `PathSegment`, `Path`, and `PathBuilder`.
 2. Validate path state and reject non-finite reference coordinates.
@@ -364,12 +366,13 @@ The first vertical slice is implemented and validated in this order:
 9. Add even-odd filling and golden/differential scenes.
 10. Establish benchmark baselines before optimizing allocation or SIMD.
 
-Stroke expansion, gradients, other formats, and fixed-point execution begin
-only after this path is complete.
+Later stages build on this contract rather than bypassing it.
 
 ## Milestones
 
 ### M0 — Contract and test foundation
+
+Status: substantially complete; broader golden and benchmark coverage remains.
 
 - This design contract, crate scope, MSRV, and supported target matrix.
 - `no_std` core build and independent feature checks.
@@ -377,6 +380,8 @@ only after this path is complete.
 - Golden-image and benchmark harness skeletons.
 
 ### M1 — Floating-point solid path fill
+
+Status: complete.
 
 - Validated paths and affine transforms.
 - Adaptive quadratic and cubic flattening.
@@ -409,6 +414,8 @@ Status: undashed scalar reference implemented; reliability validation ongoing
 
 ### M4 — Fixed-point backend
 
+Status: prototype implemented; production validation remains.
+
 - A documented Q format and device-coordinate range.
 - Proven intermediate widths and explicit rounding/overflow policy.
 - Differential tests against the `f32` reference.
@@ -416,11 +423,15 @@ Status: undashed scalar reference implemented; reliability validation ongoing
 
 ### M5 — Fixed-memory rendering
 
+Status: streaming, retained-strip, and retained-tile prototypes implemented.
+
 - Caller-provided edge, coverage, and temporary workspaces.
 - No allocation on the render path.
 - Capacity errors report required resources where feasible.
 
 ### M6 — Performance engineering
+
+Status: in progress.
 
 - Reproducible comparisons with relevant CPU rasterizers.
 - Time, peak scratch memory, allocation count, binary size, and image-quality
@@ -429,6 +440,8 @@ Status: undashed scalar reference implemented; reliability validation ongoing
 
 ### M7 — Production release
 
+Status: planned.
+
 - Stable public contract and SemVer policy.
 - Documented MSRV and supported targets.
 - Fuzzing, unsafe review, examples, integration guidance, and real-device
@@ -436,18 +449,11 @@ Status: undashed scalar reference implemented; reliability validation ongoing
 
 ## Current status
 
-- M0 is substantially complete; comprehensive golden scenes and benchmark
-  baselines remain.
-- M1 has an allocation-free vertical slice from path segments through sampled
-  or analytic `f32` coverage to premultiplied source-over output; the analytic
-  backend persists active edges and skips empty vertical ranges.
-- M4/M5 prototypes include generic fixed-point geometry, widened Q24.8
-  arithmetic, rational crossing events, span/trapezoid area evaluation,
-  caller-owned sparse strip bins, persistent active edges, optional retained
-  sparse coverage strips, direct empty/full/boundary tile-major emission, and
-  differential/error-path tests.
-- Retained fixed tiles now have a separate composite entry point for coverage
-  reuse. Randomized differential tests compare streaming, retained strips,
-  and direct tiles under both fill rules, including identical propagation of
-  fixed-raster rejection cases. Broader golden scenes, external fuzzing,
-  gradients, clipping, and stroking remain future work.
+| Area | Implemented | Remaining production work |
+| --- | --- | --- |
+| `f32` fill | Sampled and analytic coverage, persistent active edges, sparse row bins, both fill rules | Broader golden scenes and external fuzzing |
+| Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
+| Stroke | Allocation-free undashed caps and joins | Dashes, fuzzing, and production reliability validation |
+| Fixed raster | Q24.8 geometry, widened arithmetic, rational crossings, sparse strips, retained coverage, direct tiles | Fixed clipping, paint, stroke, real-device and range validation |
+| Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks | Cross-renderer methodology, code size, allocation instrumentation, justified SIMD |
+| Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
