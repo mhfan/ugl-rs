@@ -424,6 +424,11 @@ scene consequently fell from roughly 215 µs to 201 µs; the ordinary stroke
 remained around 96 µs. Sparse-cell differential coverage now exercises 128
 deterministic randomized paths against an 8192-sample reference.
 
+Newly activated edges are now inserted only from the appended suffix because
+the retained active prefix is already ordered. This leaves short-edge churn
+near 41 µs while reducing representative stroke coverage to about 89 µs and
+coverage plus encoded blending to about 95 µs.
+
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the
 complete harness binaries, not the incremental library contribution, and must

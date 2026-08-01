@@ -212,7 +212,7 @@ fn integrate_binned_row_cells(edges: &[Edge], row_edges: &[u32], row_y: f32,
             pending += 1;
         }
         if active_count != before_activation {
-            order_cell_edges(&mut active[..active_count]);
+            order_new_cell_edges(&mut active[..active_count], before_activation);
         }
         let next_start = row_edges.get(pending)
             .map(|&index| edges[index as usize].upper.y).unwrap_or(row_end).min(row_end);
@@ -614,7 +614,11 @@ fn order_active_edges(active: &mut [Intersection]) {
 }
 
 fn order_cell_edges(active: &mut [Intersection]) {
-    insertion_sort_active_by(active, |previous, edge| {
+    order_new_cell_edges(active, 1);
+}
+
+fn order_new_cell_edges(active: &mut [Intersection], start: usize) {
+    insertion_sort_active_from_by(active, start, |previous, edge| {
         let tolerance = f32::EPSILON * previous.x0.abs().max(edge.x0.abs()).max(1.0) * 8.0;
         if (previous.x0 - edge.x0).abs() <= tolerance {
             previous.slope.total_cmp(&edge.slope).is_gt()
@@ -635,7 +639,12 @@ fn order_active_midpoints(active: &mut [Intersection]) {
 
 fn insertion_sort_active_by(active: &mut [Intersection],
     is_after: impl Fn(Intersection, Intersection) -> bool) {
-    for index in 1..active.len() {
+    insertion_sort_active_from_by(active, 1, is_after);
+}
+
+fn insertion_sort_active_from_by(active: &mut [Intersection], start: usize,
+    is_after: impl Fn(Intersection, Intersection) -> bool) {
+    for index in start.max(1)..active.len() {
         let edge = active[index];
         let mut position = index;
         while position != 0 {
@@ -818,6 +827,17 @@ fn integrate_partial_span(left: &Intersection, right: &Intersection,
             assert!((actual - expected).abs() < 1e-6, "{start}..{end}: {actual}");
             assert!((reverse - expected).abs() < 1e-6, "{end}..{start}: {reverse}");
         }
+    }
+
+    #[test] fn newly_activated_edges_merge_into_the_ordered_prefix() {
+        let edge = |x| Intersection {
+            x0: x, x1: x, slope: 0.0, y_end: 2.0, winding: 1,
+        };
+        let mut incremental = [edge(1.0), edge(4.0), edge(3.0), edge(2.0)];
+        let mut reference = incremental;
+        order_new_cell_edges(&mut incremental, 2);
+        order_cell_edges(&mut reference);
+        assert_eq!(incremental.map(|edge| edge.x0), reference.map(|edge| edge.x0));
     }
 
     #[test] fn crossing_edges_are_split_inside_the_row() {

@@ -426,6 +426,9 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   Adjacent crossing tests first reject separating or out-of-slab pairs with
   multiplication and divide only for a real event candidate; the adversarial
   sparse-cell crossing scene improved from about 215 us to 201 us.
+  Activation preserves and reuses the retained prefix order, inserting only
+  newly appended edges; representative stroke coverage subsequently reached
+  about 89 us without regressing the short-edge churn scene.
 
 ## Implementation rules
 
