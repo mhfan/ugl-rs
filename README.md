@@ -314,7 +314,7 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
 version metadata. The current three-backend baseline was measured on 2026-08-01
-after ugl-rs `d14cdeb`, using Blend2D
+after ugl-rs `6ad5cb1`, using Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
 rustc 1.97.1 on macOS 15.6 arm64. Nine 5,000-frame samples after 500 warm-up
@@ -322,7 +322,7 @@ frames produced:
 
 | Scene | f32 median | fixed median | Blend2D median | Blend2D vs f32 | fixed vs f32 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 64 fractional rectangles, fill | 117.97 µs | 235.38 µs | 33.66 µs | 3.50× faster | 2.00× slower |
+| 64 fractional rectangles, fill | 93.53 µs | 235.38 µs | 33.66 µs | 2.78× faster | 2.52× slower |
 | 8 gentle cubic arches, fill | 19.06 µs | 30.79 µs | 8.32 µs | 2.29× faster | 1.62× slower |
 | 8 gentle cubic arches, width-6 stroke | 34.66 µs | 284.75 µs | 14.55 µs | 2.38× faster | 8.22× slower |
 
@@ -442,6 +442,13 @@ trace attributes about 79% of the remaining samples to analytic rasterization,
 6% to solid blending, 3.5% to curve flattening, 2.5% to outline construction,
 and roughly 1% to row-bin sorting. Further work should target coverage math and
 batching rather than more row-bin sorting special cases.
+
+Consecutive rows whose active set consists only of unchanged vertical edges now
+reuse the previous sparse-cell coverage and only replay its runs at the new y.
+This preserves per-row clipping and compositing while avoiding repeated clear
+and analytic integration. The 64-rectangle scene fell from 117.97 µs to
+93.53 µs with an unchanged checksum; the Blend2D gap fell from 3.50× to 2.78×,
+while the cubic stroke remained near 34.6 µs.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the

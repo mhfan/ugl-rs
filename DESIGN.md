@@ -425,7 +425,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   from about 97 us to 90 us without changing output. Compact single-contour
   stroke expansion subsequently reduced that scene to 130 edges, about 22.5 us
   of coverage, and about 34.7 us end to end; row-bin sorting is now only about
-  1% of the sampled draw.
+  1% of the sampled draw. Unchanged all-vertical active sets reuse sparse-cell
+  coverage across consecutive rows while still replaying the sink for each y;
+  this reduced the 64-fractional-rectangle draw from about 118 us to 93.5 us
+  without changing its output.
   Coalesced pairs that still reverse within a slab use a cold split-integral
   path so `|right - left|` is integrated correctly for self-intersections;
   ordinary spans retain the compact fast loop (about 96 us after this guard).
