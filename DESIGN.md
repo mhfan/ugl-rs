@@ -420,6 +420,9 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   sorting only after activation, a real crossing, or a linear check detects a
   numerically coalesced crossing; representative stroke coverage fell again
   from about 97 us to 90 us without changing output.
+  Coalesced pairs that still reverse within a slab use a cold split-integral
+  path so `|right - left|` is integrated correctly for self-intersections;
+  ordinary spans retain the compact fast loop (about 96 us after this guard).
 
 ## Implementation rules
 

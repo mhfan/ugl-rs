@@ -412,6 +412,12 @@ inside the floating-point event tolerance without restoring unconditional
 insertion sorting. The crossing stress case measured about 215 µs, though that
 adversarial benchmark remains noisier than ordinary scenes.
 
+Numerically coalesced crossings receive a separate analytic slow path: if a
+paired boundary reverses during one slab, its clamped cell integral is split at
+the crossing instead of clamping the final signed area. This fixes complex
+EvenOdd self-intersections while keeping the ordinary coverage stage near
+96 µs on the representative stroke benchmark.
+
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the
 complete harness binaries, not the incremental library contribution, and must

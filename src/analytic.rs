@@ -220,10 +220,16 @@ fn integrate_binned_row_cells(edges: &[Edge], row_edges: &[u32], row_y: f32,
             if next_start >= row_end { break; }
             y0 = next_start;  continue;
         }
-        let (y1, crossing) =
+        let (y1, crossing, coalesced) =
             prepare_cell_slab(y0, next_start, &mut active[..active_count]);
         if y1 <= y0 { break; }
-        integrate_cell_spans(&active[..active_count], y1 - y0, fill_rule, cells, &mut dirty);
+        if coalesced {
+            integrate_coalesced_cell_spans(&active[..active_count], y1 - y0,
+                fill_rule, cells, &mut dirty);
+        } else {
+            integrate_cell_spans(&active[..active_count], y1 - y0,
+                fill_rule, cells, &mut dirty);
+        }
         for edge in &mut active[..active_count] { edge.x0 = edge.x1; }
         if crossing { order_cell_edges(&mut active[..active_count]); }
         y0 = y1;
@@ -231,14 +237,15 @@ fn integrate_binned_row_cells(edges: &[Edge], row_edges: &[u32], row_y: f32,
     (active_count, dirty)
 }
 
-fn prepare_cell_slab(y0: f32, limit: f32, active: &mut [Intersection]) -> (f32, bool) {
+fn prepare_cell_slab(y0: f32, limit: f32,
+    active: &mut [Intersection]) -> (f32, bool, bool) {
     let mut next = limit;
     if active.iter().all(|edge| edge.slope == 0.0) {
         for edge in &*active {
             if edge.y_end > y0 { next = next.min(edge.y_end); }
         }
         for edge in active { edge.x1 = edge.x0; }
-        return (next, false);
+        return (next, false, false);
     }
     for edge in &*active {
         if edge.y_end > y0 { next = next.min(edge.y_end); }
@@ -257,12 +264,15 @@ fn prepare_cell_slab(y0: f32, limit: f32, active: &mut [Intersection]) -> (f32, 
     for edge in &mut *active { edge.x1 = edge.x0 + edge.slope * height; }
     // A crossing inside the numerical event tolerance can be too close to split
     // safely, but its midpoint order must still define the span pairing.
-    if active.windows(2).any(|pair|
-        pair[0].x0 + pair[0].x1 > pair[1].x0 + pair[1].x1) {
+    let reordered = active.windows(2).any(|pair|
+        pair[0].x0 + pair[0].x1 > pair[1].x0 + pair[1].x1);
+    if reordered {
         order_active_midpoints(active);
         crossing = true;
     }
-    (next, crossing)
+    let coalesced = reordered && active.windows(2).any(|pair|
+        (pair[1].x0 - pair[0].x0) * (pair[1].x1 - pair[0].x1) < 0.0);
+    (next, crossing, coalesced)
 }
 
 fn integrate_cell_spans(intersections: &[Intersection], height: f32,
@@ -304,6 +314,50 @@ fn integrate_partial_cells(left: &Intersection, right: &Intersection,
         let right_area = integrate_clamped_line(right.x0 - x, right.x1 - x, height);
         let left_area = integrate_clamped_line(left.x0 - x, left.x1 - x, height);
         cell.coverage += (right_area - left_area).max(0.0);
+    }
+}
+
+fn integrate_coalesced_cell_spans(intersections: &[Intersection], height: f32,
+    fill_rule: FillRule, cells: &mut [Cell], dirty: &mut CellRange) {
+    let (mut winding, mut left) = (0_i32, None::<&Intersection>);
+    for right in intersections {
+        if let Some(left) = left && fill_rule.contains(winding) {
+            let (d0, d1) = (right.x0 - left.x0, right.x1 - left.x1);
+            if d0 * d1 < 0.0 {
+                let start = floor(left.x0.min(left.x1).min(right.x0).min(right.x1))
+                    .clamp(0.0, cells.len() as _) as _;
+                let end = ceil(left.x0.max(left.x1).max(right.x0).max(right.x1))
+                    .clamp(0.0, cells.len() as _) as _;
+                dirty.include(start, end);
+                integrate_crossing_cells(left, right, height, cells, start, end);
+            } else {
+                integrate_cell_span(left, right, height, cells, dirty);
+            }
+        }
+        winding += right.winding as i32;
+        left = Some(right);
+    }
+}
+
+fn integrate_crossing_cells(left: &Intersection, right: &Intersection,
+    height: f32, cells: &mut [Cell], start: usize, end: usize) {
+    // Numerically coalesced crossings can leave a paired boundary reversed
+    // for part of a slab. Split there so coverage integrates |right-left|
+    // instead of clamping only the final signed integral.
+    let (d0, d1) = (right.x0 - left.x0, right.x1 - left.x1);
+    let t = d0 / (d0 - d1);
+    let first_height = height * t;
+    for (x, cell) in cells.iter_mut().enumerate().take(end).skip(start) {
+        let x = x as f32;
+        let (l0, l1, r0, r1) =
+            (left.x0 - x, left.x1 - x, right.x0 - x, right.x1 - x);
+        let middle = l0 + (l1 - l0) * t;
+        let first = integrate_clamped_line(r0, middle, first_height)
+            - integrate_clamped_line(l0, middle, first_height);
+        let second_height = height - first_height;
+        let second = integrate_clamped_line(middle, l1, second_height)
+            - integrate_clamped_line(middle, r1, second_height);
+        cell.coverage += first.abs() + second.abs();
     }
 }
 
@@ -904,6 +958,26 @@ fn integrate_partial_span(left: &Intersection, right: &Intersection,
                          analytic={actual}, sampled={reference}");
                 }
             }
+        }
+    }
+
+    #[test] fn sparse_cells_handle_complex_even_odd_self_intersection() {
+        let points = [
+            (5.809253, 4.2083783), (7.8110056, 0.8302816), (1.4902749, 6.7414265),
+            (-0.66801107, 5.8478894), (4.8945427, 5.9314833),
+            (-0.78560984, -0.17064488), (4.099824, 6.719939),
+        ];
+        let mut builder = PathBuilder::new();
+        builder.move_to(points[0]);
+        for &point in &points[1..] { builder.line_to(point); }
+        let edges = edges(builder);
+        let (cells, reference) = (
+            render_cells(&edges, 8, 8, FillRule::EvenOdd),
+            render_analytic(&edges, 8, 8, FillRule::EvenOdd),
+        );
+        for (pixel, (&cell, reference)) in cells.iter().zip(reference).enumerate() {
+            assert!(cell.abs_diff(reference) <= 1,
+                "pixel {pixel}: cells={cell}, reference={reference}");
         }
     }
 }
