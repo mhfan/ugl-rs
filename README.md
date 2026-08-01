@@ -53,7 +53,7 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Allocation-free f32/fixed dashes, caps, joins, and path stroke pipelines implemented |
 | Fixed point | Q24.8 transformed path fill/stroke, sparse strips/tiles, clipping, native fixed gradients, and all fixed caps/joins implemented |
-| Facade | Primary owning f32 `Canvas`, plus parallel f32/fixed `CanvasRef` APIs for bounded scratch |
+| Facade | Owning f32 `Canvas` and `fixed::Canvas`, plus parallel `CanvasRef` APIs for bounded scratch |
 | Production readiness | Pre-release: API stabilization, broader fuzzing/goldens, code-size work, and real-device validation remain |
 
 The f32 dash reference accepts finite, strictly positive alternating on/off
@@ -136,10 +136,18 @@ workspace arrays only for static-memory systems, custom allocators, retained
 coverage integration, and renderer development; they are not required for
 ordinary drawing.
 
-The core supports `no_std` and currently uses `alloc`. Default desktop builds
-enable `std` plus the Q24.8 fixed backend. Use `--no-default-features` for the
-smallest floating-point core, or add `fixed` explicitly for a no_std fixed
-build. Analytic rounding selects the backend independently: `std` uses native
+The core supports `no_std` and currently uses `alloc`. Default builds enable
+`f32`, `fixed`, and `std`. The rendering backends are independently selectable:
+
+- `--no-default-features --features fixed` builds the no_std Q24.8 renderer,
+  omits the f32 renderer and floating samplers, and has no `libm` dependency;
+- `--no-default-features --features f32` builds the complete no_std f32 backend
+  and enables optional `libm`;
+- adding `std` makes the f32 math dispatcher use platform implementations;
+- `native-float` implies `f32` and selects hardware-friendly basic operations
+  on explicitly supported no_std hard-float targets.
+
+For the f32 backend, analytic rounding selects the math implementation independently: `std` uses native
 platform floor/ceil, Arm hard-float (`eabihf`) targets automatically use an
 FPU-friendly no_std implementation, and other no_std FPU targets can enable
 `native-float`. Remaining soft-float builds retain `libm` operations. The
@@ -170,7 +178,7 @@ Fixed-only context, numeric helpers, sampler contracts, flattening,
 rasterization, stroking, tiling, and their focused tests live under
 `src/fixed/`. The canonical public API uses `fixed::*` paths directly. Backend
 modules use concise names such as `fixed::raster::Workspace`,
-`fixed::stroke::Options`, and `fixed::context::CanvasRef`; no legacy crate-root
+`fixed::stroke::Options`, `fixed::Canvas`, and `fixed::CanvasRef`; no legacy crate-root
 backend aliases are retained.
 
 Both exact-area f32 and Q24.8 fixed paths rasterize arbitrary path clips into
@@ -186,7 +194,7 @@ The fixed execution contract is deliberately per entry point:
 | geometry, flattening, stroke, dash, raster, strip/tile encoding | yes |
 | `fixed::sampler::*` solid/linear/radial/conic paint | yes |
 | path-mask production and native mask composition | yes |
-| `fixed::context::CanvasRef` with a native fixed sampler and no clip/mask clip | yes |
+| `fixed::Canvas` or `fixed::CanvasRef` with native paint and no clip/mask clip | yes |
 | rectangle clipping | no; the shared antialiased rectangle adapter uses `f32` |
 | compatibility entry points accepting `sampler::PaintSampler` | no |
 
@@ -213,6 +221,7 @@ Choose the narrowest layer that owns the required state:
 
 - `Canvas` for ordinary f32 drawing with automatically managed scratch and
   retained path clips;
+- `fixed::Canvas` for ordinary Q24.8 drawing with automatically managed scratch;
 - `context::CanvasRef` or `fixed::context::CanvasRef` when scratch must be bounded
   and supplied by the caller;
 - `canvas::render_*` for direct exact-area f32 rendering;
@@ -255,9 +264,12 @@ explicitly sized as `stride × height`.
 ### Arbitrary path clipping
 
 `Canvas::set_clip_path` is the ordinary free-path clipping API. It rasterizes
-and retains the antialiased mask in internal storage, intersecting it with the
-current clip; subsequent fill, stroke, and dashed-stroke calls apply it without
-exposing mask storage. `save`/`restore` scopes nested clips.
+and retains the antialiased mask in tightly packed non-zero bounds, intersecting
+only that region with the current clip; subsequent fill, stroke, and
+dashed-stroke calls apply it without exposing mask storage. Initial construction
+derives conservative bounds from the prepared edges and rasterizes directly
+into local coverage storage; it does not allocate a temporary canvas-sized mask.
+`save`/`restore` scopes nested clips.
 
 The bounded `CanvasRef` and low-level APIs deliberately use a two-stage operation
 so image-sized storage and lifetime remain visible:
@@ -318,30 +330,32 @@ smoke runs and longer measurements. The complete output is retained as
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
 version metadata. The current three-backend baseline was measured on 2026-08-01
-after ugl-rs `0a7f773`, using Blend2D
+at ugl-rs `a2f190c`, using Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
 rustc 1.97.1 on macOS 15.6 arm64. Nine 5,000-frame samples after 500 warm-up
-frames produced:
+frames produced the table below. The butt/miter polyline f32/fixed rows were
+immediately repeated with the same protocol because the combined run contained
+a scheduler outlier; their repeated medians are reported.
 
 | Scene | f32 median | fixed median | Blend2D median | Blend2D vs f32 | fixed vs f32 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 fractional rectangle, fill | 4.03 µs | 4.38 µs | 3.97 µs | 1.01× faster | 1.09× slower |
-| 16 fractional rectangles, fill | 17.31 µs | 28.42 µs | 11.53 µs | 1.50× faster | 1.64× slower |
-| 64 fractional rectangles, fill | 59.31 µs | 108.87 µs | 34.13 µs | 1.74× faster | 1.84× slower |
-| large fractional rectangle, fill | 22.22 µs | 29.26 µs | 14.38 µs | 1.55× faster | 1.32× slower |
-| large rectangle, linear gradient | 63.81 µs | 149.07 µs | 31.85 µs | 2.00× faster | 2.34× slower |
-| large rectangle, radial gradient | 115.82 µs | 345.51 µs | 41.44 µs | 2.80× faster | 2.98× slower |
-| large rectangle, conic gradient (Fast) | 184.31 µs | 356.96 µs | 68.38 µs | 2.70× faster | 1.94× slower |
-| large rectangle, sparse retained path mask | 5.80 µs | 7.46 µs | 31.12 µs¹ | 5.37× slower | 1.29× slower |
-| large rectangle, dense retained path mask | 23.39 µs | 31.81 µs | 30.31 µs¹ | 1.30× slower | 1.36× slower |
-| build circular path mask | 21.09 µs | 46.41 µs | 9.55 µs | 2.21× faster | 2.20× slower |
-| 64 triangles, fill | 65.95 µs | 130.68 µs | 33.62 µs | 1.96× faster | 1.98× slower |
-| 8 gentle cubic arches, fill | 13.73 µs | 20.68 µs | 8.27 µs | 1.66× faster | 1.51× slower |
-| cubic fill under rectangle clip | 10.82 µs | 17.54 µs | 3.54 µs | 3.06× faster | 1.62× slower |
-| cubic arches, width-6 butt/miter stroke | 29.44 µs | 64.71 µs | 14.35 µs | 2.05× faster | 2.20× slower |
-| 32-segment polyline, butt/miter stroke | 62.12 µs | 133.42 µs | 25.71 µs | 2.42× faster | 2.15× slower |
-| 32-segment polyline, round stroke | 78.27 µs | 181.42 µs | 34.51 µs | 2.27× faster | 2.32× slower |
+| 1 fractional rectangle, fill | 4.02 µs | 4.82 µs | 3.39 µs | 1.19× faster | 1.20× slower |
+| 16 fractional rectangles, fill | 17.58 µs | 28.38 µs | 11.63 µs | 1.51× faster | 1.61× slower |
+| 64 fractional rectangles, fill | 59.51 µs | 106.70 µs | 33.20 µs | 1.79× faster | 1.79× slower |
+| large fractional rectangle, fill | 24.57 µs | 28.86 µs | 14.24 µs | 1.72× faster | 1.17× slower |
+| large rectangle, linear gradient | 62.60 µs | 146.72 µs | 31.57 µs | 1.98× faster | 2.34× slower |
+| large rectangle, radial gradient | 114.12 µs | 339.56 µs | 41.10 µs | 2.78× faster | 2.98× slower |
+| large rectangle, conic gradient (Fast) | 181.65 µs | 389.78 µs | 67.22 µs | 2.70× faster | 2.15× slower |
+| large rectangle, sparse retained path mask | 6.06 µs | 7.74 µs | 29.77 µs¹ | 4.91× slower | 1.28× slower |
+| large rectangle, dense retained path mask | 23.20 µs | 31.86 µs | 29.78 µs¹ | 1.28× slower | 1.37× slower |
+| build circular path mask | 20.51 µs | 46.78 µs | 9.04 µs | 2.27× faster | 2.28× slower |
+| 64 triangles, fill | 65.08 µs | 128.87 µs | 32.97 µs | 1.97× faster | 1.98× slower |
+| 8 gentle cubic arches, fill | 13.30 µs | 20.76 µs | 7.67 µs | 1.73× faster | 1.56× slower |
+| cubic fill under rectangle clip | 11.10 µs | 17.83 µs | 3.62 µs | 3.07× faster | 1.61× slower |
+| cubic arches, width-6 butt/miter stroke | 28.22 µs | 64.84 µs | 14.28 µs | 1.98× faster | 2.30× slower |
+| 32-segment polyline, butt/miter stroke | 61.10 µs | 135.19 µs | 26.08 µs | 2.34× faster | 2.21× slower |
+| 32-segment polyline, round stroke | 79.98 µs | 188.06 µs | 35.81 µs | 2.23× faster | 2.35× slower |
 
 | Scene | f32 pixels changed from Blend2D | fixed pixels changed from f32 | fixed mean/max error from f32 |
 | --- | ---: | ---: | ---: |
@@ -401,70 +415,33 @@ for fixed; decomposition plus outline expansion measures 5.017 and 16.546 µs.
 The fixed cost buys deterministic integer length and rational interpolation,
 plus exact capacity preflight before caller-owned output is modified.
 
-The harness explicitly aligns butt caps, miter-bevel joins, and miter limit 4,
-since Blend2D's default miter-clip join does not match ugl-rs. More strongly
-inflected cubic strokes currently make the fixed backend return
-`CrossingEdges`; they remain a production-reliability task rather than being
-timed as if all backends supported the same input. Stroke still includes curve
-flattening and outline construction on every draw, while Blend2D uses its
-production stroker and JIT raster pipeline. Compact fixed outline emission
-reduced the cubic-stroke median from 284.75 to 76.89 µs without increasing its
-maximum f32 delta beyond one code value. Long round strokes remain expensive
-because fixed arc construction and the resulting edge count are still scalar.
+The current matrix shows three stable regimes. Simple solid f32 fills are about
+1.2–2.0× Blend2D, gradients about 2.0–2.8×, and strokes about 2.0–2.3×. Fixed
+usually costs another 1.2–3.0× over f32 on this desktop CPU; that ratio measures
+widened integer arithmetic on Apple silicon, not expected MCU throughput.
+Retained sparse masks favor ugl-rs because work follows cached non-zero bounds;
+the Blend2D equivalent includes a `DST_IN` image pass and is not a native path
+clip comparison. Historical optimization measurements and rejected experiments
+live in [`DESIGN.md`](DESIGN.md) so this README keeps one authoritative table.
 
-The large solid span and rectangle-clip scenes expose the next structural
-gaps. Pairwise packed scalar source-over improved every f32 scene by roughly
-5–10%, but long encoded RGBA8 spans remain far behind Blend2D's JIT vector
-compositor. Integer rectangle clips cache their classification and bounds once,
-bypass per-pixel coverage multiplication, and constrain analytic/fixed row and
-cell processing to the conservative clipped domain. Integer clips then pass the
-compositor directly to the bounded rasterizer, removing the adapter branch from
-every emitted span. This reduced the matched clipped cubic from 19.26 to
-10.82 µs for f32 and from 31.08 to 17.54 µs for fixed without changing either
-checksum.
-Memory and cold-start/JIT cost still require separate matched scenes.
+### Expected micro{gl} position
 
-The nested-prefix 1/16/64 rectangle series separates fixed frame overhead from
-per-shape scaling. Direct vertical-run emission reduced the original f32
-4.26/23.23/83.67 µs baseline; the current synchronized run is
-4.03/17.31/59.31 µs and its 64-shape gap is 1.74×.
-Fixed vertical-trapezoid boundary area reduced its raster-only stage from
-203.61 to 144.04 µs. Direct disjoint-trapezoid emission subsequently brings
-the complete fixed 1/16/64 draws to 4.38/28.42/108.87 µs. The f32 and fixed
-outputs remain byte-identical. Event-free f32 rows
-with disjoint sloped spans now integrate their boundary cells directly and
-omit the empty gaps from cell clearing and prefix scanning; touching,
-crossing, or partial-height rows retain the general analytic-cell path. Fixed
-full rows use the analogous Q24.8 piecewise integral when trapezoid pixel
-envelopes are disjoint; overlapping, crossing, and partial-height slabs retain
-the exact rational/polygon accumulator.
+No matched micro{gl} benchmark is claimed yet. Its path API caches tessellation,
+then rasterizes the resulting triangles with integer edge functions; optional
+AA is a fast signed-distance approximation at selected boundary edges rather
+than ugl-rs's exact analytic pixel area. This gives micro{gl} a plausible
+advantage for repeatedly drawing a stable, modest tessellation and for simple
+specialized primitives. It can lose on complex or skinny tessellations because
+triangle bounding boxes revisit pixels and interior triangles add setup and
+overdraw, while ugl-rs fixed streams ordered trapezoid spans and shades covered
+runs once. Its default path examples also disable AA, which is not comparable
+with either ugl-rs production backend.
 
-The matched horizontal linear gradient uses a 256-entry encoded ramp and black
-stops whose alpha changes from 32 to 224, avoiding ambiguity from different RGB
-interpolation spaces. Batched affine span stepping plus direct full-coverage
-composition reduced f32 from 381.33 to 192.50 µs. Direct Pad-ramp traversal
-then reduced it to 130.14 µs; direct vertical coverage now brings the complete
-f32 draw to 63.81 µs. Direct fixed trapezoid emission and a checked i64 span
-projection reduce the fixed result to 149.07 µs. Both
-ugl-rs backends are byte-identical; their one-code-value delta from Blend2D is
-its gradient quantization rule. The remaining 2.02× desktop gap is dominated
-by scalar ramp lookup and per-pixel writes rather than coverage.
-
-The retained path-mask scenes exclude mask construction. Equal mask runs are
-scanned eight bytes at a time and vertical coverage is emitted directly. f32
-now measures 5.44 µs for a radius-24 sparse mask and 22.14 µs for the existing
-radius-100 mask; fixed measures 7.46 and 31.81 µs. `CoverageMask` derives and
-caches its non-zero bounds during retained-resource setup, so both rasterizers
-visit only that domain; the f32 sink still uses word-wise zero-run filtering
-inside it. ¹ Blend2D's roughly
-30 µs result is an explicitly labeled equivalent implemented by drawing the
-shape and applying a retained
-PRGB32 mask with `DST_IN`; Blend2D exposes no free-path Context clip, so this
-includes an extra image pass and is not evidence for a native path-mask API.
-Building the same mask costs 21.09 µs for f32, 46.41 µs for fixed, and
-9.55 µs for Blend2D; normalization to RGBA is outside the timed region. Direct
-disjoint-row emission substantially closes the former rasterization gap; the
-remaining cost is still separate from retained-mask composition.
+The defensible prior is therefore “same broad embedded performance class,” not
+“approximately equal to fixed.” Depending on geometry and whether tessellation
+is cached, micro{gl} could range from faster than fixed to materially slower.
+The matched harness described in [`DESIGN.md`](DESIGN.md) is required before a
+numeric ratio is published.
 
 #### f32 stroke stage profile
 
@@ -479,16 +456,16 @@ A focused release diagnostic on the same host produced these central estimates:
 
 | Stage | Time |
 | --- | ---: |
-| centerline curve flatten | 1.83 µs |
-| stroke outline expansion | 0.96 µs |
-| sparse row bin construction | 1.16 µs |
-| analytic coverage integration and run emission | 22.52 µs sparse cells |
-| analytic coverage plus encoded blending | 29.91 µs |
-| complete clear + flatten + stroke + encoded composite | 34.66 µs |
+| centerline curve flatten | 1.74 µs |
+| stroke outline expansion | 1.06 µs |
+| sparse row bin construction | 1.21 µs |
+| analytic coverage integration and run emission | 20.87 µs sparse cells |
+| analytic coverage plus encoded blending | 25.33 µs |
+| complete clear + flatten + stroke + encoded composite | 28.22 µs |
 
 The independently measured stages are not strictly additive, but they locate
 the dominant cost: flatten, outline, and binning total about 4 µs, while
-coverage plus encoded blending remains about 30 µs. A prepared-stroke
+coverage plus encoded blending remains about 25 µs. A prepared-stroke
 API can still remove repeated geometry work for retained content, but it cannot
 close the measured Blend2D gap by itself. Active-edge processing, slab event
 handling, area integration, and emitted-run cost therefore take priority;

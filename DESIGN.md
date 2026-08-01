@@ -371,39 +371,39 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   full-coverage writes over transparent destinations avoid redundant coverage
   multiplication. Together these changes reduced the matched large-gradient
   draw from 381.33 to 192.50 µs for f32 and 446.92 to 221.24 µs for fixed.
-  Direct Pad-ramp traversal plus vertical-run emission reduced f32 to 63.81 µs.
+  Direct Pad-ramp traversal plus vertical-run emission reduced f32 to 62.60 µs.
   Fixed span projection narrows parameter, step, denominator, and terminal value
   together before entering its i64 ramp mapper, reducing the fixed draw from
-  187.13 to 149.07 µs. Both backends remain byte-identical. Blend2D is still
-  2.02× faster than f32, so future work should batch ramp lookup/output rather
+  187.13 to 146.72 µs. Both backends remain byte-identical. Blend2D is still
+  1.98× faster than f32, so future work should batch ramp lookup/output rather
   than further tune path coverage for this scene.
 - Concentric radial samplers advance squared distance with a second-order
   difference across each span instead of rebuilding coordinates and products
   per pixel. Scheduling four recurrence values together, while preserving the
   scalar update order, lets the compiler overlap independent square roots. The
   output checksum is unchanged; the matched f32 median fell from 202.22 through
-  123.98 to 115.82 µs, and fixed from 542.18 to 345.51 µs. Blend2D measures
-  41.44 µs, leaving SIMD square-root throughput and encoded ramp/compositor
+  123.98 to 114.12 µs, and fixed from 542.18 to 339.56 µs. Blend2D measures
+  41.10 µs, leaving SIMD square-root throughput and encoded ramp/compositor
   batching as the measured paint costs.
 - The matched conic scene explicitly uses the opt-in `Fast` angle policy while
   `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
   approximation; fixed evaluates the same polynomial in widened integer turns
   instead of 16 CORDIC steps. Encoded span traversal reuses coordinates and
-  direct ramp indexing. Formal medians are 184.31 µs f32, 356.96 µs fixed,
-  and 68.38 µs Blend2D. Fixed differs from f32 at 2 of 65,536 pixels, each by one
+  direct ramp indexing. Formal medians are 181.65 µs f32, 389.78 µs fixed,
+  and 67.22 µs Blend2D. Fixed differs from f32 at 2 of 65,536 pixels, each by one
   code value; the fixed fast path is about 77% faster than the Exact CORDIC
   diagnostic without adding allocation or floating-point work.
 - Retained path masks scan equal coverage runs in eight-byte words before
   forwarding spans. `CoverageMask` caches non-zero bounds at retained-resource
   construction, and both rasterizers constrain coverage work to that region;
   the f32 sink continues word-wise filtering inside it. Radius-24/radius-100
-  density scenes measure 5.80/23.39 µs for f32, 7.46/31.81 µs for fixed,
-  and roughly 30 µs for Blend2D. This preserves the generic coverage-sink
+  density scenes measure 6.06/23.20 µs for f32, 7.74/31.86 µs for fixed,
+  and 29.77/29.78 µs for Blend2D. This preserves the generic coverage-sink
   contract and fixed memory. Blend2D has
-  no public free-path clip; its 29.98 µs comparison is a retained PRGB32 `DST_IN`
+  no public free-path clip; its comparison is a retained PRGB32 `DST_IN`
   emulation and must remain labeled as such.
-- Building the circular mask separately measures 21.09 µs for f32, 46.41 µs
-  for fixed, and 9.55 µs for Blend2D. RGBA normalization is excluded. Direct
+- Building the circular mask separately measures 20.51 µs for f32, 46.78 µs
+  for fixed, and 9.04 µs for Blend2D. RGBA normalization is excluded. Direct
   disjoint-row emission closed much of the former gap; the remainder belongs
   to curve flattening and coverage rasterization, not retained-mask lookup or
   source-over composition.
@@ -412,17 +412,17 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   Direct render entry points also pass their compositor straight to the
   region-bounded rasterizer for integral clips, removing the adapter branch;
   fractional boundaries retain exact antialiased multiplication. The matched
-  clipped cubic now measures 10.82 µs f32 and 17.54 µs fixed with unchanged
+  clipped cubic now measures 11.10 µs f32 and 17.83 µs fixed with unchanged
   checksums.
 - Nested-prefix 1/16/64-rectangle scenes separate fixed frame overhead from
-  edge-count slope. Current f32 medians are 4.03/17.31/59.31 µs versus
-  Blend2D's 3.97/11.53/34.13 µs. The widening fill gap belongs to repeated edge,
+  edge-count slope. Current f32 medians are 4.02/17.58/59.51 µs versus
+  Blend2D's 3.39/11.63/33.20 µs. The widening fill gap belongs to repeated edge,
   coverage-run, and composition work rather than clear or runner overhead.
   Direct vertical-run emission removes dense cell scans for unchanged vertical
   active sets. Fixed initially measured 9.43/60.31/238.70 µs. Coverage attribution
   showed 203.61 µs in its raster stage; direct vertical-trapezoid boundary area
   reduced that to 144.04 µs; guarded direct trapezoid emission brings the
-  current 1/16/64 draws to 4.38/28.42/108.87 µs. Sloped edges retain polygon
+  current 1/16/64 draws to 4.82/28.38/106.70 µs. Sloped edges retain polygon
   clipping and exact rational
   crossings, while axis-aligned rectangles no longer pay that general cost.
 - The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
@@ -450,7 +450,7 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   winding-aware emitter reconstructs boundary pixels and full spans directly;
   a pending boundary cell merges disjoint intervals that share one pixel.
   This avoids both reintegration and dense-cell rescans, reducing the matched
-  64-rectangle draw from 83.67 to the current 59.31 µs without changing output.
+  64-rectangle draw from 83.67 to the current 59.51 µs without changing output.
 - The core remains `no_std` capable, while default desktop builds enable
   `std`. Floating-point capability is independent: `std` uses platform
   floor/ceil, Arm `eabihf` targets select a hardware-friendly no_std
@@ -545,6 +545,54 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   recurrence did not improve the isolated span diagnostic and regressed the
   complete draw by roughly 2–3%. The existing narrowed i64 mapping remains.
 
+### micro{gl} comparison hypothesis
+
+This is an algorithmic prior, not benchmark evidence. The reviewed upstream
+revision is `d7ddab9890ae6b391bc646b7086e695c06260abb`:
+
+- `path::tessellateFill` and `tessellateStroke` cache their output until path or
+  tessellation options change. Repeated draws can therefore exclude geometry
+  decomposition, unlike the current ugl-rs immediate stroke benchmark.
+- Path fill/stroke reaches `drawTriangles`; each triangle walks its clipped
+  integer bounding box with incremental edge functions. This is compact and
+  predictable, but cost follows the sum of triangle bounding-box areas rather
+  than only emitted coverage. Long, skinny, overlapping, or heavily subdivided
+  triangles can therefore pay rejection tests and overdraw that scanline spans
+  avoid.
+- Path AA is optional and examples commonly instantiate it as `false`. When
+  enabled, triangle coverage uses a one-pixel signed-distance ramp on boundary
+  edges. It is cheaper than exact analytic integration but does not implement
+  the same coverage rule, so non-AA or approximate-AA results must not be placed
+  in the existing Blend2D table.
+- Geometry accepts configurable `Q` types, while the triangle rasterizer maps
+  transformed coordinates to integer subpixels and selects 32/64-bit arithmetic
+  through compile-time canvas options. This is conceptually close to ugl-rs
+  fixed's deterministic integer pipeline, but the dominant algorithms differ:
+  tessellation plus triangle bboxes versus directed edges plus sparse strips and
+  analytic trapezoid area.
+- micro{gl} has specialized circles, rectangles, rounded rectangles, and
+  triangles. Such primitives may beat a generic path route. Comparisons must
+  report specialized and path APIs separately instead of crediting one to the
+  other.
+
+Expected ordering by scene is consequently conditional:
+
+| Scene property | Expected advantage | Reason |
+| --- | --- | --- |
+| cached simple mesh, AA off | micro{gl} | no retessellation and minimal integer inner loop |
+| cached modest mesh, approximate AA | micro{gl} may lead | cheaper boundary rule, but different quality contract |
+| many skinny/overlapping triangles | ugl-rs fixed may lead | span work follows covered rows rather than summed bboxes |
+| dynamic complex path | workload-dependent | micro{gl} tessellation versus ugl-rs flatten/bin/raster costs |
+| exact-area AA requirement | ugl-rs | micro{gl}'s reviewed triangle AA is not equivalent |
+| retained sparse coverage or mask reuse | ugl-rs | explicit sparse strips/tiles and cached non-zero mask bounds |
+
+A future matched harness must use the same RGBA8888 target, source-over alpha,
+256×256 scenes, warm-up/sample protocol, and include clear. It must publish four
+separate micro{gl} rows where supported: cached/non-cached tessellation crossed
+with AA off/on. Quality deltas must accompany AA-on timing. Only the cached,
+AA-on path row is a meaningful approximation to retained production drawing;
+none should be inferred from desktop fixed-versus-Blend2D ratios.
+
 ## Implementation rules
 
 - Correctness and documented semantics precede performance.
@@ -638,8 +686,9 @@ Status: prototype implemented; production validation remains.
 - Proven intermediate widths and explicit rounding/overflow policy.
 - Differential tests against the `f32` reference.
 - Representative targets that build without hardware floating point.
-- A future backend feature split must permit a pure fixed build that compiles
-  no f32 renderer, floating sampler, or `libm` dependency.
+- The `f32` and `fixed` backends are independently selectable. A pure fixed
+  no_std build compiles no f32 renderer or floating sampler and has no `libm`
+  dependency.
 
 ### M5 — Fixed-memory rendering
 
@@ -683,12 +732,9 @@ directly into caller-owned `CoverageMaskMut` storage. The fixed path-mask route
 uses the existing bounded geometry and raster workspaces, so mask production
 and consumption remain allocation-free and no-FPU.
 
-### Planned backend feature split
+### Backend feature split
 
-The current f32 backend is unconditional, so even a fixed-only application
-builds its floating modules and keeps `libm` in the dependency graph. Once the
-public facade and shared geometry boundaries have stabilized, introduce an
-explicit backend split with these requirements:
+The explicit backend split is implemented with these contracts:
 
 - an f32 feature gates the analytic rasterizer, floating stroke/dash/paint
   implementations, their public entry points, tests, examples, and benchmarks;
@@ -700,13 +746,12 @@ explicit backend split with these requirements:
   duplicated f32/fixed implementations merely to satisfy feature boundaries;
 - CI checks hosted f32, no_std f32, hosted fixed, pure no_std fixed, and the
   combined configuration, including representative no-FPU targets;
-- binary-size and compile-time measurements must demonstrate that pure fixed
-  builds actually omit the floating backend and `libm`.
+- `cargo tree --no-default-features --features fixed -e normal` contains no
+  `libm`; binary-size and compile-time tracking remain release work.
 
 Cargo cannot activate an optional dependency from the absence of `std`, so the
-no_std f32 math backend will need an explicit positive feature or an equivalent
-additive feature design. Do not make `libm` optional before that complete split:
-`--no-default-features` must remain a valid, unsurprising build in the meantime.
+positive `f32` feature enables optional `libm`; hosted builds additionally enable
+`std`, while `fixed` alone selects neither.
 
 ### Clip/mask bounds optimization
 
@@ -717,12 +762,10 @@ logical target dimensions for validation. Rectangle and nested path
 intersection therefore visit only the retained region; borrowed public masks
 remain zero-copy and full-canvas by default.
 
-The remaining work is to avoid the temporary canvas-sized buffer used while a
-new path clip is rasterized, without changing antialiased intersection semantics:
+New f32 path clips derive conservative bounds from prepared edges and rasterize
+directly into local storage without rebuilding geometry or allocating a
+canvas-sized temporary mask. Remaining work is narrower:
 
-- derive conservative clipped bounds from transformed path geometry and the
-  target, allocate/clear only that rectangle, and intersect bounds before
-  multiplying nested clips;
 - preserve zero-copy borrowed full-canvas masks while allowing bounded masks
   through the same `CanvasRef` and low-level rendering adapters;
 - specialize empty, rectangular, and fully opaque masks so they do not become
@@ -734,9 +777,9 @@ new path clip is rasterized, without changing antialiased intersection semantics
   benchmarks for small clips on large targets, nested clips, clearing,
   intersection, peak bytes, and masked draw throughput.
 
-Retained memory and subsequent intersection now scale with the clipped region.
-The optimization is complete when initial mask allocation and rasterization do
-so as well, and the planned large-target benchmarks cover that construction path.
+Retained memory, initial mask allocation, rasterization, and subsequent
+intersection now scale with the clipped region. Large-target peak-allocation
+instrumentation remains benchmark work.
 
 The framebuffer boundary now distinguishes raw storage from valid color:
 solid paint and gradient-stop inputs use straight encoded `SRGBA<u8>`;
@@ -759,8 +802,9 @@ delegates to allocation-free functions. Those low-level functions remain
 public expert APIs for retained coverage, custom sinks, exact capacity
 planning, and applications that keep state elsewhere.
 
-`Canvas` (implemented by `context::Canvas` and re-exported at crate root) is the
-ordinary allocation-backed facade. It owns and reuses f32 scratch, performs
+`Canvas` (implemented by `context::Canvas` and re-exported at crate root) and
+`fixed::Canvas` are the ordinary allocation-backed facades. Each owns and reuses
+backend-specific scratch, performs
 exact planning and any growth before drawing, and then delegates to `CanvasRef`.
 Consequently its public workflow does not expose edge, intersection, row-bin,
 or coverage-row storage. `CanvasRef` remains the bounded zero-allocation
@@ -801,17 +845,20 @@ The first stable method vocabulary is small:
   rather than storing it in context state; their additional point/contour
   buffers are explicit in `context::Workspace`.
 - clipping is context state, represented as no clip, one rectangle, or one
-  borrowed coverage mask. `Canvas` additionally owns accumulated clip masks
-  and scopes them together with drawing state through `save`/`restore`.
+  borrowed coverage mask. The f32 `Canvas` additionally owns accumulated path
+  clips; both owning facades scope their available clip state together with
+  drawing state through `save`/`restore`.
 
-Status: the first `context::CanvasRef` and `fixed::context::CanvasRef` fill/stroke/dash
-facade is implemented. Both share generic state storage and parallel method
+Status: owning and borrowed f32/fixed fill/stroke/dash facades are implemented.
+Both share generic state storage and parallel method
 names; rectangle/mask clip state and statically dispatched custom paint are
 supported. `Canvas::set_clip_path` provides ordinary owned path clipping;
 bounded `CanvasRef` and low-level callers use `rasterize_path_clip` with a
 caller-owned `CoverageMaskMut`, then borrow it with `set_clip_mask`.
-`Canvas` save/restore and intersecting rectangle, mask, and free-path clips are
-implemented. The bounded `CanvasRef` deliberately retains a single borrowed clip;
+The f32 `Canvas` implements intersecting rectangle, mask, and free-path clips;
+`fixed::Canvas` currently owns rectangle or copied mask state and manages all
+render scratch, while fixed owned path-clip accumulation remains future work.
+The bounded `CanvasRef` deliberately retains a single borrowed clip;
 callers that require a bounded clip stack own its mask storage explicitly.
 Exact fill/stroke/dash planning is available
 both through low-level functions and `CanvasRef` methods; path clips reuse the fill
