@@ -387,8 +387,8 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   per pixel. Scheduling four recurrence values together, while preserving the
   scalar update order, lets the compiler overlap independent square roots. The
   output checksum is unchanged; the matched f32 median fell from 202.22 through
-  123.98 to 117.05 µs, and fixed from 542.18 to 348.89 µs. Blend2D measures
-  41.10 µs, leaving SIMD square-root throughput and encoded ramp/compositor
+  123.98 to 115.47 µs, and fixed from 542.18 to 352.22 µs. Blend2D measures
+  41.41 µs, leaving SIMD square-root throughput and encoded ramp/compositor
   batching as the measured paint costs.
 - The matched conic scene explicitly uses the opt-in `Fast` angle policy while
   `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
@@ -867,8 +867,14 @@ closed-form edge integral reduce fixed coverage from about 41.60 to 37.00 µs
 (about 11%); the corresponding f32 single-span specialization improves about
 1%. A further split measures fixed strip binning at about 1.02 µs and synthetic
 full-span run emission at 0.18 µs, confirming that active/event processing and
-boundary integration own nearly all remaining time. Further path-mask work
-should target those stages, not curve flattening or run emission.
+boundary integration own nearly all remaining time. Fixed `StripBins` can now
+be prepared once in `RasterWorkspace` and replayed through
+`rasterize_lines_binned`; binding checks reject reuse with a different target
+height or line count. A dedicated two-active-edge trapezoid branch was also
+benchmarked and rejected because it duplicated the general integration work
+without improving the circular-mask result. Further path-mask work should
+target active/event processing and boundary integration, not curve flattening,
+binning, or run emission.
 
 The sparse f32 cell emitter now jumps over zero cell ranges after applying a
 range delta instead of quantizing every full-interior pixel. Circular coverage

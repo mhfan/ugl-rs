@@ -313,35 +313,33 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 ```
 
 See [the harness documentation](benches/blend2d/README.md) for scenes, timing
-boundaries, normalization, versions, and CSV output. The current regression run
-used seven 2,000-frame samples after 200 warm-up frames on 2026-08-01; targeted
-fixed-gradient reruns used five 1,000-frame samples after 100 warm-ups. Blend2D
-was `6dbc2cef`, AsmJit `0bd5787b`, rustc 1.97.1, and macOS 15.6 arm64. This is
-broad enough for regression attribution; use the documented
-500/5,000/9 settings for publication-quality numbers.
+boundaries, normalization, versions, and CSV output. The current baseline used
+the publication settings: 500 warm-ups, 5,000 timed frames, and nine samples on
+2026-08-01. Blend2D was `6dbc2cef`, AsmJit `0bd5787b`, rustc 1.97.1, and macOS
+15.6 arm64.
 
 | Representative scene | f32 | fixed | Blend2D |
 | --- | ---: | ---: | ---: |
-| 1 fractional rectangle | 3.97 µs | 4.24 µs | 3.97 µs |
-| 64 fractional rectangles | 59.87 µs | 102.68 µs | 33.46 µs |
-| large linear gradient | 63.72 µs | 120.60 µs | 31.70 µs |
-| large radial gradient | 117.05 µs | 348.89 µs | 41.29 µs |
-| large conic gradient, Fast | 184.94 µs | 375.76 µs | 67.83 µs |
-| sparse retained path mask | 5.66 µs | 6.49 µs | 30.03 µs¹ |
-| build circular path mask | 20.35 µs | 42.86 µs | 9.24 µs |
-| cubic fill under rectangle clip | 10.86 µs | 16.65 µs | 3.54 µs |
-| cubic butt/miter stroke | 28.78 µs | 62.56 µs | 14.88 µs |
-| 32-segment round stroke | 77.98 µs | 163.35 µs | 34.91 µs |
+| 1 fractional rectangle | 3.98 µs | 4.27 µs | 3.69 µs |
+| 64 fractional rectangles | 60.02 µs | 99.76 µs | 33.58 µs |
+| large linear gradient | 63.53 µs | 121.65 µs | 31.81 µs |
+| large radial gradient | 115.47 µs | 352.22 µs | 41.41 µs |
+| large conic gradient, Fast | 184.07 µs | 379.91 µs | 67.71 µs |
+| sparse retained path mask | 5.68 µs | 6.44 µs | 30.03 µs¹ |
+| build circular path mask | 18.58 µs | 42.33 µs | 9.21 µs |
+| cubic fill under rectangle clip | 10.65 µs | 16.55 µs | 3.55 µs |
+| cubic butt/miter stroke | 27.43 µs | 62.63 µs | 14.37 µs |
+| 32-segment round stroke | 77.73 µs | 161.44 µs | 34.55 µs |
 
 ¹ Blend2D has no equivalent free-path Context clip; this row uses a retained
 PRGB32 `DST_IN` pass and is not a native path-clip comparison.
 
 The important conclusions are:
 
-- Simple f32 fills are about 1.2–2.0× Blend2D; gradients and strokes are commonly
+- Simple f32 fills are about 1.1–2.0× Blend2D; gradients and strokes are commonly
   2.0–2.8×. Coverage integration and scalar paint/composition remain the main
   desktop gaps.
-- Fixed is generally 1.1–2.1× slower than f32 on this Apple CPU; the
+- Fixed is generally 1.1–2.3× slower than f32 on this Apple CPU; the
   square-root-heavy radial sampler is about 3.0×. Desktop ratios measure widened
   deterministic integer arithmetic and do not predict MCU throughput.
 - f32 and fixed are byte-identical for the rectangle grid, linear gradient, and
