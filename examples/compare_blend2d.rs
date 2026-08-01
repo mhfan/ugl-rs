@@ -26,9 +26,9 @@ const EDGE_CAPACITY: usize = 4096;
     Stroke { round: bool },
 }
 
-fn rectangles() -> Path {
-    let mut path = PathBuilder::with_capacity(SHAPES * 5);
-    for index in 0..SHAPES {
+fn rectangles(count: usize) -> Path {
+    let mut path = PathBuilder::with_capacity(count * 5);
+    for index in 0..count {
         let x = (index % 8) as f32 * 30.0 + 4.25;
         let y = (index / 8) as f32 * 30.0 + 4.5;
         path.move_to((x, y)).line_to((x + 22.5, y))
@@ -89,7 +89,9 @@ fn mask_path() -> Path {
 
 fn scene() -> Result<(&'static str, Path, Operation), String> {
     match path_argument("--scene")?.as_deref().unwrap_or("fill_rectangles_64") {
-        "fill_rectangles_64" => Ok(("fill_rectangles_64", rectangles(), Operation::Fill)),
+        "fill_rectangles_1" => Ok(("fill_rectangles_1", rectangles(1), Operation::Fill)),
+        "fill_rectangles_16" => Ok(("fill_rectangles_16", rectangles(16), Operation::Fill)),
+        "fill_rectangles_64" => Ok(("fill_rectangles_64", rectangles(64), Operation::Fill)),
         "fill_rectangle_large" => Ok(("fill_rectangle_large", large_rectangle(),
             Operation::Fill)),
         "fill_rectangle_linear_gradient" => Ok(("fill_rectangle_linear_gradient",
@@ -321,7 +323,10 @@ fn fixed_path(scene: &str) -> Path<ugl_rs::fixed::Scalar> {
     let fixed = Scalar::from_num;
     let mut path = PathBuilder::new();
     match scene {
-        "fill_rectangles_64" => for index in 0..SHAPES {
+        "fill_rectangles_1" | "fill_rectangles_16" | "fill_rectangles_64" =>
+        for index in 0..match scene {
+            "fill_rectangles_1" => 1, "fill_rectangles_16" => 16, _ => SHAPES,
+        } {
             let (x, y) = (fixed((index % 8) as f32 * 30.0 + 4.25),
                 fixed((index / 8) as f32 * 30.0 + 4.5));
             path.move_to((x, y)).line_to((x + fixed(22.5), y))

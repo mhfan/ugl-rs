@@ -399,6 +399,13 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   for fixed, and 9.16 µs for Blend2D. RGBA normalization is excluded. This
   6.49× f32 gap belongs to curve flattening and coverage rasterization; it must
   not be attributed to retained-mask lookup or source-over composition.
+- Nested-prefix 1/16/64-rectangle scenes separate fixed frame overhead from
+  edge-count slope. Formal f32 medians are 4.26/23.23/83.67 µs versus
+  Blend2D's 3.55/10.97/33.68 µs. The f32 increment is about 1.25 µs per shape
+  versus Blend2D's 0.48 µs, so the widening fill gap belongs to repeated edge,
+  coverage-run, and composition work rather than clear or runner overhead.
+  Fixed measures 9.43/60.31/238.70 µs, about 3.6 µs per added rectangle; its
+  widened exact area arithmetic needs separate trapezoid/rational attribution.
 - The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
   The canonical rectangle scene has one-pixel boundary runs around 16–21-pixel
   interiors; full-coverage runs contain about 83% of covered pixels. Future

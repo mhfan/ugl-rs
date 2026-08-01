@@ -17,6 +17,8 @@ cmake --build "$build_dir" --target blend2d_bench --config Release
 cargo build --release --example compare_blend2d
 
 for scene in \
+  fill_rectangles_1 \
+  fill_rectangles_16 \
   fill_rectangles_64 \
   fill_rectangle_large \
   fill_rectangle_linear_gradient \

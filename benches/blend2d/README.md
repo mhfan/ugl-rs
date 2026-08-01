@@ -7,7 +7,8 @@ Third-party source and build products are intentionally not vendored.
 
 ## Contract
 
-- Scenes: `256x256`; 64 independent fractional-coordinate rectangles, one
+- Scenes: `256x256`; 1, 16, and 64 nested-prefix independent
+  fractional-coordinate rectangles, one
   large fractional rectangle with solid, linear-gradient, and concentric
   radial-gradient and conic-gradient paint, 64
   triangles, a large rectangle through a retained circular path mask, an

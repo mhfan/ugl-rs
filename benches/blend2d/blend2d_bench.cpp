@@ -46,9 +46,9 @@ uint64_t checksum(const std::vector<uint8_t>& bytes) {
   return hash;
 }
 
-BLPath rectangles() {
+BLPath rectangles(uint32_t count) {
   BLPath path;
-  for (uint32_t index = 0; index < kShapes; ++index) {
+  for (uint32_t index = 0; index < count; ++index) {
     double x = double(index % 8) * 30.0 + 4.25;
     double y = double(index / 8) * 30.0 + 4.5;
     path.move_to(x, y);
@@ -148,7 +148,9 @@ int main(int argc, char** argv) {
   const char* scene = scene_name(argc, argv);
   Operation operation = Operation::kFill;
   BLPath path;
-  if (std::strcmp(scene, "fill_rectangles_64") == 0) path = rectangles();
+  if (std::strcmp(scene, "fill_rectangles_1") == 0) path = rectangles(1);
+  else if (std::strcmp(scene, "fill_rectangles_16") == 0) path = rectangles(16);
+  else if (std::strcmp(scene, "fill_rectangles_64") == 0) path = rectangles(64);
   else if (std::strcmp(scene, "fill_rectangle_large") == 0) path = large_rectangle();
   else if (std::strcmp(scene, "fill_rectangle_linear_gradient") == 0) {
     path = large_rectangle();
