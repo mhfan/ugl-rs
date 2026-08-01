@@ -1,15 +1,20 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 1 ]; then
-  echo "usage: benches/blend2d/run.sh /absolute/path/to/blend2d" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 4 ]; then
+  echo "usage: benches/blend2d/run.sh /absolute/path/to/blend2d [warmup [iterations [samples]]]" >&2
   exit 2
 fi
 
 blend2d_dir=$1
+warmup=${2:-500}
+iterations=${3:-5000}
+samples=${4:-9}
 build_dir=${TMPDIR:-/tmp}/ugl-rs-blend2d-build
 output_dir=${TMPDIR:-/tmp}/ugl-rs-blend2d-output
 mkdir -p "$build_dir" "$output_dir"
+results="$output_dir/results.csv"
+: > "$results"
 
 cmake -S benches/blend2d -B "$build_dir" \
   -DBLEND2D_DIR="$blend2d_dir" -DCMAKE_BUILD_TYPE=Release
@@ -35,12 +40,17 @@ for scene in \
   stroke_polyline_round_32
 do
   "$build_dir/blend2d_bench" --scene "$scene" \
-    --output "$output_dir/blend2d-$scene.rgba"
+    --warmup "$warmup" --iterations "$iterations" --samples "$samples" \
+    --output "$output_dir/blend2d-$scene.rgba" | tee -a "$results"
   target/release/examples/compare_blend2d --scene "$scene" \
+    --warmup "$warmup" --iterations "$iterations" --samples "$samples" \
     --output "$output_dir/ugl-rs-$scene.rgba" \
-    --compare "$output_dir/blend2d-$scene.rgba"
+    --compare "$output_dir/blend2d-$scene.rgba" | tee -a "$results"
   target/release/examples/compare_blend2d --backend fixed --scene "$scene" \
+    --warmup "$warmup" --iterations "$iterations" --samples "$samples" \
     --output "$output_dir/ugl-rs-fixed-$scene.rgba" \
     --compare "$output_dir/blend2d-$scene.rgba" \
-    --compare-f32 "$output_dir/ugl-rs-$scene.rgba"
+    --compare-f32 "$output_dir/ugl-rs-$scene.rgba" | tee -a "$results"
 done
+
+echo "results: $results"

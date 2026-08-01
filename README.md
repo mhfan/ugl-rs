@@ -311,6 +311,10 @@ with:
 benches/blend2d/run.sh /absolute/path/to/blend2d
 ```
 
+Optional trailing `warmup`, `iterations`, and `samples` values support quick
+smoke runs and longer measurements. The complete output is retained as
+`${TMPDIR:-/tmp}/ugl-rs-blend2d-output/results.csv`.
+
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
 version metadata. The current three-backend baseline was measured on 2026-08-01

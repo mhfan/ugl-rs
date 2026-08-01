@@ -87,6 +87,11 @@ documentation, then run from the ugl-rs repository root:
 benches/blend2d/run.sh /absolute/path/to/blend2d
 ```
 
+Optional positional arguments override `warmup`, `iterations`, and `samples`,
+respectively. The harness retains normalized images and the complete combined
+CSV/difference output under `${TMPDIR:-/tmp}/ugl-rs-blend2d-output`; the latter
+is written to `results.csv`.
+
 The Blend2D CMake target is static and Release. The simple `BLContext(image)`
 constructor selects its synchronous renderer, so no asynchronous queue or
 thread-pool work leaks outside the timed loop.
