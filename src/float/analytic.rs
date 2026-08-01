@@ -249,19 +249,21 @@ fn prepare_direct_row(active: &mut [Intersection], y: u32) -> bool {
 fn emit_disjoint_row_spans<S>(intersections: &[Intersection], fill_rule: FillRule,
     x_origin: u32, width: u32, y: u32, sink: &mut S) ->
     Result<bool, RasterError<S::Error>> where S: CoverageSink {
-    let mut previous_end = 0;
-    let (mut winding, mut left) = (0_i32, None::<&Intersection>);
-    for right in intersections {
-        if let Some(left) = left && fill_rule.contains(winding) {
-            let start = floor(left.x0.min(left.x1) - x_origin as f32)
-                .clamp(0.0, width as _) as u32;
-            let end = ceil(right.x0.max(right.x1) - x_origin as f32)
-                .clamp(0.0, width as _) as u32;
-            if start < previous_end { return Ok(false); }
-            previous_end = end;
+    if intersections.len() > 2 {
+        let mut previous_end = 0;
+        let (mut winding, mut left) = (0_i32, None::<&Intersection>);
+        for right in intersections {
+            if let Some(left) = left && fill_rule.contains(winding) {
+                let start = floor(left.x0.min(left.x1) - x_origin as f32)
+                    .clamp(0.0, width as _) as u32;
+                let end = ceil(right.x0.max(right.x1) - x_origin as f32)
+                    .clamp(0.0, width as _) as u32;
+                if start < previous_end { return Ok(false); }
+                previous_end = end;
+            }
+            winding += right.winding as i32;
+            left = Some(right);
         }
-        winding += right.winding as i32;
-        left = Some(right);
     }
 
     fn flush<S>(run: &mut Option<(u32, u32, u8)>, x_origin: u32, y: u32,

@@ -598,12 +598,14 @@ fn accumulate_full_row_trapezoid(trapezoid: RoundedTrapezoid,
 fn emit_disjoint_trapezoids<S>(trapezoids: &[Trapezoid], x_origin: u32,
     x_end: u32, y: u32, sink: &mut S) -> Result<bool, RenderError<S::Error>>
     where S: CoverageSink {
-    let mut previous_end = x_origin;
-    for &trapezoid in trapezoids {
-        let rounded = round_trapezoid(trapezoid).map_err(RenderError::Raster)?;
-        let (start, end) = rounded_bounds(rounded, x_origin, x_end);
-        if start < previous_end { return Ok(false); }
-        previous_end = end;
+    if trapezoids.len() > 1 {
+        let mut previous_end = x_origin;
+        for &trapezoid in trapezoids {
+            let rounded = round_trapezoid(trapezoid).map_err(RenderError::Raster)?;
+            let (start, end) = rounded_bounds(rounded, x_origin, x_end);
+            if start < previous_end { return Ok(false); }
+            previous_end = end;
+        }
     }
 
     fn flush<S>(run: &mut Option<(u32, u32, u8)>, y: u32, sink: &mut S) ->

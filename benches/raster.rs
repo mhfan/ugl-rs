@@ -131,10 +131,27 @@ fn fill_curve_scene() -> Path {
     }   path.build()
 }
 
+fn circular_mask_scene() -> Path {
+    let radius = 100.0;
+    let k = radius * 0.552_284_7;
+    let mut path = PathBuilder::with_capacity(6);
+    path.move_to((128.0 + radius, 128.0))
+        .cubic_to((128.0 + radius, 128.0 + k),
+            (128.0 + k, 128.0 + radius), (128.0, 128.0 + radius))
+        .cubic_to((128.0 - k, 128.0 + radius),
+            (128.0 - radius, 128.0 + k), (128.0 - radius, 128.0))
+        .cubic_to((128.0 - radius, 128.0 - k),
+            (128.0 - k, 128.0 - radius), (128.0, 128.0 - radius))
+        .cubic_to((128.0 + k, 128.0 - radius),
+            (128.0 + radius, 128.0 - k), (128.0 + radius, 128.0));
+    path.build()
+}
+
 fn benchmark_fill_stages(c: &mut Criterion) {
     let mut group = c.benchmark_group("fill_stages_f32");
     for (name, path) in [("triangles_64", triangle_scene()),
-                         ("cubics_8", fill_curve_scene())] {
+                         ("cubics_8", fill_curve_scene()),
+                         ("circular_mask", circular_mask_scene())] {
         let mut edges = Vec::new();
         build_fill_edges(&path, Affine::identity(), FlattenOptions::default(),
             &mut |edge| {
@@ -1273,7 +1290,8 @@ fn benchmark_clip_masks(c: &mut Criterion) {
     use ugl_rs::{fixed::{
         canvas::{composite_solid_tiles, render_solid, render_solid_tiled},
         dash::{Pattern as DashPattern, dash_polyline},
-        flatten::{Options as FlattenOptions, flatten_path},
+        flatten::{Options as FlattenOptions, build_fill_edges as build_fixed_fill_edges,
+            flatten_path},
         raster::{CoverageRun, CoverageStrip, CoverageWorkspace,
             Line, Workspace, Segment, Trapezoid, STRIP_HEIGHT,
             prepare_lines, rasterize_lines, rasterize_lines_to_strips},
@@ -1431,6 +1449,58 @@ fn benchmark_clip_masks(c: &mut Criterion) {
         black_box(line_count);
     }));
     flatten_group.finish();
+
+    let (radius, center) = (Scalar::from_num(100.0), Scalar::from_num(128.0));
+    let k = Scalar::from_num(55.228_47);
+    let mut circle = PathBuilder::with_capacity(6);
+    circle.move_to((center + radius, center))
+        .cubic_to((center + radius, center + k),
+            (center + k, center + radius), (center, center + radius))
+        .cubic_to((center - k, center + radius),
+            (center - radius, center + k), (center - radius, center))
+        .cubic_to((center - radius, center - k),
+            (center - k, center - radius), (center, center - radius))
+        .cubic_to((center + k, center - radius),
+            (center + radius, center - k), (center + radius, center));
+    let circle = circle.build();
+    let mut circle_edges = Vec::new();
+    build_fixed_fill_edges(&circle, Affine::identity(), FlattenOptions::default(),
+        &mut |edge| {
+            circle_edges.push(edge); Ok::<_, core::convert::Infallible>(())
+        }).unwrap();
+    let mut circle_lines = vec![Line::default(); circle_edges.len()];
+    let circle_line_count = prepare_lines(&circle_edges, &mut circle_lines).unwrap();
+    let circle_requirements = ugl_rs::fixed::raster::strip_requirements(
+        &circle_lines[..circle_line_count], HEIGHT).unwrap();
+    let (mut circle_segments, mut circle_trapezoids, mut circle_area,
+        mut circle_offsets, mut circle_indices) = (
+        vec![Segment::default(); circle_line_count],
+        vec![Trapezoid::default(); circle_line_count.div_ceil(2)],
+        vec![0; WIDTH as usize], vec![0; circle_requirements.offsets],
+        vec![0; circle_requirements.indices]);
+    let mut mask_stages = c.benchmark_group("clip_path_stages_fixed");
+    mask_stages.bench_function("edge_build/circular_mask", |b| b.iter(|| {
+        circle_edges.clear();
+        build_fixed_fill_edges(&circle, Affine::identity(), FlattenOptions::default(),
+            &mut |edge| {
+                circle_edges.push(edge); Ok::<_, core::convert::Infallible>(())
+            }).unwrap();
+        black_box(circle_edges.len());
+    }));
+    mask_stages.bench_function("line_prepare/circular_mask", |b| b.iter(|| {
+        black_box(prepare_lines(&circle_edges, &mut circle_lines).unwrap());
+    }));
+    mask_stages.bench_function("coverage/circular_mask", |b| b.iter(|| {
+        let mut sink = RunCounter::default();
+        rasterize_lines(&circle_lines[..circle_line_count], WIDTH, HEIGHT,
+            FillRule::NonZero, &mut Workspace {
+                segments: &mut circle_segments, trapezoids: &mut circle_trapezoids,
+                row_area: &mut circle_area, strip_offsets: &mut circle_offsets,
+                strip_indices: &mut circle_indices,
+            }, &mut sink).unwrap();
+        black_box((sink.runs, sink.pixels));
+    }));
+    mask_stages.finish();
 
     let stop_values = [GradientStop::new( 0.0, RGBA::new(240, 20, 80,  32)),
                        GradientStop::new(0.35, RGBA::new(10, 220, 40, 160)),
