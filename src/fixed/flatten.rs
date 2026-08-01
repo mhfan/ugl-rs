@@ -1,7 +1,7 @@
 //! Allocation-free Q24.8 curve flattening without floating point.
 
-use crate::{common::{edge::{EdgeSink, FillEdgeBuilder, LineSink},
-        geometry::{Affine, Path, PathError, PathSegment, Point}},
+use crate::{common::geometry::{Affine, EdgeSink, FillEdgeBuilder, LineSink,
+        Path, PathError, PathSegment, Point},
     fixed::{DEVICE_RAW_LIMIT, Scalar}};
 
 const STACK_CAPACITY: usize = 32;
@@ -216,7 +216,7 @@ fn midpoint(a: Point<Scalar>, b: Point<Scalar>) -> Point<Scalar> {
 #[cfg(test)] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
-    use crate::common::{edge::Edge, geometry::PathBuilder};
+    use crate::common::geometry::{Edge, PathBuilder};
 
     type Line = (Point<Scalar>, Point<Scalar>);
 

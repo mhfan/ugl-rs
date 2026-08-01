@@ -10,7 +10,7 @@
 //! boundaries. Only adjacent pairs need crossing checks because the first
 //! future ordering change must occur between neighbors.
 
-use crate::{common::{edge::Edge, raster::{CoverageSink, FillRule}}, float::{ceil, floor,
+use crate::{common::{geometry::Edge, raster::{CoverageSink, FillRule}}, float::{ceil, floor,
         raster::{checked_width, emit_coverage_runs, RasterError}},
 };
 
@@ -924,7 +924,7 @@ fn integrate_partial_span(left: &Intersection, right: &Intersection,
     use alloc::{vec, vec::Vec};
     use core::convert::Infallible;
     use crate::{float::flatten::{FlattenOptions, build_fill_edges},
-        common::{geometry::{Affine, PathBuilder}, raster::FillRule, edge::Edge},
+        common::{geometry::{Affine, Edge, PathBuilder}, raster::FillRule},
         float::raster::{rasterize_edges as rasterize_edges_sampled,
             Intersection as SampledIntersection, RasterOptions, RasterWorkspace},
     };

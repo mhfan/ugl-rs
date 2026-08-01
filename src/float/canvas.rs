@@ -6,7 +6,7 @@
 
 use core::convert::Infallible;
 use crate::{common::{color::{PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorkspace},
-    edge::Edge, geometry::{Affine, Path, Point, Rect}, Pixmap, RenderError, SolidPaint,
+    geometry::{Affine, Edge, Path, Point, Rect}, Pixmap, RenderError, SolidPaint,
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
     render::{BYTES_PER_PIXEL, EdgeCapacity, EdgeSliceSink, map_dash_error,
         solid_blend_terms, validate_coverage_dimensions},
@@ -183,7 +183,7 @@ pub struct StrokePathOptions {
 /// with sufficient edge storage returns the complete exact requirements.
 ///
 /// ```
-/// use ugl_rs::{common::{edge::Edge, geometry::{Affine, PathBuilder}},
+/// use ugl_rs::{common::geometry::{Affine, Edge, PathBuilder},
 ///     float::canvas::{RenderOptions, render_requirements}};
 ///
 /// let mut path = PathBuilder::new();

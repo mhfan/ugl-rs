@@ -416,7 +416,7 @@ fn tile_is_full(pieces: &[CoverageTilePiece], width: u32, height: u32) -> bool {
 #[cfg(test)] mod tests { use super::*;
     use alloc::{vec, vec::Vec};
     use core::convert::Infallible;
-    use crate::{common::{edge::Edge, raster::FillRule}, fixed::Scalar,
+    use crate::{common::{geometry::Edge, raster::FillRule}, fixed::Scalar,
         fixed::raster::{CoverageRun, CoverageStrip, CoverageWorkspace,
             Line, Workspace, RenderError, Segment, Trapezoid,
             STRIP_HEIGHT, strip_requirements, prepare_lines, rasterize_lines,

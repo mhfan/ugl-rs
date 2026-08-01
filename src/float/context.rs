@@ -2,8 +2,8 @@
 
 use alloc::{rc::Rc, vec::Vec};
 use crate::{
-    common::{color::SRGBA, dash::DashContour, edge::Edge,
-        geometry::{Affine, Path, Point, Rect},
+    common::{color::SRGBA, dash::DashContour,
+        geometry::{Affine, Edge, Path, Point, Rect},
         raster::{CoverageMask, FillRule, RegionMaskSink},
         render::{Clip, DrawState, GlobalAlphaPaint}, stroke::StrokeContour,
         Pixmap, PixmapError, RenderError, SolidPaint},
@@ -623,7 +623,7 @@ impl<'target> Canvas<'target> {
 
 #[cfg(test)] mod tests {
     use super::*;
-    use crate::{common::{edge::Edge, geometry::{PathBuilder, Point}, raster::CoverageMask,
+    use crate::{common::{geometry::{Edge, PathBuilder, Point}, raster::CoverageMask,
             render::SpreadMode, stroke::StrokeContour},
         float::{dash::DashPattern,
             sampler::{GradientStop, GradientStops, LinearGradient}},

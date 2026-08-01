@@ -1,6 +1,6 @@
 //! No-FPU stroke expansion for Q24.8 polylines.
 
-use crate::{common::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point},
+use crate::{common::{geometry::{Affine, Edge, EdgeSink, Path, Point},
         stroke::{FlattenedStrokePath, LineCap, LineJoin, StrokePathWorkspace,
             StrokeWorkspaceError, flatten_stroke_path_with}},
     fixed::{DEVICE_RAW_LIMIT, Scalar,

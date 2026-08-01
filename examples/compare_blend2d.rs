@@ -3,8 +3,8 @@
 
 use std::{env, fs, hint::black_box, process::ExitCode, time::Instant};
 use ugl_rs::{
-    common::{color::{PremulSRGBA8, SRGBA}, edge::Edge,
-        geometry::{Affine, Path, PathBuilder, Rect},
+    common::{color::{PremulSRGBA8, SRGBA},
+        geometry::{Affine, Edge, Path, PathBuilder, Rect},
         raster::{CoverageMask, CoverageMaskMut},
         stroke::{LineCap, LineJoin, StrokeContour}, Pixmap, SpreadMode},
     float::{analytic::{Cell, Intersection},

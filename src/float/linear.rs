@@ -505,7 +505,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
 #[cfg(test)] mod tests { use super::*;
     use crate::common::SolidPaint;
     use crate::{float::analytic::{Cell, Intersection},
-        common::{edge::Edge, geometry::{PathBuilder, Point},
+        common::{geometry::{Edge, PathBuilder, Point},
             raster::CoverageMask, stroke::StrokeContour}};
 
     fn rectangle() -> Path {

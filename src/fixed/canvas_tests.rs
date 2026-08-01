@@ -1,6 +1,6 @@
 use super::*;
-use crate::common::{color::{PremulRGBA, PremulSRGBA8, SRGBA}, edge::Edge,
-    geometry::{Affine, PathBuilder}, render::SpreadMode};
+use crate::common::{color::{PremulRGBA, PremulSRGBA8, SRGBA},
+    geometry::{Affine, Edge, PathBuilder}, render::SpreadMode};
 #[cfg(feature = "f32")]
 use crate::float::{analytic::{Cell as AnalyticCell,
     Intersection as AnalyticIntersection}, canvas::{

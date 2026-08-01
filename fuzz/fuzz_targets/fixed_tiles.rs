@@ -4,7 +4,7 @@ use core::convert::Infallible;
 use libfuzzer_sys::fuzz_target;
 use ugl_rs::{analytic::{Intersection as FloatIntersection, Workspace as FloatWorkspace,
         rasterize_edges as rasterize_float_edges},
-    edge::Edge, fixed::{Scalar, raster::{
+    common::geometry::Edge, fixed::{Scalar, raster::{
         STRIP_HEIGHT, CoverageRun, CoverageStrip, CoverageWorkspace,
         Error, Line, Workspace, RenderError, Segment, Trapezoid, WorkspaceKind,
         strip_requirements, prepare_lines, rasterize_lines, rasterize_lines_to_strips,

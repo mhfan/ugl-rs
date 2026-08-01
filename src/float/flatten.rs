@@ -1,7 +1,7 @@
 //! Allocation-free curve flattening for the `f32` reference backend.
 
-use crate::{common::edge::{EdgeSink, FillEdgeBuilder, LineSink},
-    common::geometry::{Affine, Path, PathError, PathSegment, Point}};
+use crate::common::geometry::{Affine, EdgeSink, FillEdgeBuilder, LineSink,
+    Path, PathError, PathSegment, Point};
 
 const STACK_CAPACITY: usize = 32;
 

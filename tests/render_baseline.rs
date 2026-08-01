@@ -1,6 +1,6 @@
 
 use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, PremulRGBA, SRGBA,
-        SRGBA as RGBA}, edge::Edge, geometry::{Affine, PathBuilder}, raster::FillRule,
+        SRGBA as RGBA}, geometry::{Affine, Edge, PathBuilder}, raster::FillRule,
         stroke::{LineCap, LineJoin, StrokeContour}, Pixmap, SpreadMode},
     float::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection},
     canvas::{RenderOptions, RenderWorkspace, StrokePathOptions,

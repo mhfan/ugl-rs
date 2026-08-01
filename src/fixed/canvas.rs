@@ -2,8 +2,8 @@
 
 use core::convert::Infallible;
 use crate::{
-    common::{color::SRGBA, dash::{DashContour, DashWorkspace}, edge::Edge,
-        geometry::{Affine, Path, Point, Rect},
+    common::{color::SRGBA, dash::{DashContour, DashWorkspace},
+        geometry::{Affine, Edge, Path, Point, Rect},
         raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
         render::{EdgeCapacity, EdgeSliceSink, Pixmap, RenderError, map_dash_error,
         validate_coverage_dimensions},

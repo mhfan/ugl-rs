@@ -3,8 +3,8 @@ use super::*;
 use crate::{float::analytic::{Cell as AnalyticCell,
         Intersection as AnalyticIntersection},
     common::PixmapError,
-    common::{color::{PremulSRGBA8, SRGBA}, edge::Edge,
-        geometry::{Affine, PathBuilder}, render::SpreadMode,
+    common::{color::{PremulSRGBA8, SRGBA},
+        geometry::{Affine, Edge, PathBuilder}, render::SpreadMode,
         stroke::{LineCap, LineJoin}}, float::raster::Intersection,
     float::sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient},
 };

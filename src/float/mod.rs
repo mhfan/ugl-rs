@@ -1,6 +1,6 @@
 //! Floating-point vector rendering backend.
 
-use crate::common::edge::Edge;
+use crate::common::geometry::Edge;
 
 mod math;
 pub mod blend;

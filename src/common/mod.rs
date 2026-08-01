@@ -2,7 +2,6 @@
 
 pub mod color;
 pub mod dash;
-pub mod edge;
 pub mod geometry;
 pub mod raster;
 pub mod stroke;

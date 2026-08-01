@@ -1,7 +1,7 @@
 //! Floating-point stroke expansion.
 
 use core::f32::consts::{FRAC_PI_2, PI};
-use crate::{common::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point},
+use crate::{common::{geometry::{Affine, Edge, EdgeSink, Path, Point},
         stroke::{FlattenedStrokePath, LineCap, LineJoin, StrokePathWorkspace,
             StrokeWorkspaceError, flatten_stroke_path_with}},
     float::{acos, atan2, ceil, cos, sin, sqrt,

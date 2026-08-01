@@ -2,8 +2,8 @@
 use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RGBA},
-        dash::{DashContour, DashWorkspace}, edge::Edge,
-        geometry::{Affine, Path, PathBuilder, Point}, raster::{CoverageSink, FillRule},
+        dash::{DashContour, DashWorkspace},
+        geometry::{Affine, Edge, Path, PathBuilder, Point}, raster::{CoverageSink, FillRule},
         stroke::{LineCap, LineJoin, StrokeContour, StrokePathWorkspace}, Pixmap, SolidPaint,
         SpreadMode},
     float::{analytic::{BinWorkspace as AnalyticBinWorkspace,

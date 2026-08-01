@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 use super::{color::{PremulSRGBA8, SRGBA}, dash::DashError,
-    edge::{Edge, EdgeSink}, geometry::{Affine, PathError, Rect},
+    geometry::{Affine, Edge, EdgeSink, PathError, Rect},
     raster::{CoverageMask, FillRule}};
 #[cfg(feature = "f32")] use super::color::LinearPremulRGBA;
 #[cfg(feature = "fixed")] use crate::fixed::raster::Error as FixedRasterError;
