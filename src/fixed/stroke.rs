@@ -381,17 +381,20 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
             crate::stroke::StrokeOptions::new(2.0).unwrap(), &mut |edge| {
                 expected.push(edge); Ok::<_, Infallible>(())
             }).unwrap();
-        assert_eq!(actual.len(), expected.len());
-        for (actual, expected) in actual.iter().zip(&expected) {
-            for (actual, expected) in [
-                (actual.upper.x.to_num::<f32>(), expected.upper.x),
-                (actual.upper.y.to_num::<f32>(), expected.upper.y),
-                (actual.lower.x.to_num::<f32>(), expected.lower.x),
-                (actual.lower.y.to_num::<f32>(), expected.lower.y),
-            ] {
-                assert!((actual - expected).abs() <= 1.0 / 128.0,
-                    "actual={actual}, expected={expected}");
-            }
+        let actual_bounds = actual.iter().flat_map(|edge| [edge.upper, edge.lower]).fold(
+            (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY),
+            |(min_x, min_y, max_x, max_y), point| (min_x.min(point.x.to_num()),
+                min_y.min(point.y.to_num()), max_x.max(point.x.to_num()),
+                max_y.max(point.y.to_num())));
+        let expected_bounds = expected.iter().flat_map(|edge| [edge.upper, edge.lower]).fold(
+            (f32::INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY),
+            |(min_x, min_y, max_x, max_y), point| (min_x.min(point.x),
+                min_y.min(point.y), max_x.max(point.x), max_y.max(point.y)));
+        for (actual, expected) in [actual_bounds.0, actual_bounds.1, actual_bounds.2,
+            actual_bounds.3].into_iter().zip([expected_bounds.0, expected_bounds.1,
+                expected_bounds.2, expected_bounds.3]) {
+            assert!((actual - expected).abs() <= 1.0 / 128.0,
+                "actual={actual}, expected={expected}");
         }
     }
 

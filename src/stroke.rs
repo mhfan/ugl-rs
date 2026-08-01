@@ -217,6 +217,15 @@ pub fn stroke_polyline<S: EdgeSink>(points: &[Point], closed: bool, options: Str
         arc_segments(options.half_width(), options).map_err(|(needed, maximum)|
             StrokeExpandError::ArcSegmentLimit { needed, maximum })?;
     }
+    if !closed && options.cap != LineCap::Round && options.join != LineJoin::Round &&
+        points.len() >= 2 && points.windows(2).all(|pair| pair[0] != pair[1]) &&
+        points.windows(3).all(|triple| {
+            let (ax, ay) = (triple[1].x - triple[0].x, triple[1].y - triple[0].y);
+            let (bx, by) = (triple[2].x - triple[1].x, triple[2].y - triple[1].y);
+            ax * by != ay * bx || ax * bx + ay * by >= 0.0
+        }) {
+        return stroke_open_outline(points, options, sink);
+    }
     let Some(&point) = points.first() else { return Ok(()) };
     let (mut first, mut previous) = (None, None);
     let segment_slots = points.len().saturating_sub(1) +
@@ -245,6 +254,82 @@ pub fn stroke_polyline<S: EdgeSink>(points: &[Point], closed: bool, options: Str
         emit_cap(first_point, first_unit, true, options, sink)?;
         emit_cap(last_point, last_unit, false, options, sink)
     }
+}
+
+/// Emits the two sides and caps of a simple open stroke as one contour.
+///
+/// The general expansion below deliberately unions independent segment and
+/// join polygons.  That is a useful fallback for degenerate input and round
+/// geometry, but multiplies the edge count.  A non-round open polyline has a
+/// direct boundary representation, so emit that boundary once.
+fn stroke_open_outline<S: EdgeSink>(points: &[Point], options: StrokeOptions,
+    sink: &mut S) -> Result<(), StrokeExpandError<S::Error>> {
+    let radius = options.half_width();
+    let first_unit = unit_vector(points[0], points[1])
+        .map_err(|()| StrokeExpandError::NonFinitePoint)?.unwrap();
+    let last = points.len() - 1;
+    let last_unit = unit_vector(points[last - 1], points[last])
+        .map_err(|()| StrokeExpandError::NonFinitePoint)?.unwrap();
+    let extension = if options.cap == LineCap::Square { radius } else { 0.0 };
+    let mut contour = EdgeContour::new(sink);
+
+    contour.point(offset_endpoint(points[0], first_unit, radius, 1.0, -extension))?;
+    for index in 1..last {
+        let before = unit_vector(points[index - 1], points[index])
+            .map_err(|()| StrokeExpandError::NonFinitePoint)?.unwrap();
+        let after = unit_vector(points[index], points[index + 1])
+            .map_err(|()| StrokeExpandError::NonFinitePoint)?.unwrap();
+        emit_outline_join(&mut contour, points[index], before, after, 1.0, options)?;
+    }
+    contour.point(offset_endpoint(points[last], last_unit, radius, 1.0, extension))?;
+    contour.point(offset_endpoint(points[last], last_unit, radius, -1.0, extension))?;
+    for index in (1..last).rev() {
+        let before = unit_vector(points[index + 1], points[index])
+            .map_err(|()| StrokeExpandError::NonFinitePoint)?.unwrap();
+        let after = unit_vector(points[index], points[index - 1])
+            .map_err(|()| StrokeExpandError::NonFinitePoint)?.unwrap();
+        emit_outline_join(&mut contour, points[index], before, after, 1.0, options)?;
+    }
+    contour.point(offset_endpoint(points[0], first_unit, radius, -1.0, -extension))?;
+    contour.close()
+}
+
+fn offset_endpoint(point: Point, unit: Point, radius: f32, side: f32,
+    extension: f32) -> Point {
+    (point.x - unit.y * radius * side + unit.x * extension,
+     point.y + unit.x * radius * side + unit.y * extension).into()
+}
+
+fn emit_outline_join<S: EdgeSink>(contour: &mut EdgeContour<'_, S>, point: Point,
+    before: Point, after: Point, side: f32, options: StrokeOptions) ->
+    Result<(), StrokeExpandError<S::Error>> {
+    let cross = before.x * after.y - before.y * after.x;
+    let dot = before.x * after.x + before.y * after.y;
+    debug_assert!(cross != 0.0 || dot >= 0.0);
+    let radius = options.half_width();
+    let before_offset = offset_endpoint(point, before, radius, side, 0.0);
+    let after_offset = offset_endpoint(point, after, radius, side, 0.0);
+    if cross == 0.0 {
+        return contour.point(after_offset);
+    }
+    let delta: Point = (after_offset.x - before_offset.x,
+                        after_offset.y - before_offset.y).into();
+    let distance = (delta.x * after.y - delta.y * after.x) / cross;
+    let intersection: Point = (before_offset.x + before.x * distance,
+                               before_offset.y + before.y * distance).into();
+    let outer = cross * side < 0.0;
+    if !outer {
+        return contour.point(intersection);
+    }
+    if options.join == LineJoin::Miter {
+        let (dx, dy) = (intersection.x - point.x, intersection.y - point.y);
+        let limit = radius * options.miter_limit();
+        if dx * dx + dy * dy <= limit * limit {
+            return contour.point(intersection);
+        }
+    }
+    contour.point(before_offset)?;
+    contour.point(after_offset)
 }
 
 /// Applies the documented cap behavior to a point-only contour.
@@ -561,15 +646,16 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
                 &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
             edges
         };
-        let plain    = collect(&[(2.0, 3.0).into(), (6.0, 3.0).into()], false);
-        let repeated = collect(&[(2.0, 3.0).into(), (2.0, 3.0).into(),
-                                 (6.0, 3.0).into(), (6.0, 3.0).into()], false);
-        assert_eq!(plain, repeated);
-
-        let closed = collect(&[(2.0, 3.0).into(), (6.0, 3.0).into()], true);
         let x_bounds = |edges: &[Edge]| edges.iter().flat_map(|edge|
             [edge.upper.x, edge.lower.x]).fold((f32::INFINITY, f32::NEG_INFINITY),
             |(minimum, maximum), x| (minimum.min(x), maximum.max(x)));
+        let plain    = collect(&[(2.0, 3.0).into(), (6.0, 3.0).into()], false);
+        let repeated = collect(&[(2.0, 3.0).into(), (2.0, 3.0).into(),
+                                 (6.0, 3.0).into(), (6.0, 3.0).into()], false);
+        assert_eq!(plain.len(), 2);
+        assert_eq!(x_bounds(&plain), x_bounds(&repeated));
+
+        let closed = collect(&[(2.0, 3.0).into(), (6.0, 3.0).into()], true);
         assert_eq!(x_bounds(&plain),  (1.0, 7.0));
         assert_eq!(x_bounds(&closed), (2.0, 6.0));
 
