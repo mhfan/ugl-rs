@@ -777,24 +777,24 @@ canvas-sized temporary mask. Empty masks, opaque integer rectangles, and
 general coverage are classified once. The first two become empty/rectangle
 clip state and bypass per-byte mask multiplication.
 
-The fixed owning canvas compares packed bytes with the existing 16-row
-strip/run encoding after clip construction or intersection. It retains the
-sparse form only when its exact record payload is smaller, and the mask adapter
-consumes it directly during fill, stroke, and dashed stroke. Dense storage
-remains preferable for compact or highly fragmented masks. Sparse/rectangle
-intersection walks and rewrites only retained runs, including fractional Q24.8
-boundary coverage, instead of allocating a temporary dense mask.
+Both owning canvases use the same backend-neutral 16-row strip/run encoding,
+ordered sparse intersection, dense multiplication, and encoded-byte selection
+policy. They retain sparse coverage only when its exact record payload is
+smaller, and consume it directly during fill, stroke, and dashed stroke. Dense
+storage remains preferable for compact or highly fragmented masks. Rectangle
+intersection walks only retained runs; f32 and Q24.8 provide their own
+fractional boundary-coverage calculation.
 
 A 512×512 diagnostic benchmark (`cargo bench --bench raster --all-features --
 clip_mask --quick`) measures both initial classification/retention and cached
 drawing. A one-pixel diagonal occupies 512 runs plus 32 strip headers: 6,528
-payload bytes versus 262,144 dense bytes. Cached full-canvas fill measured about
-148 µs for the f32 dense mask and 59 µs for fixed sparse storage; local dense
-coverage measured about 39–40 µs on both. Empty and opaque-rectangle clips
-measured about 9–13 µs. Counting non-zero samples during classification lets
-fixed skip an extra sparse preflight scan when even the worst-case run encoding
-is smaller, reducing diagonal construction from roughly 432 µs to 329 µs.
-These quick measurements identify trends rather than release thresholds.
+payload bytes versus 262,144 dense bytes. The original diagnostic measured
+about 148 µs for a f32 dense diagonal and 59 µs for fixed sparse storage; f32
+now uses the same sparse representation, so the dense result is historical.
+Empty and opaque-rectangle clips measured about 9–13 µs. Counting non-zero
+samples lets both backends skip exact run counting when even the worst-case
+encoding is smaller. These quick measurements identify trends rather than
+release thresholds.
 
 Dense/sparse clip multiplication and deterministic scattered-mask rectangle
 intersection are checked pixel-for-pixel. New masks select their representation
@@ -808,21 +808,23 @@ independent reference retains geometric rectangles until rasterization so the
 comparison does not introduce an artificial second 8-bit quantization.
 
 The isolated `clip_alloc` integration test installs a counting system allocator
-without slowing the normal benchmark binary. For the 512×512 diagonal it reports
-four allocations, 6,608 allocated/peak bytes for initial retention and for a
-sparse rectangle intersection. A warmed draw and warmed `save`/`restore` perform
-zero allocations. Mutating a saved dense 64×64 clip uses three allocations and
-peaks at 8,736 bytes while copy-on-write storage and its normalized sparse result
-briefly coexist. Direct borrowed-mask encoding was required here: the earlier
+without slowing the normal benchmark binary. For both backends, the 512×512
+diagonal reports four allocations and 6,608 allocated/peak bytes for initial
+retention and sparse rectangle intersection. A warmed draw and warmed
+`save`/`restore` perform zero allocations. Cold/warm slender path construction
+peaks at 25,300/80 bytes for f32 and 24,316/80 bytes for fixed. Mutating a saved
+dense fixed 64×64 clip uses three allocations and peaks at 8,736 bytes while
+copy-on-write storage and its normalized sparse result briefly coexist. Direct
+borrowed-mask encoding was required here: the earlier
 dense-copy-first route peaked at 524,304 bytes despite its small final mask.
 Remaining work is nondeterministic/property fuzzing and real-device allocator/
 code-size measurements. A public pre-encoded sparse-mask entry point is not
 planned: exposing strip/run storage would leak a backend layout through the
-Canvas facade. Internal producers should instead feed retained sparse coverage
-directly when profiling shows that dense mask encoding is material. Fixed path
-clips now do exactly that: rasterization writes an owned run encoder, recognizes
-opaque rectangles, retains compact runs, or reconstructs a local dense mask only
-when it is smaller. On the 512×512 quick benchmark this reduced clip construction
+Canvas facade. Internal producers feed retained sparse coverage directly when
+profiling shows that dense encoding is material. Both path-clip pipelines now
+write an owned run encoder, recognize opaque rectangles, retain compact runs,
+or reconstruct a local dense mask only when it is smaller. For fixed, this
+originally reduced clip construction
 from about 375 to 39 µs for a slender path, 588–597 to 60 µs for a polygon, and
 650 to 85 µs for a complex checker grid (roughly 7.6–9.8×). Cold construction
 of that 512×512 slender path, including scratch growth, uses 11 allocations and
@@ -832,8 +834,10 @@ and `restore`; the warmed slender case consequently performs only the two 40-byt
 `Rc` control-block allocations. Its approximately 39 µs latency is unchanged,
 confirming that fixed rasterization rather than allocation is now dominant.
 
-The fixed path benchmark separates warmed and cold construction: slender is
-about 39/99 µs, the polygon 61/132 µs, and the checker grid 85/178 µs. Measured
+The f32 path benchmark measures warm/cold construction at about 18/80 µs for
+slender coverage, 32/100 µs for the polygon, and 38/114 µs for the checker grid.
+The earlier fixed measurements are about 39/99 µs, 61/132 µs, and 85/178 µs
+respectively. Measured fixed
 intersection costs are about 70–83 µs for path/rectangle, 142–150 µs for
 path/dense-mask, 159–160 µs for path/path, and 73–74 µs for a warmed
 `save`/path/`restore` loop. Drawing the same full-target shape costs 125–132 µs
@@ -851,6 +855,15 @@ capacity remains owned by the Canvas in either representation; including it in
 the decision would make identical coverage choose differently based on history.
 The measured sparse replay cost does not yet justify an additional arbitrary
 time-weighting constant.
+
+The circular-mask stage benchmark isolates initial construction. F32 edge
+building, row binning, and coverage integration measure about 1.44, 0.74, and
+15.66 µs; fixed edge building, line preparation, and coverage measure about
+1.29, 0.14, and 39.12 µs. Coverage owns roughly 88% of the visible f32 stages
+and 96% of fixed. Skipping overlap preflight for a provably disjoint single-span
+row avoids duplicate fixed trapezoid rounding, reducing fixed coverage from
+about 41.60 to 39.12 µs (about 6%); f32 improves about 1%. Further path-mask
+work should target coverage integration, not curve flattening or edge setup.
 
 Retained memory, initial mask allocation, rasterization, and subsequent
 intersection now scale with the clipped region. Real-device allocator and

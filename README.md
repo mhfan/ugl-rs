@@ -275,11 +275,11 @@ explicitly sized as `stride × height`.
 free-path clipping APIs. They rasterize and retain the antialiased mask within
 its non-zero bounds, intersecting only that region with the current clip.
 Empty masks collapse to an empty clip and opaque integer rectangles remain
-rectangle clips. The fixed owning canvas additionally selects sparse 16-row
-strip/run storage when it is smaller than packed coverage, and consumes those
-runs directly during drawing. Initial construction
-derives conservative bounds from the prepared edges and rasterizes directly
-into local coverage storage; it does not allocate a temporary canvas-sized mask.
+rectangle clips. Both owning canvases select shared sparse 16-row strip/run
+storage when it is smaller than packed coverage, and consume those runs directly
+during drawing. Initial construction derives conservative bounds from prepared
+edges and rasterizes directly into local coverage storage; it does not allocate
+a temporary canvas-sized mask.
 `save`/`restore` scopes nested clips.
 
 The bounded `CanvasRef` and low-level APIs deliberately use a two-stage operation
@@ -346,9 +346,9 @@ The important conclusions are:
   cubic fill. Other fixed scenes differ only near boundaries: the reported
   representative maximum is four code values, while radial/conic and stroke
   maxima are one.
-- Sparse retained masks are already competitive because work follows cached
-  non-zero bounds; dense paint and long spans benefit more from Blend2D's JIT
-  vector pipelines.
+- Sparse retained masks are already competitive because both backends follow
+  cached non-zero bounds and shared strip/run storage; dense paint and long spans
+  benefit more from Blend2D's JIT vector pipelines.
 
 Cold single-draw medians, measured in fresh processes, were 47–96 µs for f32,
 69–284 µs for fixed, and 366–381 µs for Blend2D across representative fill,
