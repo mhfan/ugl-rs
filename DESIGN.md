@@ -387,7 +387,7 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   per pixel. Scheduling four recurrence values together, while preserving the
   scalar update order, lets the compiler overlap independent square roots. The
   output checksum is unchanged; the matched f32 median fell from 202.22 through
-  123.98 to 115.47 µs, and fixed from 542.18 through 338.54 to 274.17 µs. Fixed
+  123.98 to 115.96 µs, and fixed from 542.18 through 338.54 to 272.79 µs. Fixed
   reduction comes from returning Pad endpoints before the invariant ramp-index
   division, then dividing a concentric Pad row into constant left/right regions
   and one branch-free interior recurrence. A per-pixel squared-distance endpoint
@@ -400,14 +400,18 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   through the existing solid-span blender, it changed the interior compositor
   from 274.17 to 306.49 µs. Constant-run transport therefore stays out of the
   public paint contract until a representation can preserve current codegen.
+  Computing four independent complete integer roots was likewise rejected: it
+  preserved every sample but raised the radius-112 diagnostic from about 372.5
+  to 435.9 µs because extra Newton iterations outweighed instruction-level
+  parallelism. Future batching must retain the nearby-root iteration bound.
 - The matched conic scene explicitly uses the opt-in `Fast` angle policy while
   `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
   approximation; fixed evaluates the same polynomial in widened integer turns
   instead of 16 CORDIC steps. Encoded span traversal reuses coordinates and
   direct ramp indexing. Keeping the Q32 normalization division widened while
   narrowing the provably bounded Horner products from i128 to i64 reduces the
-  formal fixed median from 379.91 to 252.27 µs; f32 measures 184.07 µs and
-  Blend2D 67.71 µs. Fixed differs from f32 at 2 of 65,536 pixels, each by one
+  formal fixed median from 379.91 to 252.59 µs; f32 measures 184.19 µs and
+  Blend2D 68.02 µs. Fixed differs from f32 at 2 of 65,536 pixels, each by one
   code value; the optimization adds neither allocation nor floating-point work.
 - Retained path masks scan equal coverage runs in eight-byte words before
   forwarding spans. `CoverageMask` caches non-zero bounds at retained-resource
@@ -897,7 +901,7 @@ Full-row trapezoids with a non-empty interior integrate only the left edge for
 their left boundary pixels and only the right edge for their right boundary
 pixels; the opposite edge is provably full or zero there. This reduces circular
 coverage from about 36.69 to 34.82 µs in a same-run A/B and the formal fixed
-mask build from 42.33 to 41.39 µs. Narrow trapezoids retain the general two-edge
+mask build from 42.33 to 41.29 µs. Narrow trapezoids retain the general two-edge
 integral, and the self-intersecting stress scene remains near 99.2 µs. Reusing
 the previous slab's exact `bottom_x` as the next `top_x` was correct but slowed
 circular coverage from 34.82 back to 36.69 µs; the added loop-carried state

@@ -320,16 +320,16 @@ the publication settings: 500 warm-ups, 5,000 timed frames, and nine samples on
 
 | Representative scene | f32 | fixed | Blend2D |
 | --- | ---: | ---: | ---: |
-| 1 fractional rectangle | 3.98 µs | 4.27 µs | 3.69 µs |
-| 64 fractional rectangles | 60.02 µs | 99.76 µs | 33.58 µs |
-| large linear gradient | 63.53 µs | 121.65 µs | 31.81 µs |
-| large radial gradient | 115.47 µs | 274.17 µs | 41.41 µs |
-| large conic gradient, Fast | 184.07 µs | 252.27 µs | 67.71 µs |
-| sparse retained path mask | 5.68 µs | 6.44 µs | 30.03 µs¹ |
-| build circular path mask | 18.58 µs | 41.39 µs | 9.21 µs |
-| cubic fill under rectangle clip | 10.65 µs | 16.55 µs | 3.55 µs |
-| cubic butt/miter stroke | 27.43 µs | 62.63 µs | 14.37 µs |
-| 32-segment round stroke | 77.73 µs | 161.44 µs | 34.55 µs |
+| 1 fractional rectangle | 4.03 µs | 4.21 µs | 3.80 µs |
+| 64 fractional rectangles | 62.26 µs | 97.70 µs | 33.51 µs |
+| large linear gradient | 63.80 µs | 90.53 µs | 31.79 µs |
+| large radial gradient | 115.96 µs | 272.79 µs | 41.36 µs |
+| large conic gradient, Fast | 184.19 µs | 252.59 µs | 68.02 µs |
+| sparse retained path mask | 5.93 µs | 6.58 µs | 30.08 µs¹ |
+| build circular path mask | 18.49 µs | 41.29 µs | 9.13 µs |
+| cubic fill under rectangle clip | 10.71 µs | 16.33 µs | 3.81 µs |
+| cubic butt/miter stroke | 27.52 µs | 61.79 µs | 14.41 µs |
+| 32-segment round stroke | 78.06 µs | 158.87 µs | 34.51 µs |
 
 ¹ Blend2D has no equivalent free-path Context clip; this row uses a retained
 PRGB32 `DST_IN` pass and is not a native path-clip comparison.
