@@ -205,6 +205,14 @@ pub(crate) fn rasterize_edges_cells_region<S>(edges: &[Edge], bins: RowBins<'_>,
             emit_vertical_runs(active, fill_rule, x0, region_width as _, y, sink)?;
             continue;
         }
+        if row_edges.is_empty() && prepare_direct_row(
+            &mut workspace.intersections[..active_count], y) &&
+            emit_disjoint_row_spans(&workspace.intersections[..active_count], fill_rule,
+                x0, region_width as _, y, sink)? {
+            for edge in &mut workspace.intersections[..active_count] { edge.x0 = edge.x1; }
+            reusable_vertical_count = None;
+            continue;
+        }
         if initialized {
             if !previous_dirty.is_empty() {
                 cells[previous_dirty.start..previous_dirty.end].fill(Cell::default());
@@ -227,6 +235,107 @@ pub(crate) fn rasterize_edges_cells_region<S>(edges: &[Edge], bins: RowBins<'_>,
         previous_dirty = dirty;
     }
     Ok(())
+}
+
+fn prepare_direct_row(active: &mut [Intersection], y: u32) -> bool {
+    let row_end = y as f32 + 1.0;
+    if active.is_empty() || active.iter().any(|edge| edge.y_end < row_end) {
+        return false;
+    }
+    for edge in &mut *active { edge.x1 = edge.x0 + edge.slope; }
+    !active.windows(2).any(|pair| pair[0].x1 > pair[1].x1)
+}
+
+fn emit_disjoint_row_spans<S>(intersections: &[Intersection], fill_rule: FillRule,
+    x_origin: u32, width: u32, y: u32, sink: &mut S) ->
+    Result<bool, RasterError<S::Error>> where S: CoverageSink {
+    let mut previous_end = 0;
+    let (mut winding, mut left) = (0_i32, None::<&Intersection>);
+    for right in intersections {
+        if let Some(left) = left && fill_rule.contains(winding) {
+            let start = floor(left.x0.min(left.x1) - x_origin as f32)
+                .clamp(0.0, width as _) as u32;
+            let end = ceil(right.x0.max(right.x1) - x_origin as f32)
+                .clamp(0.0, width as _) as u32;
+            if start < previous_end { return Ok(false); }
+            previous_end = end;
+        }
+        winding += right.winding as i32;
+        left = Some(right);
+    }
+
+    fn flush<S>(run: &mut Option<(u32, u32, u8)>, x_origin: u32, y: u32,
+        sink: &mut S) -> Result<(), RasterError<S::Error>> where S: CoverageSink {
+        let Some((x, len, coverage)) = run.take() else { return Ok(()); };
+        if coverage != 0 {
+            sink.span(x_origin + x, y, len, coverage).map_err(RasterError::Sink)?;
+        }
+        Ok(())
+    }
+    fn append<S>(run: &mut Option<(u32, u32, u8)>, x: u32, len: u32, coverage: u8,
+        x_origin: u32, y: u32, sink: &mut S) -> Result<(), RasterError<S::Error>>
+        where S: CoverageSink {
+        if len == 0 { return Ok(()); }
+        if let Some((run_x, run_len, run_coverage)) = run {
+            if *run_x + *run_len == x && *run_coverage == coverage {
+                *run_len += len;
+                return Ok(());
+            }
+            flush(run, x_origin, y, sink)?;
+        }
+        *run = Some((x, len, coverage));
+        Ok(())
+    }
+
+    let (mut winding, mut left, mut run) = (0_i32, None::<&Intersection>, None);
+    for right in intersections {
+        if let Some(left) = left && fill_rule.contains(winding) {
+            let start = floor(left.x0.min(left.x1) - x_origin as f32)
+                .clamp(0.0, width as _) as u32;
+            let end = ceil(right.x0.max(right.x1) - x_origin as f32)
+                .clamp(0.0, width as _) as u32;
+            let full_start = ceil(left.x0.max(left.x1) - x_origin as f32)
+                .clamp(0.0, width as _) as u32;
+            let full_end = floor(right.x0.min(right.x1) - x_origin as f32)
+                .clamp(0.0, width as _) as u32;
+            if full_start < full_end {
+                for x in start..full_start {
+                    let cell_x = x_origin as f32 + x as f32;
+                    let area = integrate_clamped_line(
+                        right.x0 - cell_x, right.x1 - cell_x, 1.0) -
+                        integrate_clamped_line(left.x0 - cell_x, left.x1 - cell_x, 1.0);
+                    append(&mut run, x, 1,
+                        (area.clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                        x_origin, y, sink)?;
+                }
+                append(&mut run, full_start, full_end - full_start, u8::MAX,
+                    x_origin, y, sink)?;
+                for x in full_end..end {
+                    let cell_x = x_origin as f32 + x as f32;
+                    let area = integrate_clamped_line(
+                        right.x0 - cell_x, right.x1 - cell_x, 1.0) -
+                        integrate_clamped_line(left.x0 - cell_x, left.x1 - cell_x, 1.0);
+                    append(&mut run, x, 1,
+                        (area.clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                        x_origin, y, sink)?;
+                }
+            } else {
+                for x in start..end {
+                    let cell_x = x_origin as f32 + x as f32;
+                    let area = integrate_clamped_line(
+                        right.x0 - cell_x, right.x1 - cell_x, 1.0) -
+                        integrate_clamped_line(left.x0 - cell_x, left.x1 - cell_x, 1.0);
+                    append(&mut run, x, 1,
+                        (area.clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+                        x_origin, y, sink)?;
+                }
+            }
+        }
+        winding += right.winding as i32;
+        left = Some(right);
+    }
+    flush(&mut run, x_origin, y, sink)?;
+    Ok(true)
 }
 
 fn vertical_edges_span_row(active: &[Intersection], y: u32) -> bool {
@@ -498,16 +607,25 @@ fn integrate_clamped_line(start: f32, end: f32, height: f32) -> f32 {
 fn emit_cell_runs<S>(cells: &[Cell], x_offset: usize, y: u32,
     sink: &mut S) -> Result<(), RasterError<S::Error>> where S: CoverageSink {
     let quantize = |coverage: f32| (coverage.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-    let (mut accumulated, mut run_start, mut run_coverage) = (0.0, 0, 0);
-    for (x, cell) in cells.iter().enumerate() {
+    let (mut accumulated, mut run_start, mut run_coverage, mut x) = (0.0, 0, 0, 0);
+    while x < cells.len() {
+        const EMPTY_BLOCK: usize = 4;
+        if accumulated == 0.0 && run_coverage == 0 && x + EMPTY_BLOCK <= cells.len() &&
+            cells[x..x + EMPTY_BLOCK].iter().all(|cell|
+                cell.coverage == 0.0 && cell.delta == 0.0) {
+            x += EMPTY_BLOCK;
+            continue;
+        }
+        let cell = cells[x];
         accumulated += cell.delta;
         let coverage = quantize(accumulated + cell.coverage);
-        if coverage == run_coverage { continue; }
+        if coverage == run_coverage { x += 1; continue; }
         if run_coverage != 0 {
             sink.span((x_offset + run_start) as _, y, (x - run_start) as _, run_coverage)
                 .map_err(RasterError::Sink)?;
         }
         run_start = x;  run_coverage = coverage;
+        x += 1;
     }
     if run_coverage != 0 {
         sink.span((x_offset + run_start) as _, y,

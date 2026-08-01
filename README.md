@@ -332,9 +332,9 @@ frames produced:
 | large rectangle, sparse retained path mask | 5.44 µs | 10.64 µs | 30.36 µs¹ | 5.58× slower | 1.95× slower |
 | large rectangle, dense retained path mask | 22.14 µs | 93.36 µs | 29.98 µs¹ | 1.35× slower | 4.22× slower |
 | build circular path mask | 59.44 µs | 118.73 µs | 9.16 µs | 6.49× faster | 2.00× slower |
-| 64 triangles, fill | 118.49 µs | 261.31 µs | 33.62 µs | 3.52× faster | 2.21× slower |
-| 8 gentle cubic arches, fill | 17.85 µs | 30.97 µs | 8.21 µs | 2.17× faster | 1.73× slower |
-| cubic fill under rectangle clip | 15.72 µs | 25.22 µs | 3.53 µs | 4.45× faster | 1.60× slower |
+| 64 triangles, fill | 66.48 µs | 262.74 µs | 33.31 µs | 2.00× faster | 3.95× slower |
+| 8 gentle cubic arches, fill | 13.47 µs | 31.46 µs | 8.21 µs | 1.64× faster | 2.34× slower |
+| cubic fill under rectangle clip | 11.99 µs | 24.98 µs | 3.56 µs | 3.37× faster | 2.08× slower |
 | cubic arches, width-6 butt/miter stroke | 32.61 µs | 77.26 µs | 14.29 µs | 2.28× faster | 2.37× slower |
 | 32-segment polyline, butt/miter stroke | 78.46 µs | 196.81 µs | 25.75 µs | 3.05× faster | 2.51× slower |
 | 32-segment polyline, round stroke | 95.88 µs | 292.81 µs | 34.56 µs | 2.77× faster | 3.05× slower |
@@ -413,8 +413,11 @@ per-shape scaling. Direct vertical-run emission reduced f32 from
 4.26/23.23/83.67 to 3.94/14.60/48.78 µs; its 64-shape gap is now 1.45×.
 Fixed vertical-trapezoid boundary area reduced its raster-only stage from
 203.61 to 144.04 µs and its complete 64-shape draw from 238.70 to about
-173 µs. The f32 and fixed outputs remain byte-identical. Generic sloped and
-crossing edges retain their analytic-cell or exact rational/polygon paths.
+173 µs. The f32 and fixed outputs remain byte-identical. Event-free f32 rows
+with disjoint sloped spans now integrate their boundary cells directly and
+omit the empty gaps from cell clearing and prefix scanning; touching,
+crossing, or partial-height rows retain the general analytic-cell path. Fixed
+sloped edges retain their exact rational/polygon path.
 
 The matched horizontal linear gradient uses a 256-entry encoded ramp and black
 stops whose alpha changes from 32 to 224, avoiding ambiguity from different RGB

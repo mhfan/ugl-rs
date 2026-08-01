@@ -480,6 +480,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   split-integral path. Dense analytic, sparse analytic, and high-sample
   randomized references cover NonZero, EvenOdd, coincident, crossing, and
   self-intersecting geometry.
+- Event-free full f32 rows with disjoint filled-span pixel envelopes bypass
+  the cell array: boundary cells are integrated analytically and full
+  interiors are emitted directly. Preflight rejects touching, overlapping,
+  crossing, and partial-height spans, which use the general accumulator.
 - Rejected analytic experiments remain explicit decisions: generic polygon
   clipping and a whole-row difference accumulator did not amortize their work;
   removing midpoint ordering broke self-intersections; hybrid introsort
