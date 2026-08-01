@@ -144,10 +144,16 @@ impl<'a> Pixmap<'a> {
             self.blend_solid_span(x, y, len, color.into_legacy(), coverage);
             return;
         }
-        for pixel_x in x..x + len {
-            let color = sampler.sample(pixel_x as f32 + 0.5, y as f32 + 0.5);
-            self.blend_solid_span(pixel_x, y, 1, color.into_legacy(), coverage);
-        }
+        let start = y as usize * self.stride as usize +
+                    x as usize * BYTES_PER_PIXEL as usize;
+        let end = start + len as usize * BYTES_PER_PIXEL as usize;
+        let mut pixels = self.as_bytes_mut()[start..end]
+            .chunks_exact_mut(BYTES_PER_PIXEL as _);
+        sampler.sample_span(x as f32 + 0.5, y as f32 + 0.5, 1.0, 0.0, len, |color| {
+            let pixel = pixels.next().expect("sampler emitted too many span pixels");
+            blend_sampled_pixel(pixel, color, coverage);
+        });
+        debug_assert!(pixels.next().is_none());
     }
 
     #[cfg(feature = "fixed")] pub(crate) fn blend_solid_tile(&mut self, x: u32, y: u32,
@@ -161,6 +167,23 @@ impl<'a> Pixmap<'a> {
         }
     }
 
+}
+
+pub(crate) fn blend_sampled_pixel(pixel: &mut [u8], color: PremulSRGBA8,
+    coverage: u8) {
+    blend_solid_pixel(pixel, solid_blend_terms(color.into_legacy(), coverage));
+}
+
+fn blend_solid_pixel(pixel: &mut [u8], (source, alpha, inverse): ([u8; 3], u8, u8)) {
+    if pixel[3] == 0 {
+        pixel.copy_from_slice(&[source[0], source[1], source[2], alpha]);
+        return;
+    }
+    let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
+    for (channel, source) in pixel[..3].iter_mut().zip(source) {
+        *channel = source.saturating_add(mul_div_255(*channel, inverse));
+    }
+    pixel[3] = alpha.saturating_add(mul_div_255(pixel[3], inverse));
 }
 
 fn solid_blend_terms(color: PremulRGBA<u8>, coverage: u8) -> ([u8; 3], u8, u8) {

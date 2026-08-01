@@ -14,6 +14,10 @@ pub use super::math::Angle;
 pub trait PaintSampler {
     fn sample(&self, x: u32, y: u32) -> PremulSRGBA8;
     fn solid_color(&self) -> Option<PremulSRGBA8> { None }
+    fn sample_span(&self, x: u32, y: u32, len: u32,
+        mut emit: impl FnMut(PremulSRGBA8)) {
+        for x in x..x + len { emit(self.sample(x, y)); }
+    }
 }
 
 impl<S: PaintSampler + ?Sized> PaintSampler for &S {
@@ -22,6 +26,10 @@ impl<S: PaintSampler + ?Sized> PaintSampler for &S {
     }
     fn solid_color(&self) -> Option<PremulSRGBA8> {
         (**self).solid_color()
+    }
+    fn sample_span(&self, x: u32, y: u32, len: u32,
+        emit: impl FnMut(PremulSRGBA8)) {
+        (**self).sample_span(x, y, len, emit)
     }
 }
 
@@ -75,6 +83,24 @@ impl<'a> LinearGradient<'a> {
 impl PaintSampler for LinearGradient<'_> {
     fn sample(&self, x: u32, y: u32) -> PremulSRGBA8 {
         self.ramp[self.ramp_index(x, y)]
+    }
+
+    fn sample_span(&self, x: u32, y: u32, len: u32,
+        mut emit: impl FnMut(PremulSRGBA8)) {
+        const HALF_PIXEL_RAW: i128 = 1 << 7;
+        const SUBPIXEL_SCALE: i128 = 1 << 8;
+        let point = [
+            x as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW - self.from[0] as i128,
+            y as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW - self.from[1] as i128,
+        ];
+        let mut parameter = point[0] * self.delta[0] as i128 +
+                            point[1] * self.delta[1] as i128;
+        let step = self.delta[0] as i128 * SUBPIXEL_SCALE;
+        for _ in 0..len {
+            emit(self.ramp[ramp_index(parameter, self.length_squared,
+                self.ramp.len(), self.spread)]);
+            parameter += step;
+        }
     }
 }
 

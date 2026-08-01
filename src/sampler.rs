@@ -26,6 +26,14 @@ pub trait PaintSampler {
 
     /// Reports a position-independent color to enable span and tile fast paths.
     fn solid_color(&self) -> Option<PremulSRGBA8> { None }
+
+    /// Samples an affine sequence without caller-owned scratch.
+    fn sample_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        mut emit: impl FnMut(PremulSRGBA8)) {
+        for offset in 0..len {
+            emit(self.sample(x + offset as f32 * dx, y + offset as f32 * dy));
+        }
+    }
 }
 
 /// Produces premultiplied linear-light colors without an encoded round trip.
@@ -57,6 +65,10 @@ pub trait LinearPaintSampler {
 impl<S: PaintSampler + ?Sized> PaintSampler for &S {
     fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 { (**self).sample(x, y) }
     fn solid_color(&self) -> Option<PremulSRGBA8> { (**self).solid_color() }
+    fn sample_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        emit: impl FnMut(PremulSRGBA8)) {
+        (**self).sample_span(x, y, dx, dy, len, emit)
+    }
 }
 
 impl<S: LinearPaintSampler + ?Sized> LinearPaintSampler for &S {
@@ -100,6 +112,13 @@ impl<S: PaintSampler> PaintSampler for TransformedPaint<S> {
     }
 
     fn solid_color(&self) -> Option<PremulSRGBA8> { self.sampler.solid_color() }
+
+    fn sample_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        emit: impl FnMut(PremulSRGBA8)) {
+        let start = self.device_to_paint.transform_point((x, y).into());
+        let step = self.device_to_paint.transform_vector((dx, dy).into());
+        self.sampler.sample_span(start.x, start.y, step.x, step.y, len, emit);
+    }
 }
 
 impl<S: LinearPaintSampler> LinearPaintSampler for TransformedPaint<S> {
@@ -306,6 +325,18 @@ impl PaintSampler for LinearGradient<'_> {
         let t = ((x - self.from.x) * self.delta.x  +
                  (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
         self.stops.sample(self.spread.map(t))
+    }
+
+    fn sample_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        mut emit: impl FnMut(PremulSRGBA8)) {
+        let mut t = ((x - self.from.x) * self.delta.x +
+                     (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
+        let step = (dx * self.delta.x + dy * self.delta.y) *
+                   self.inverse_length_squared;
+        for _ in 0..len {
+            emit(self.stops.sample(self.spread.map(t)));
+            t += step;
+        }
     }
 }
 

@@ -3,7 +3,8 @@
 use core::convert::Infallible;
 use crate::{
     canvas::{EdgeCapacity, EdgeSliceSink, PaintCompositor as CompatPaintCompositor,
-        Pixmap, RenderError, map_dash_error, validate_coverage_dimensions},
+        Pixmap, RenderError, blend_sampled_pixel, map_dash_error,
+        validate_coverage_dimensions},
     color::SRGBA, dash::{DashContour, DashWorkspace}, edge::Edge,
     fixed::{DEVICE_RAW_LIMIT, Scalar, dash::{Pattern as DashPattern, dash_polyline},
         flatten::{Error as FlattenError, Options as FlattenOptions, build_fill_edges},
@@ -27,10 +28,14 @@ fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
         target.blend_solid_span(x, y, len, color.into_legacy(), coverage);
         return;
     }
-    for pixel_x in x..x + len {
-        let color = sampler.sample(pixel_x, y);
-        target.blend_solid_span(pixel_x, y, 1, color.into_legacy(), coverage);
-    }
+    let start = y as usize * target.stride() as usize + x as usize * 4;
+    let end = start + len as usize * 4;
+    let mut pixels = target.as_bytes_mut()[start..end].chunks_exact_mut(4);
+    sampler.sample_span(x, y, len, |color| {
+        let pixel = pixels.next().expect("sampler emitted too many span pixels");
+        blend_sampled_pixel(pixel, color, coverage);
+    });
+    debug_assert!(pixels.next().is_none());
 }
 
 pub struct GeometryWorkspace<'a> {
