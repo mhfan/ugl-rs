@@ -414,7 +414,12 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   to eight bytes per target column. Per-row dirty x bounds now restrict later
   clears and output scans to touched cells; the 64-small-rectangle case improved
   from about 124 us to 112 us, while the complex stroke remained statistically
-  unchanged near 115 us.
+  unchanged near 115 us. Time Profiler then located the dominant remaining
+  samples in tolerant active-edge insertion sorting rather than cell memory
+  access. The production path now preserves ordering across rows and slabs,
+  sorting only after activation, a real crossing, or a linear check detects a
+  numerically coalesced crossing; representative stroke coverage fell again
+  from about 97 us to 90 us without changing output.
 
 ## Implementation rules
 

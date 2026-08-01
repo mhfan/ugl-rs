@@ -403,7 +403,14 @@ than the former 4 bytes; short-edge churn is statistically unchanged. Tracking
 the touched x range per row and limiting subsequent clear and emission scans to
 that range reduced the 64-small-rectangle scene from about 124 µs to 112 µs,
 removing its initial 5.7% regression. The representative complex stroke remains
-near 115 µs, statistically unchanged by the range bookkeeping.
+near 115 µs, statistically unchanged by the range bookkeeping. A subsequent
+profile showed active-edge insertion sorting, not cell memory layout, dominating
+the remaining integration time. Maintaining x order across rows and slabs, and
+sorting only after activation or a real crossing, reduced its coverage stage
+again from about 97 µs to 90 µs. A linear midpoint-order check catches crossings
+inside the floating-point event tolerance without restoring unconditional
+insertion sorting. The crossing stress case measured about 215 µs, though that
+adversarial benchmark remains noisier than ordinary scenes.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the

@@ -198,6 +198,7 @@ fn integrate_binned_row_cells(edges: &[Edge], row_edges: &[u32], row_y: f32,
     let mut dirty = CellRange::EMPTY;
     while y0 < row_end {
         active_count = retain_active(active, active_count, y0);
+        let before_activation = active_count;
         while let Some(&index) = row_edges.get(pending) {
             let edge = edges[index as usize];
             if edge.upper.y > y0 { break; }
@@ -210,45 +211,58 @@ fn integrate_binned_row_cells(edges: &[Edge], row_edges: &[u32], row_y: f32,
             }
             pending += 1;
         }
+        if active_count != before_activation {
+            order_cell_edges(&mut active[..active_count]);
+        }
         let next_start = row_edges.get(pending)
             .map(|&index| edges[index as usize].upper.y).unwrap_or(row_end).min(row_end);
         if active_count == 0 {
             if next_start >= row_end { break; }
             y0 = next_start;  continue;
         }
-        let y1 = prepare_cell_slab(y0, next_start, &mut active[..active_count]);
+        let (y1, crossing) =
+            prepare_cell_slab(y0, next_start, &mut active[..active_count]);
         if y1 <= y0 { break; }
         integrate_cell_spans(&active[..active_count], y1 - y0, fill_rule, cells, &mut dirty);
         for edge in &mut active[..active_count] { edge.x0 = edge.x1; }
+        if crossing { order_cell_edges(&mut active[..active_count]); }
         y0 = y1;
     }
     (active_count, dirty)
 }
 
-fn prepare_cell_slab(y0: f32, limit: f32, active: &mut [Intersection]) -> f32 {
+fn prepare_cell_slab(y0: f32, limit: f32, active: &mut [Intersection]) -> (f32, bool) {
     let mut next = limit;
     if active.iter().all(|edge| edge.slope == 0.0) {
         for edge in &*active {
             if edge.y_end > y0 { next = next.min(edge.y_end); }
         }
-        order_active_edges(active);
         for edge in active { edge.x1 = edge.x0; }
-        return next;
+        return (next, false);
     }
     for edge in &*active {
         if edge.y_end > y0 { next = next.min(edge.y_end); }
     }
-    order_cell_edges(active);
+    let mut crossing = false;
     for pair in active.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
         if a.slope == b.slope { continue; }
         let y = y0 + (b.x0 - a.x0) / (a.slope - b.slope);
-        if is_distinct_event(y, y0) && y < next { next = y; }
+        if is_distinct_event(y, y0) && y <= next {
+            next = next.min(y);
+            crossing = true;
+        }
     }
     let height = next - y0;
     for edge in &mut *active { edge.x1 = edge.x0 + edge.slope * height; }
-    order_active_midpoints(active);
-    next
+    // A crossing inside the numerical event tolerance can be too close to split
+    // safely, but its midpoint order must still define the span pairing.
+    if active.windows(2).any(|pair|
+        pair[0].x0 + pair[0].x1 > pair[1].x0 + pair[1].x1) {
+        order_active_midpoints(active);
+        crossing = true;
+    }
+    (next, crossing)
 }
 
 fn integrate_cell_spans(intersections: &[Intersection], height: f32,
