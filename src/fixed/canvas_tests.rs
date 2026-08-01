@@ -1,5 +1,5 @@
 use super::*;
-use crate::common::{color::{PremulRGBA, PremulSRGBA8, SRGBA as RGBA}, edge::Edge,
+use crate::common::{color::{PremulRGBA, PremulSRGBA8, SRGBA}, edge::Edge,
     geometry::{Affine, PathBuilder}, render::SpreadMode};
 #[cfg(feature = "f32")]
 use crate::float::{analytic::{Cell as AnalyticCell,
@@ -159,7 +159,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 2]);
     prepare_lines(&edges, &mut lines).unwrap();
     let mut target = Pixmap::from_buffer(&mut pixels, 2, 1, 8).unwrap();
-    render_solid(&lines, RGBA::white(), FillRule::NonZero, &mut target,
+    render_solid(&lines, SRGBA::white(), FillRule::NonZero, &mut target,
         &mut Workspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
             strip_offsets: &mut strip_offsets,
@@ -181,7 +181,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut tiled_target = Pixmap::from_buffer(&mut tiled_pixels, 2, 1, 8).unwrap();
     let (mut tiles, mut runs, mut pieces) =  ([CoverageTile::default(); 1],
         [CoverageTileRun::default(); 2], [DirectTilePiece::default(); 2]);
-    render_solid_tiled(&lines, RGBA::white(), FillRule::NonZero, &mut tiled_target,
+    render_solid_tiled(&lines, SRGBA::white(), FillRule::NonZero, &mut tiled_target,
         &mut Workspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
             strip_offsets: &mut strip_offsets,
@@ -206,7 +206,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         },
     ).unwrap();
     let mut cached_pixels = [0; 8];
-    composite_solid_tiles(tiled, RGBA::white(),
+    composite_solid_tiles(tiled, SRGBA::white(),
         &mut Pixmap::from_buffer(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(cached_pixels, pixels);
     let ramp = [PremulSRGBA8::new(255, 0, 0, 255).unwrap(),
@@ -253,7 +253,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 128, 128]);
 
     let mut mismatched_pixels = [17; 4];
-    let error = composite_solid_tiles(tiled, RGBA::white(),
+    let error = composite_solid_tiles(tiled, SRGBA::white(),
         &mut Pixmap::from_buffer(&mut mismatched_pixels, 1, 1, 4).unwrap());
     assert_eq!(error, Err(RenderError::CoverageDimensionsMismatch {
         coverage: (2, 1), target: (1, 1) }));
@@ -300,7 +300,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 2]);
     let mut pixels = [0; 4 * 3 * 4];
     render_stroke_polyline(&points, false,
-        StrokeOptions::new(fixed(2)).unwrap(), &SolidPaint::new(RGBA::white()),
+        StrokeOptions::new(fixed(2)).unwrap(), &SolidPaint::new(SRGBA::white()),
         &mut Pixmap::from_buffer(&mut pixels, 4, 3, 16).unwrap(),
         &mut GeometryWorkspace {
             edges: &mut edge_storage, lines: &mut line_storage,
@@ -341,7 +341,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         ([Segment::default(); 128], [Trapezoid::default(); 64], [0; 7]);
     let (mut strip_offsets, mut strip_indices) = ([0; 7], [0; 128]);
     let mut pixels = [0; 6 * 6 * 4];
-    render_stroke_path(&path, &SolidPaint::new(RGBA::white()),
+    render_stroke_path(&path, &SolidPaint::new(SRGBA::white()),
         StrokePathOptions {
             transform: Affine::translate(fixed(2), fixed(2)),
             ..StrokePathOptions::default()
@@ -357,7 +357,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert!(pixels.chunks_exact(4).any(|pixel| pixel[3] != 0));
 
     let mut untouched = [17; 6 * 6 * 4];
-    assert_eq!(render_stroke_path(&path, &SolidPaint::new(RGBA::white()),
+    assert_eq!(render_stroke_path(&path, &SolidPaint::new(SRGBA::white()),
         StrokePathOptions::default(),
         &mut Pixmap::from_buffer(&mut untouched, 6, 6, 24).unwrap(),
         &mut StrokePathWorkspace { points: &mut [], contours: &mut contours },
@@ -392,7 +392,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 8]);
     let mut pixels = [0; 20];
     render_dashed_stroke_path(&builder.build(),
-        &SolidPaint::new(RGBA::white()), DashedStrokePathOptions {
+        &SolidPaint::new(SRGBA::white()), DashedStrokePathOptions {
             path: StrokePathOptions::default(),
             dash: Pattern::new(&pattern_lengths, Scalar::ZERO).unwrap(),
         }, &mut Pixmap::from_buffer(&mut pixels, 5, 1, 20).unwrap(),
@@ -429,7 +429,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         ([Segment::default(); 64], [Trapezoid::default(); 32], [0; 5]);
     let (mut strip_offsets, mut strip_indices) = ([0; 5], [0; 64]);
     let mut pixels = [0; 4 * 4 * 4];
-    render_path(&builder.build(), &SolidPaint::new(RGBA::white()),
+    render_path(&builder.build(), &SolidPaint::new(SRGBA::white()),
         RenderOptions::default(),
         &mut Pixmap::from_buffer(&mut pixels, 4, 4, 16).unwrap(),
         &mut GeometryWorkspace {
@@ -449,7 +449,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 
 #[test] fn full_tile_blending_matches_row_spans() {
     let (mut tiled, mut spanned) = ([17; 16 * 16 * 4], [17; 16 * 16 * 4]);
-    let color = RGBA::new(40, 120, 220, 192).premul_encoded();
+    let color = SRGBA::new(40, 120, 220, 192).premul_encoded();
     Pixmap::from_buffer(&mut tiled, 16, 16, 64).unwrap().blend_solid_tile(0, 0, 16, 16, color);
     let mut target = Pixmap::from_buffer(&mut spanned, 16, 16, 64).unwrap();
     for y in 0..16 { target.blend_solid_span(0, y, 16, color, u8::MAX); }

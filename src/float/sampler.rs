@@ -15,7 +15,7 @@
       a texture (image)
  */
 
-use crate::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA},
+use crate::{common::{color::{LinearPremulRGBA, PremulSRGBA8, SRGBA},
         geometry::{Affine, Point}, render::GlobalAlphaPaint,
         GradientError, SolidPaint, SpreadMode},
     float::{atan2, floor, sqrt}};
@@ -628,57 +628,57 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
 }
 
 #[cfg(test)] mod tests { use super::*;
-    use crate::{common::color::SRGBA as RGBA, float::{cos, sin}};
+    use crate::{common::color::{LinearRGBA, SRGBA}, float::{cos, sin}};
     fn encoded(color: SRGBA<u8>) -> PremulSRGBA8 { color.premul_encoded() }
 
     fn linear(r: f32, g: f32, b: f32, a: f32) -> PremulSRGBA8 {
-        crate::common::color::LinearRGBA::new(r, g, b, a).premul().to_encoded_srgba8()
+        LinearRGBA::new(r, g, b, a).premul().to_encoded_srgba8()
     }
 
     #[test] fn solid_paint_is_position_independent_and_premultiplied() {
-        let paint = SolidPaint::new(RGBA::new(200, 100, 50, 128));
+        let paint = SolidPaint::new(SRGBA::new(200, 100, 50, 128));
         assert_eq!(paint.sample(0.5, 0.5),
             PremulSRGBA8::new(100, 50, 25, 128).unwrap());
         assert_eq!(paint.sample(-100.0, 200.0), paint.solid_color().unwrap());
     }
 
     fn red_blue_stops() -> [GradientStop; 2] {
-        [GradientStop::new(0.0, RGBA::red()), GradientStop::new(1.0, RGBA::blue())]
+        [GradientStop::new(0.0, SRGBA::red()), GradientStop::new(1.0, SRGBA::blue())]
     }
 
     #[test] fn gradient_stops_validate_and_interpolate_premultiplied_colors() {
         assert_eq!(GradientStops::new(&[]).unwrap_err(), GradientError::EmptyStops);
-        assert_eq!(GradientStops::new(&[GradientStop::new(f32::NAN, RGBA::red())])
+        assert_eq!(GradientStops::new(&[GradientStop::new(f32::NAN, SRGBA::red())])
             .unwrap_err(), GradientError::NonFiniteOffset);
-        assert_eq!(GradientStops::new(&[GradientStop::new(1.25, RGBA::red())])
+        assert_eq!(GradientStops::new(&[GradientStop::new(1.25, SRGBA::red())])
             .unwrap_err(), GradientError::OffsetOutOfRange);
-        assert_eq!(GradientStops::new(&[GradientStop::new(0.75, RGBA::red()),
-                                        GradientStop::new(0.25, RGBA::blue()),
+        assert_eq!(GradientStops::new(&[GradientStop::new(0.75, SRGBA::red()),
+                                        GradientStop::new(0.25, SRGBA::blue()),
         ]).unwrap_err(), GradientError::UnorderedStops);
 
-        let stops = [GradientStop::new(0.0, RGBA::new(255, 0, 0, 0)),
-                     GradientStop::new(1.0, RGBA::new(0, 0, 255, 255))];
+        let stops = [GradientStop::new(0.0, SRGBA::new(255, 0, 0, 0)),
+                     GradientStop::new(1.0, SRGBA::new(0, 0, 255, 255))];
         assert_eq!(GradientStops::new(&stops).unwrap().sample(0.5),
             PremulSRGBA8::new(0, 0, 128, 128).unwrap());
 
-        let single = [GradientStop::new(0.4, RGBA::green())];
+        let single = [GradientStop::new(0.4, SRGBA::green())];
         let single = GradientStops::new(&single).unwrap();
         assert_eq!(single.sample(-10.0), single.sample(10.0));
-        let hard = [GradientStop::new(0.0, RGBA::red()),
-                    GradientStop::new(0.5, RGBA::red()),
-                    GradientStop::new(0.5, RGBA::blue()),
-                    GradientStop::new(1.0, RGBA::blue())];
+        let hard = [GradientStop::new(0.0, SRGBA::red()),
+                    GradientStop::new(0.5, SRGBA::red()),
+                    GradientStop::new(0.5, SRGBA::blue()),
+                    GradientStop::new(1.0, SRGBA::blue())];
         let hard = GradientStops::new(&hard).unwrap();
-        assert_eq!(hard.sample(0.5 - f32::EPSILON), encoded(RGBA::<u8>::red()));
-        assert_eq!(hard.sample(0.5), encoded(RGBA::<u8>::blue()));
+        assert_eq!(hard.sample(0.5 - f32::EPSILON), encoded(SRGBA::<u8>::red()));
+        assert_eq!(hard.sample(0.5), encoded(SRGBA::<u8>::blue()));
     }
 
     #[test] fn gradient_ramp_validates_storage_and_tracks_exact_sampling() {
         let stops = red_blue_stops();
         assert!(GradientStops::new(&stops).unwrap().is_opaque());
         assert!(!GradientStops::new(&[
-            GradientStop::new(0.0, RGBA::red()),
-            GradientStop::new(1.0, RGBA::new(0, 0, 255, 254)),
+            GradientStop::new(0.0, SRGBA::red()),
+            GradientStop::new(1.0, SRGBA::new(0, 0, 255, 254)),
         ]).unwrap().is_opaque());
         let mut too_small = [PremulSRGBA8::zeroed(); 1];
         assert_eq!(GradientStops::with_ramp(&stops, &mut too_small).unwrap_err(),
@@ -719,9 +719,9 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         let stops = GradientStops::new(&stops).unwrap();
         let pad = LinearGradient::new((1.0, 2.0), (5.0, 2.0),
             stops, SpreadMode::Pad).unwrap();
-        assert_eq!(pad.sample(1.0, 100.0), encoded(RGBA::<u8>::red()));
+        assert_eq!(pad.sample(1.0, 100.0), encoded(SRGBA::<u8>::red()));
         assert_eq!(pad.sample(3.0, -100.0), linear(0.5, 0.0, 0.5, 1.0));
-        assert_eq!(pad.sample(8.0, 2.0), encoded(RGBA::<u8>::blue()));
+        assert_eq!(pad.sample(8.0, 2.0), encoded(SRGBA::<u8>::blue()));
 
         let repeat  = LinearGradient::new((0.0, 0.0), (1.0, 0.0),
             stops, SpreadMode::Repeat).unwrap();
@@ -737,14 +737,14 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         let stops = GradientStops::new(&stops).unwrap();
         let radial =
             RadialGradient::new((2.0, 3.0), 4.0, stops, SpreadMode::Pad).unwrap();
-        assert_eq!(radial.sample(2.0, 3.0), encoded(RGBA::<u8>::red()));
+        assert_eq!(radial.sample(2.0, 3.0), encoded(SRGBA::<u8>::red()));
         assert_eq!(radial.sample(4.0, 3.0), linear(0.5, 0.0, 0.5, 1.0));
-        assert_eq!(radial.sample(10.0, 3.0), encoded(RGBA::<u8>::blue()));
+        assert_eq!(radial.sample(10.0, 3.0), encoded(SRGBA::<u8>::blue()));
 
         let focal = RadialGradient::two_circle((1.0, 0.0), 0.0, (0.0, 0.0), 4.0,
             stops, SpreadMode::Pad).unwrap();
-        assert_eq!(focal.sample( 1.0, 0.0), encoded(RGBA::<u8>:: red()));
-        assert_eq!(focal.sample(-4.0, 0.0), encoded(RGBA::<u8>::blue()));
+        assert_eq!(focal.sample( 1.0, 0.0), encoded(SRGBA::<u8>:: red()));
+        assert_eq!(focal.sample(-4.0, 0.0), encoded(SRGBA::<u8>::blue()));
         assert_eq!(RadialGradient::new((0.0, 0.0), -1.0, stops, SpreadMode::Pad)
             .unwrap_err(), GradientError::NegativeRadius);
         assert_eq!(RadialGradient::two_circle((0.0, 0.0), 1.0, (0.0, 0.0), 1.0,
@@ -760,15 +760,15 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
         let stops = red_blue_stops();
         let stops = GradientStops::new(&stops).unwrap();
         let conic = ConicGradient::new((2.0, 3.0), 0.0, stops).unwrap();
-        assert_eq!(conic.sample(3.0, 3.0), encoded(RGBA::<u8>::red()));
+        assert_eq!(conic.sample(3.0, 3.0), encoded(SRGBA::<u8>::red()));
         assert_eq!(conic.sample(2.0, 4.0), linear(0.75, 0.0, 0.25, 1.0));
         assert_eq!(conic.sample(1.0, 3.0), linear(0.5, 0.0, 0.5, 1.0));
         assert_eq!(conic.sample(2.0, 2.0), linear(0.25, 0.0, 0.75, 1.0));
 
         let rotated = ConicGradient::new((2.0, 3.0), TAU / 4.0, stops).unwrap();
-        assert_eq!(rotated.sample(2.0, 4.0), encoded(RGBA::<u8>::red()));
-        assert_eq!(conic.sample(3.0, 3.0 + 1e-4), encoded(RGBA::<u8>::red()));
-        assert_eq!(conic.sample(3.0, 3.0 - 1e-4), encoded(RGBA::<u8>::blue()));
+        assert_eq!(rotated.sample(2.0, 4.0), encoded(SRGBA::<u8>::red()));
+        assert_eq!(conic.sample(3.0, 3.0 + 1e-4), encoded(SRGBA::<u8>::red()));
+        assert_eq!(conic.sample(3.0, 3.0 - 1e-4), encoded(SRGBA::<u8>::blue()));
     }
 
     #[test] fn fast_conic_angle_tracks_exact_across_quadrants_and_seam() {
@@ -812,13 +812,13 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
             GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
         let transformed = TransformedPaint::new(&gradient,
             Affine::new(2.0, 0.0, 0.0, 1.0, 10.0, 0.0)).unwrap();
-        assert_eq!(transformed.sample(10.0, 0.0), encoded(RGBA::<u8>::red()));
+        assert_eq!(transformed.sample(10.0, 0.0), encoded(SRGBA::<u8>::red()));
         assert_eq!(transformed.sample(12.0, 0.0), linear(0.5, 0.0, 0.5, 1.0));
-        assert_eq!(transformed.sample(14.0, 0.0), encoded(RGBA::<u8>::blue()));
+        assert_eq!(transformed.sample(14.0, 0.0), encoded(SRGBA::<u8>::blue()));
 
-        let solid = TransformedPaint::new(SolidPaint::new(RGBA::green()),
+        let solid = TransformedPaint::new(SolidPaint::new(SRGBA::green()),
             Affine::translate(5.0, 7.0)).unwrap();
-        assert_eq!(solid.solid_color(), Some(encoded(RGBA::<u8>::green())));
+        assert_eq!(solid.solid_color(), Some(encoded(SRGBA::<u8>::green())));
         assert_eq!(TransformedPaint::new(solid,
             Affine::new(1.0, 2.0, 2.0, 4.0, 0.0, 0.0)).unwrap_err(),
             PaintTransformError::NonInvertibleTransform);
@@ -920,9 +920,9 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
     }
 
     #[test] fn randomized_gradient_samples_remain_valid_premultiplied_colors() {
-        let stops = [GradientStop::new(0.0, RGBA::new(240, 20, 80, 32)),
-                     GradientStop::new(0.3, RGBA::new(10, 220, 40, 160)),
-                     GradientStop::new(1.0, RGBA::new(30, 60, 250, 224))];
+        let stops = [GradientStop::new(0.0, SRGBA::new(240, 20, 80, 32)),
+                     GradientStop::new(0.3, SRGBA::new(10, 220, 40, 160)),
+                     GradientStop::new(1.0, SRGBA::new(30, 60, 250, 224))];
         let stops = GradientStops::new(&stops).unwrap();
         let linear = LinearGradient::new((-2.0, 1.0), (3.0, 4.0),
             stops, SpreadMode::Reflect).unwrap();

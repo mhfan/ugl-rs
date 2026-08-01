@@ -5,25 +5,25 @@
 //! `render_*_sampled`.
 
 use core::convert::Infallible;
-use crate::{common::{color::SRGBA, dash::{DashContour, DashWorkspace},
+use crate::{common::{color::{PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorkspace},
     edge::Edge, geometry::{Affine, Path, Point, Rect}, Pixmap, RenderError, SolidPaint,
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
     render::{BYTES_PER_PIXEL, EdgeCapacity, EdgeSliceSink, map_dash_error,
         solid_blend_terms, validate_coverage_dimensions},
     stroke::{StrokeContour, StrokePathWorkspace, StrokeWorkspaceError}},
-    float::{dash::{dash_polyline, DashPattern}, raster::{Intersection, RasterError,
+    float::{analytic::{BinError as AnalyticBinError,
+        BinWorkspace as AnalyticBinWorkspace, Cell as AnalyticCell,
+        CellWorkspace as AnalyticWorkspace, Intersection as AnalyticIntersection,
+        bin_requirements, build_row_bins, rasterize_edges_cells,
+        rasterize_edges_cells_region}, dash::{dash_polyline, DashPattern},
+        flatten::{FlattenError, FlattenOptions, build_fill_edges},
+        raster::{Intersection, RasterError,
         RasterOptions, RasterWorkspace, RectClipSink, clip_region, rect_is_integer,
-        rasterize_edges}},
-    float::analytic::{BinError as AnalyticBinError, BinWorkspace as AnalyticBinWorkspace,
-        Cell as AnalyticCell, CellWorkspace as AnalyticWorkspace,
-        Intersection as AnalyticIntersection, build_row_bins, rasterize_edges_cells,
-        rasterize_edges_cells_region},
-    float::flatten::{FlattenError, FlattenOptions, build_fill_edges},
-    float::sampler::PaintSampler,
-    float::stroke::{flatten_stroke_path, stroke_polyline, StrokeExpandError, StrokeOptions},
+        rasterize_edges}, sampler::PaintSampler,
+        stroke::{flatten_stroke_path, stroke_polyline, StrokeExpandError, StrokeOptions}},
 };
 
-fn blend_sampled_pixel(pixel: &mut [u8], color: crate::common::color::PremulSRGBA8,
+fn blend_sampled_pixel(pixel: &mut [u8], color: PremulSRGBA8,
     coverage: u8) {
     if coverage == u8::MAX && pixel[3] == 0 {
         pixel.copy_from_slice(&color.to_array()); return;
@@ -550,7 +550,7 @@ fn build_dashed_stroke_edges(path: &Path, transform: Affine,
 fn requirements_from_edges(edges: &[Edge], width: u32, height: u32) ->
     Result<RenderRequirements, RenderError> {
     let cells = usize::try_from(width).map_err(|_| RenderError::DimensionsOverflow)?;
-    let bins = crate::float::analytic::bin_requirements(edges, height).map_err(map_bin_error)?;
+    let bins = bin_requirements(edges, height).map_err(map_bin_error)?;
     Ok(RenderRequirements {
         edges: edges.len(), intersections: edges.len(), cells,
         row_offsets: bins.offsets, edge_indices: bins.indices,

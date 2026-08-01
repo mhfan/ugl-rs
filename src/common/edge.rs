@@ -1,7 +1,7 @@
 //! Directed fill edges produced from flattened paths.
 
 use core::cmp::Ordering;
-use crate::common::geometry::{Point, Scalar};
+use super::geometry::{Point, Scalar};
 
 pub trait LineSink<T = Scalar> { type Error;
     fn begin_subpath(&mut self, _: Point<T>) -> Result<(), Self::Error> { Ok(()) }

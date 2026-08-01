@@ -4,14 +4,15 @@ use alloc::{rc::Rc, vec::Vec};
 use crate::{
     common::{color::SRGBA, dash::DashContour, edge::Edge,
         geometry::{Affine, Path, Point, Rect}, raster::{CoverageMask, FillRule},
-        render::{Clip, DrawState, GlobalAlphaPaint}, stroke::StrokePathWorkspace,
-        Pixmap, RenderError, SolidPaint},
+        render::{Clip, DrawState, GlobalAlphaPaint},
+        stroke::{StrokeContour, StrokePathWorkspace},
+        Pixmap, PixmapError, RenderError, SolidPaint},
     fixed::{Scalar, canvas::{DashedStrokePathOptions,
             DashedStrokeRequirements, DashedStrokeWorkspace, GeometryWorkspace,
             RenderOptions, RenderRequirements, StrokePathOptions,
             StrokePlanningWorkspace, StrokeRequirements,
             dashed_stroke_requirements as plan_dashed_stroke, render_requirements,
-            prepare_dashed_stroke_path, prepare_stroke_path,
+            prepare_dashed_stroke_path, prepare_stroke_path, stroke_requirements,
             render_paint, render_paint_clipped, render_paint_masked,
             render_path, render_path_clipped, render_path_masked},
         dash::Pattern as DashPattern,
@@ -38,7 +39,7 @@ impl<'a> Workspace<'a> {
 }
 
 #[derive(Default)] struct CanvasStorage {
-    points: Vec<Point<Scalar>>, contours: Vec<crate::common::stroke::StrokeContour>,
+    points: Vec<Point<Scalar>>, contours: Vec<StrokeContour>,
     dash_points: Vec<Point<Scalar>>, dash_contours: Vec<DashContour>,
     edges: Vec<Edge<Scalar>>, lines: Vec<Line>, segments: Vec<Segment>,
     trapezoids: Vec<Trapezoid>, row_area: Vec<u64>, strip_offsets: Vec<u32>,
@@ -240,7 +241,7 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
     pub fn stroke_requirements(&self, path: &Path<Scalar>,
         workspace: &mut StrokePlanningWorkspace<'_>) ->
         Result<StrokeRequirements, RenderError> {
-        crate::fixed::canvas::stroke_requirements(path, StrokePathOptions {
+        stroke_requirements(path, StrokePathOptions {
             transform: self.state.transform, flatten: self.state.flatten,
             stroke: self.state.stroke,
         }, (self.target.width(), self.target.height()), workspace)
@@ -331,14 +332,14 @@ pub struct Canvas<'target> {
 }
 
 impl Canvas<'static> {
-    pub fn new(width: u32, height: u32) -> Result<Self, crate::common::PixmapError> {
+    pub fn new(width: u32, height: u32) -> Result<Self, PixmapError> {
         Ok(Self::from_target(Pixmap::new(width, height)?))
     }
 }
 
 impl<'target> Canvas<'target> {
     pub fn from_buffer(data: &'target mut [u8], width: u32, height: u32, stride: u32) ->
-        Result<Self, crate::common::PixmapError> {
+        Result<Self, PixmapError> {
         Ok(Self::from_target(Pixmap::from_buffer(data, width, height, stride)?))
     }
 
@@ -478,7 +479,7 @@ impl<'target> Canvas<'target> {
         let options = StrokePathOptions { transform: self.state.transform,
             flatten: self.state.flatten, stroke: self.state.stroke };
         loop {
-            let result = crate::fixed::canvas::stroke_requirements(path, options,
+            let result = stroke_requirements(path, options,
                 (self.target.width(), self.target.height()),
                 &mut self.storage.stroke_planning());
             match result {

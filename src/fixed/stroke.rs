@@ -4,7 +4,7 @@ use crate::{common::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point},
         stroke::{FlattenedStrokePath, LineCap, LineJoin, StrokePathWorkspace,
             StrokeWorkspaceError, flatten_stroke_path_with}},
     fixed::{DEVICE_RAW_LIMIT, Scalar,
-        flatten::{Error as FlattenError, Options as FlattenOptions},
+        flatten::{self, Error as FlattenError, Options as FlattenOptions},
         math::{Angle, cordic_turn, cordic_unit_vector, integer_sqrt_u64}}};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum Error {
@@ -79,7 +79,7 @@ pub fn flatten_path<'a>(path: &Path<Scalar>,
     Result<FlattenedStrokePath<'a, Scalar>,
         FlattenError<StrokeWorkspaceError>> {
     flatten_stroke_path_with(workspace,
-        |sink| crate::fixed::flatten::flatten_path(path, transform, options, sink))
+        |sink| flatten::flatten_path(path, transform, options, sink))
 }
 
 pub fn stroke_line<S: EdgeSink<Scalar>>(from: Point<Scalar>,
@@ -478,6 +478,7 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
 #[cfg(test)] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
+    #[cfg(feature = "f32")] use crate::float::stroke;
 
     fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }
 
@@ -511,8 +512,8 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
         let options = Options::new(fixed(2.0)).unwrap();
         let actual = collect(&[(2.0, 2.0), (6.0, 6.0)], false, options);
         let mut expected = Vec::new();
-        crate::float::stroke::stroke_line((2.0, 2.0).into(), (6.0, 6.0).into(),
-            crate::float::stroke::StrokeOptions::new(2.0).unwrap(), &mut |edge| {
+        stroke::stroke_line((2.0, 2.0).into(), (6.0, 6.0).into(),
+            stroke::StrokeOptions::new(2.0).unwrap(), &mut |edge| {
                 expected.push(edge); Ok::<_, Infallible>(())
             }).unwrap();
         let actual_bounds = actual.iter().flat_map(|edge| [edge.upper, edge.lower]).fold(

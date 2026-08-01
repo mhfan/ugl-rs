@@ -1,9 +1,8 @@
 //! Allocation-free Q24.8 curve flattening without floating point.
 
-use crate::common::{edge::{EdgeSink, FillEdgeBuilder, LineSink},
-    geometry::{Affine, Path, PathError,
-        PathSegment, Point}};
-use crate::fixed::{DEVICE_RAW_LIMIT, Scalar};
+use crate::{common::{edge::{EdgeSink, FillEdgeBuilder, LineSink},
+        geometry::{Affine, Path, PathError, PathSegment, Point}},
+    fixed::{DEVICE_RAW_LIMIT, Scalar}};
 
 const STACK_CAPACITY: usize = 32;
 

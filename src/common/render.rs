@@ -1,9 +1,10 @@
 //! Rendering state, target storage, and backend-neutral pipeline support.
 
 use alloc::vec::Vec;
-use crate::common::{color::{PremulSRGBA8, SRGBA}, dash::DashError,
+use super::{color::{PremulSRGBA8, SRGBA}, dash::DashError,
     edge::{Edge, EdgeSink}, geometry::{Affine, PathError, Rect},
     raster::{CoverageMask, FillRule}};
+#[cfg(feature = "f32")] use super::color::LinearPremulRGBA;
 #[cfg(feature = "fixed")] use crate::fixed::raster::Error as FixedRasterError;
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct SolidPaint {
@@ -15,7 +16,7 @@ impl SolidPaint {
     pub fn premultiplied(color: PremulSRGBA8) -> Self { Self { encoded: color } }
     pub fn color(&self) -> PremulSRGBA8 { self.encoded }
     #[cfg(feature = "f32")]
-    pub fn linear_color(&self) -> crate::common::color::LinearPremulRGBA<f32> {
+    pub fn linear_color(&self) -> LinearPremulRGBA<f32> {
         self.encoded.to_linear()
     }
 }
@@ -232,7 +233,7 @@ pub(crate) fn blend_solid_bytes(bytes: &mut [u8],
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EdgeCapacity { pub(crate) needed_at_least: usize }
 
-pub(crate) struct EdgeSliceSink<'a, T = crate::common::geometry::Scalar> {
+pub(crate) struct EdgeSliceSink<'a, T = super::geometry::Scalar> {
     pub(crate) edges: &'a mut [Edge<T>], pub(crate) len: usize,
 }
 

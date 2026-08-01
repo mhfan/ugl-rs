@@ -165,13 +165,12 @@ fn dash_segment<W: DashOutput<Point<Scalar>>>(
 
 #[cfg(test)] mod tests {
 use super::*;
-use crate::common::dash::{DashContour, DashError, DashRequirements, DashWorkspace};
+use crate::{common::dash::{DashContour, DashError, DashRequirements, DashWorkspace},
+    fixed::Scalar};
 #[cfg(feature = "f32")]
-use crate::float::dash::{DashPattern as ReferencePattern,
-    dash_polyline as reference_dash_polyline, dash_requirements};
+use crate::{fixed::DEVICE_RAW_LIMIT, float::dash::{DashPattern as ReferencePattern,
+    dash_polyline as reference_dash_polyline, dash_requirements}};
 #[cfg(feature = "f32")] use alloc::vec::Vec;
-use crate::fixed::Scalar;
-#[cfg(feature = "f32")] use crate::fixed::DEVICE_RAW_LIMIT;
 
 #[cfg(feature = "f32")]
 fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->

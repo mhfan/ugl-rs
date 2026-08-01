@@ -7,12 +7,12 @@ use crate::{
         geometry::{Affine, Path, Point, Rect},
         raster::{CoverageMask, CoverageSink, FillRule},
         render::{Clip, DrawState, GlobalAlphaPaint}, stroke::StrokeContour,
-        Pixmap, RenderError, SolidPaint},
-    float::{analytic::Intersection as AnalyticIntersection,
+        Pixmap, PixmapError, RenderError, SolidPaint},
+    float::{analytic::{Cell, Intersection},
     canvas::{DashedStrokePathOptions, DashedStrokePlanningWorkspace,
         DashedStrokeRequirements, DashedStrokeWorkspace, RenderOptions,
         RenderRequirements, RenderWorkspace, StrokePathOptions, StrokePlanningWorkspace,
-        StrokeRequirements, StrokeWorkspace,
+        StrokeRequirements, StrokeWorkspace, stroke_requirements,
         build_edges, dashed_stroke_requirements as plan_dashed_stroke, edge_region,
         rasterize_built_region,
         render_paint, render_requirements,
@@ -20,10 +20,8 @@ use crate::{
         render_stroke_paint_dashed, render_stroke_paint_dashed_clipped,
         render_stroke_paint_dashed_masked,
         render_stroke_paint, render_stroke_paint_clipped,
-        render_stroke_paint_masked}},
-    float::flatten::FlattenOptions,
-    float::{dash::DashPattern, stroke::StrokeOptions},
-    float::sampler::PaintSampler,
+        render_stroke_paint_masked}, dash::DashPattern, flatten::FlattenOptions,
+        sampler::PaintSampler, stroke::StrokeOptions},
 };
 
 /// Caller-owned scratch borrowed by [`CanvasRef`].
@@ -118,7 +116,7 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
         self.fill_with(path, &paint)
     }
 
-    pub fn fill_requirements(&self, path: &Path, edges: &mut [crate::common::edge::Edge]) ->
+    pub fn fill_requirements(&self, path: &Path, edges: &mut [Edge]) ->
         Result<RenderRequirements, RenderError> {
         render_requirements(path, self.state.transform, RenderOptions {
             fill_rule: self.state.fill_rule, flatten: self.state.flatten,
@@ -155,7 +153,7 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
     pub fn stroke_requirements(&self, path: &Path,
         workspace: &mut StrokePlanningWorkspace<'_>) ->
         Result<StrokeRequirements, RenderError> {
-        crate::float::canvas::stroke_requirements(path, self.state.transform, StrokePathOptions {
+        stroke_requirements(path, self.state.transform, StrokePathOptions {
             flatten: self.state.flatten, stroke: self.state.stroke,
         }, (self.target.width(), self.target.height()), workspace)
     }
@@ -243,7 +241,7 @@ fn reborrow_stroke<'a>(workspace: &'a mut StrokeWorkspace<'_>) -> StrokeWorkspac
 #[derive(Default)] struct CanvasStorage {
     points: Vec<Point>, contours: Vec<StrokeContour>, edges: Vec<Edge>,
     dash_points: Vec<Point>, dash_contours: Vec<DashContour>,
-    intersections: Vec<AnalyticIntersection>, cells: Vec<crate::float::analytic::Cell>,
+    intersections: Vec<Intersection>, cells: Vec<Cell>,
     row_offsets: Vec<u32>, edge_indices: Vec<u32>,
 }
 
@@ -277,8 +275,8 @@ impl CanvasStorage {
 
     fn prepare_render(&mut self, required: RenderRequirements) {
         self.edges.resize(required.edges, Edge::default());
-        self.intersections.resize(required.intersections, AnalyticIntersection::default());
-        self.cells.resize(required.cells, crate::float::analytic::Cell::default());
+        self.intersections.resize(required.intersections, Intersection::default());
+        self.cells.resize(required.cells, Cell::default());
         self.row_offsets.resize(required.row_offsets, 0);
         self.edge_indices.resize(required.edge_indices, 0);
     }
@@ -414,7 +412,7 @@ impl CoverageSink for ClipMaskSink<'_> {
 
 impl Canvas<'static> {
     /// Creates a zero-initialized tightly packed RGBA8888 canvas.
-    pub fn new(width: u32, height: u32) -> Result<Self, crate::common::PixmapError> {
+    pub fn new(width: u32, height: u32) -> Result<Self, PixmapError> {
         Ok(Self::from_target(Pixmap::new(width, height)?))
     }
 }
@@ -422,7 +420,7 @@ impl Canvas<'static> {
 impl<'target> Canvas<'target> {
     /// Creates a canvas over caller-owned RGBA8888 storage.
     pub fn from_buffer(data: &'target mut [u8], width: u32, height: u32, stride: u32) ->
-        Result<Self, crate::common::PixmapError> {
+        Result<Self, PixmapError> {
         Ok(Self::from_target(Pixmap::from_buffer(data, width, height, stride)?))
     }
 
@@ -570,7 +568,7 @@ impl<'target> Canvas<'target> {
             flatten: self.state.flatten, stroke: self.state.stroke,
         };
         loop {
-            let result = crate::float::canvas::stroke_requirements(
+            let result = stroke_requirements(
                 path, self.state.transform, options,
                 (self.target.width(), self.target.height()), &mut StrokePlanningWorkspace {
                     points: &mut self.storage.points, contours: &mut self.storage.contours,
@@ -648,8 +646,7 @@ impl<'target> Canvas<'target> {
 
 #[cfg(test)] mod tests {
     use super::*;
-    use crate::{float::analytic::Intersection as AnalyticIntersection,
-        common::{edge::Edge, geometry::{PathBuilder, Point}, raster::CoverageMask,
+    use crate::{common::{edge::Edge, geometry::{PathBuilder, Point}, raster::CoverageMask,
             render::SpreadMode, stroke::StrokeContour},
         float::{dash::DashPattern,
             sampler::{GradientStop, GradientStops, LinearGradient}},
@@ -658,8 +655,7 @@ impl<'target> Canvas<'target> {
     struct Buffers {
         points: [Point; 8], contours: [StrokeContour; 2], edges: [Edge; 32],
         dash_points: [Point; 16], dash_contours: [DashContour; 8],
-        intersections: [AnalyticIntersection; 32],
-        cells: [crate::float::analytic::Cell; 4],
+        intersections: [Intersection; 32], cells: [Cell; 4],
         row_offsets: [u32; 5], edge_indices: [u32; 32],
     }
 
@@ -669,8 +665,8 @@ impl<'target> Canvas<'target> {
             dash_points: [Point::default(); 16],
             dash_contours: [DashContour::default(); 8],
             edges: [Edge::default(); 32],
-            intersections: [AnalyticIntersection::default(); 32],
-            cells: [crate::float::analytic::Cell::default(); 4],
+            intersections: [Intersection::default(); 32],
+            cells: [Cell::default(); 4],
             row_offsets: [0; 5], edge_indices: [0; 32],
         } }
 

@@ -1,5 +1,7 @@
 //! Fixed-point geometry preparation and rasterization.
 
+use crate::common::geometry::{Affine, Point, ScalarConstants};
+
 /// Q24.8 coordinate scalar used by the fixed backend.
 pub type Scalar = fixed::types::I24F8;
 
@@ -8,15 +10,15 @@ pub const DEVICE_RAW_LIMIT: i32 = 1 << 29;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum TransformError { Overflow }
 
-impl crate::common::geometry::ScalarConstants for Scalar {
+impl ScalarConstants for Scalar {
     const ZERO: Self = Self::ZERO;
     const  ONE: Self = Self::ONE;
 }
 
-impl crate::common::geometry::Affine<Scalar> {
+impl Affine<Scalar> {
     /// Transforms a Q24.8 point with widened multiply-add and checked conversion.
-    pub fn try_transform_point(&self, point: crate::common::geometry::Point<Scalar>) ->
-        Result<crate::common::geometry::Point<Scalar>, TransformError> {
+    pub fn try_transform_point(&self, point: Point<Scalar>) ->
+        Result<Point<Scalar>, TransformError> {
         let transform = |first: Scalar, x: Scalar, second: Scalar, y: Scalar,
             translation: Scalar| {
             const FRACTION_BITS: u32 = 8;

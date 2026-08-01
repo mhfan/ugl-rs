@@ -1,5 +1,7 @@
 //! Floating-point vector rendering backend.
 
+use crate::common::edge::Edge;
+
 mod math;
 pub mod blend;
 pub mod dash;
@@ -8,7 +10,7 @@ pub mod raster;
 pub mod stroke;
 pub(crate) use math::*;
 
-impl crate::common::edge::Edge {
+impl Edge {
     pub(crate) fn is_valid(&self) -> bool {
         [self.upper.x, self.upper.y, self.lower.x, self.lower.y]
             .iter().all(|value| value.is_finite()) &&

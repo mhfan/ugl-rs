@@ -11,12 +11,11 @@ use crate::{
     common::{color::{LinearPremulRGBA, LinearRGBA, PremulSRGBA8, SRGBA},
         geometry::{Affine, Path, Rect}, raster::{CoverageMask, CoverageSink, MaskClipSink},
         Pixmap, RenderError},
-    float::canvas::{DashedStrokePathOptions, DashedStrokeWorkspace,
+    float::{canvas::{DashedStrokePathOptions, DashedStrokeWorkspace,
         RenderOptions, RenderWorkspace, StrokePathOptions,
         StrokeWorkspace, render_path_to,
-        render_stroke_dashed_to, render_stroke_to},
-    float::raster::RectClipSink,
-    float::sampler::LinearPaintSampler,
+        render_stroke_dashed_to, render_stroke_to}, raster::RectClipSink,
+        sampler::LinearPaintSampler},
 };
 
 pub const SRGB8_ENCODE_LUT_SIZE: usize = 4096;
@@ -249,7 +248,7 @@ impl<'a> LinearPixmap<'a> {
 
     fn encode_dirty_with<F>(&mut self, destination: &mut Pixmap<'_>,
         encode: F) -> Result<(), LinearPixmapError>
-        where F: Fn(LinearPremulRGBA<f32>) -> crate::common::color::PremulSRGBA8 {
+        where F: Fn(LinearPremulRGBA<f32>) -> PremulSRGBA8 {
         self.validate_destination(destination)?;
         let tile_area = u64::from(LINEAR_DIRTY_TILE_SIZE).pow(2);
         let pixel_count = u64::from(self.width) * u64::from(self.height);
@@ -505,8 +504,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
 
 #[cfg(test)] mod tests { use super::*;
     use crate::common::SolidPaint;
-    use crate::{float::analytic::{Cell as AnalyticCell,
-            Intersection as AnalyticIntersection},
+    use crate::{float::analytic::{Cell, Intersection},
         common::{edge::Edge, geometry::{PathBuilder, Point},
             raster::CoverageMask, stroke::StrokeContour}};
 
@@ -519,7 +517,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
 
     fn render(color: SRGBA<u8>, target: &mut LinearPixmap<'_>) {
         let (mut edges, mut intersections, mut cells) = ([Edge::default(); 4],
-            [AnalyticIntersection::default(); 2], [AnalyticCell::default(); 1]);
+            [Intersection::default(); 2], [Cell::default(); 1]);
         render_solid(&rectangle(), Affine::identity(), color,
             RenderOptions::default(), target, &mut RenderWorkspace {
                 intersections: &mut intersections, cells: &mut cells,
@@ -593,9 +591,9 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         builder.move_to((0.0, 0.0)).line_to((2.0, 0.0))
                .line_to((2.0, 1.0)).line_to((0.0, 1.0)).close();
         let path = builder.build();
-        let mut intersections = [AnalyticIntersection::default(); 4];
+        let mut intersections = [Intersection::default(); 4];
         let (mut edges, mut cells) =
-            ([Edge::default(); 4], [AnalyticCell::default(); 2]);
+            ([Edge::default(); 4], [Cell::default(); 2]);
         let mut workspace = RenderWorkspace {
             intersections: &mut intersections, cells: &mut cells,
             edges: &mut edges, row_offsets: &mut [0; 2], edge_indices: &mut [0; 4],
@@ -630,8 +628,8 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
             &mut LinearPixmap::from_buffer(&mut stroke_pixels, 2, 1, 2).unwrap(),
             &mut StrokeWorkspace {
                 points: &mut points, contours: &mut contours, edges: &mut stroke_edges,
-                intersections: &mut [AnalyticIntersection::default(); 4],
-                cells: &mut [AnalyticCell::default(); 2], row_offsets: &mut [0; 2],
+                intersections: &mut [Intersection::default(); 4],
+                cells: &mut [Cell::default(); 2], row_offsets: &mut [0; 2],
                 edge_indices: &mut [0; 4],
             }).unwrap();
         assert_eq!(stroke_pixels[0].to_array()[3], 1.0);
@@ -645,8 +643,8 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
             48, 16, 48, &mut dirty).unwrap();
         render_solid(&rectangle(), Affine::identity(), SRGBA::white(),
             RenderOptions::default(), &mut target, &mut RenderWorkspace {
-                intersections: &mut [AnalyticIntersection::default(); 4],
-                cells: &mut [AnalyticCell::default(); 48], edges: &mut [Edge::default(); 4],
+                intersections: &mut [Intersection::default(); 4],
+                cells: &mut [Cell::default(); 48], edges: &mut [Edge::default(); 4],
                 row_offsets: &mut [0; 17], edge_indices: &mut [0; 4],
             }).unwrap();
 
@@ -707,7 +705,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
     }
 
     #[test] fn opaque_sampler_fast_path_matches_source_over_at_full_and_partial_coverage() {
-        use crate::{common::{color::SRGBA as RGBA, render::SpreadMode},
+        use crate::{common::{color::SRGBA, render::SpreadMode},
             float::sampler::{GradientStop, GradientStops, LinearGradient}};
 
         struct Composite<'a, S>(&'a S);
@@ -721,8 +719,8 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
             }
         }
 
-        let stops = [GradientStop::new(0.0, RGBA::red()),
-                     GradientStop::new(1.0, RGBA::blue())];
+        let stops = [GradientStop::new(0.0, SRGBA::red()),
+                     GradientStop::new(1.0, SRGBA::blue())];
         let gradient = LinearGradient::new((0.0, 0.0), (8.0, 0.0),
             GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
         assert!(gradient.is_opaque_linear());

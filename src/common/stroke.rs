@@ -1,6 +1,6 @@
 //! Shared stroke storage and floating-point reference expansion.
 
-use crate::common::{edge::LineSink, geometry::{Point, Scalar}};
+use super::{edge::LineSink, geometry::{Point, Scalar}};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum LineCap { #[default] Butt, Round, Square, }
