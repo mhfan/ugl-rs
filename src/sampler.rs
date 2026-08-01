@@ -473,7 +473,23 @@ impl PaintSampler for RadialGradient<'_> {
             2.0 * (x * dx + y * dy) + step_squared,
         );
         let second_difference = 2.0 * step_squared;
-        for _ in 0..len {
+        let mut remaining = len;
+        while remaining >= 4 {
+            let (d0, s0) = (distance_squared, distance_step);
+            let (d1, s1) = (d0 + s0, s0 + second_difference);
+            let (d2, s2) = (d1 + s1, s1 + second_difference);
+            let (d3, s3) = (d2 + s2, s2 + second_difference);
+            let parameters = [d0, d1, d2, d3].map(|distance|
+                self.concentric_parameter(distance));
+            for parameter in parameters {
+                emit(parameter.map_or_else(PremulSRGBA8::zeroed,
+                    |t| self.stops.sample(self.spread.map(t))));
+            }
+            distance_squared = d3 + s3;
+            distance_step = s3 + second_difference;
+            remaining -= 4;
+        }
+        for _ in 0..remaining {
             emit(self.concentric_parameter(distance_squared).map_or_else(
                 PremulSRGBA8::zeroed,
                 |t| self.stops.sample(self.spread.map(t))));
@@ -503,7 +519,23 @@ impl LinearPaintSampler for RadialGradient<'_> {
             2.0 * (x * dx + y * dy) + step_squared,
         );
         let second_difference = 2.0 * step_squared;
-        for _ in 0..len {
+        let mut remaining = len;
+        while remaining >= 4 {
+            let (d0, s0) = (distance_squared, distance_step);
+            let (d1, s1) = (d0 + s0, s0 + second_difference);
+            let (d2, s2) = (d1 + s1, s1 + second_difference);
+            let (d3, s3) = (d2 + s2, s2 + second_difference);
+            let parameters = [d0, d1, d2, d3].map(|distance|
+                self.concentric_parameter(distance));
+            for parameter in parameters {
+                emit(parameter.map_or_else(LinearPremulRGBA::default,
+                    |t| self.stops.sample_linear(self.spread.map(t))));
+            }
+            distance_squared = d3 + s3;
+            distance_step = s3 + second_difference;
+            remaining -= 4;
+        }
+        for _ in 0..remaining {
             emit(self.concentric_parameter(distance_squared).map_or_else(
                 LinearPremulRGBA::default,
                 |t| self.stops.sample_linear(self.spread.map(t))));

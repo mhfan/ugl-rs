@@ -327,7 +327,7 @@ frames produced:
 | 64 fractional rectangles, fill | 59.45 µs | 107.95 µs | 34.13 µs | 1.74× faster | 1.82× slower |
 | large fractional rectangle, fill | 22.00 µs | 28.81 µs | 14.38 µs | 1.53× faster | 1.31× slower |
 | large rectangle, linear gradient | 64.41 µs | 187.13 µs | 31.85 µs | 2.02× faster | 2.91× slower |
-| large rectangle, radial gradient | 123.98 µs | 353.59 µs | 41.44 µs | 2.99× faster | 2.85× slower |
+| large rectangle, radial gradient | 115.97 µs | 353.59 µs | 41.44 µs | 2.80× faster | 3.05× slower |
 | large rectangle, conic gradient (Fast) | 184.70 µs | 361.90 µs | 68.38 µs | 2.70× faster | 1.96× slower |
 | large rectangle, sparse retained path mask | 6.20 µs | 7.48 µs | 31.12 µs¹ | 5.02× slower | 1.21× slower |
 | large rectangle, dense retained path mask | 23.59 µs | 31.60 µs | 30.31 µs¹ | 1.28× slower | 1.34× slower |
@@ -563,6 +563,11 @@ stepping reduced linear-gradient rendering from about 443.1 µs to 409.2 µs
 
 Concentric radial gradients use a dedicated distance-squared recurrence and
 one square root per sample, bypassing the general two-circle quadratic solver.
+Four independent recurrence values are scheduled together so LLVM can overlap
+the square roots without changing their scalar recurrence order. In the matched
+large-gradient draw this reduced the f32 median from 123.98 to 115.97 µs with
+the same output checksum; the remaining 2.80× Blend2D gap requires wider SIMD
+sampling/composition rather than more coordinate algebra.
 A short diagnostic measured 65,536 samples at about 467.4 µs through the span
 path versus 690.4 µs point-by-point (approximately 32%). The 64-rectangle
 analytic render measured about 903.1 µs versus 1.231 ms (approximately 27%).

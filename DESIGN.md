@@ -377,10 +377,12 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   coverage for this scene.
 - Concentric radial samplers advance squared distance with a second-order
   difference across each span instead of rebuilding coordinates and products
-  per pixel. The output checksum is unchanged; the matched f32 median fell from
-  202.22 to 123.98 µs and fixed from 542.18 to 353.59 µs. Blend2D measures
-  41.44 µs, leaving square-root throughput and encoded ramp/compositor batching
-  as the measured paint costs.
+  per pixel. Scheduling four recurrence values together, while preserving the
+  scalar update order, lets the compiler overlap independent square roots. The
+  output checksum is unchanged; the matched f32 median fell from 202.22 through
+  123.98 to 115.97 µs, and fixed from 542.18 to 353.59 µs. Blend2D measures
+  41.44 µs, leaving SIMD square-root throughput and encoded ramp/compositor
+  batching as the measured paint costs.
 - The matched conic scene explicitly uses the opt-in `Fast` angle policy while
   `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
   approximation; fixed evaluates the same polynomial in widened integer turns
@@ -517,11 +519,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   Fast-angle span traversal was also slower than the fully inlined point loop.
   The callback-shaped specialization is therefore rejected; future conic work
   must fuse sampling with composition or prove a batch representation first.
-- Four-way unrolling of f32 concentric distance recurrence did not improve the
-  sampler microbenchmark or the complete radial draw. Hardware scalar sqrt,
-  ramp lookup, callback composition, and stores remain one coupled pixel cost;
-  further work requires fused batching or target SIMD rather than more scalar
-  coordinate scheduling.
+- Factoring four-way f32 concentric recurrence scheduling through another
+  generic callback erased its end-to-end benefit. The encoded and linear hot
+  loops therefore retain explicit batches: the former improves the matched draw
+  by about 6.5%, while the latter more than halves its isolated span diagnostic.
 
 ## Implementation rules
 
