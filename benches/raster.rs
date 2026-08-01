@@ -1310,9 +1310,9 @@ fn benchmark_clip_masks(c: &mut Criterion) {
         flatten::{Options as FlattenOptions, build_fill_edges as build_fixed_fill_edges,
             flatten_path},
         raster::{CoverageRun, CoverageStrip, CoverageWorkspace,
-            Line, Workspace, Segment, Trapezoid, STRIP_HEIGHT,
+            Line, RasterWorkspace, Workspace, Segment, Trapezoid, STRIP_HEIGHT,
             build_strip_bins, emit_area_runs, prepare_lines, rasterize_lines,
-            rasterize_lines_to_strips},
+            rasterize_lines_binned, rasterize_lines_to_strips},
         sampler::{Angle, ConicAngleMode, ConicGradient, LinearGradient, RadialGradient},
         stroke::{Options as StrokeOptions, flatten_path as flatten_stroke_path,
             stroke_polyline},
@@ -1498,6 +1498,10 @@ fn benchmark_clip_masks(c: &mut Criterion) {
         vec![Trapezoid::default(); circle_line_count.div_ceil(2)],
         vec![0; WIDTH as usize], vec![0; circle_requirements.offsets],
         vec![0; circle_requirements.indices]);
+    let (mut prepared_circle_offsets, mut prepared_circle_indices) = (
+        vec![0; circle_requirements.offsets], vec![0; circle_requirements.indices]);
+    let circle_bins = build_strip_bins(&circle_lines[..circle_line_count], HEIGHT,
+        &mut prepared_circle_offsets, &mut prepared_circle_indices).unwrap();
     let mut crossing = PathBuilder::with_capacity(16 * 5);
     for index in 0..16 {
         let (x, y) = (Scalar::from_num((index % 4) as f32 * 60.0 + 8.25),
@@ -1540,11 +1544,10 @@ fn benchmark_clip_masks(c: &mut Criterion) {
     }));
     mask_stages.bench_function("coverage/circular_mask", |b| b.iter(|| {
         let mut sink = RunCounter::default();
-        rasterize_lines(&circle_lines[..circle_line_count], WIDTH, HEIGHT,
-            FillRule::NonZero, &mut Workspace {
+        rasterize_lines_binned(&circle_lines[..circle_line_count], circle_bins,
+            WIDTH, HEIGHT, FillRule::NonZero, &mut RasterWorkspace {
                 segments: &mut circle_segments, trapezoids: &mut circle_trapezoids,
-                row_area: &mut circle_area, strip_offsets: &mut circle_offsets,
-                strip_indices: &mut circle_indices,
+                row_area: &mut circle_area,
             }, &mut sink).unwrap();
         black_box((sink.runs, sink.pixels));
     }));

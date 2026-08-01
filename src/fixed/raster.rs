@@ -15,7 +15,7 @@ const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum Error {
     CoordinateOutOfRange, CrossingEdges, DimensionsOverflow, InvalidEdge, InvalidIntersectionOrder,
-    InvalidSlab, InvalidSlabPartition, InvalidTrapezoid, UnbalancedWinding,
+    InvalidEdgeBins, InvalidSlab, InvalidSlabPartition, InvalidTrapezoid, UnbalancedWinding,
     WorkspaceTooSmall { kind: WorkspaceKind, required: usize },
 }
 
@@ -411,6 +411,13 @@ pub struct Workspace<'a> {
     pub strip_indices: &'a mut [u32],
 }
 
+/// Raster scratch used after strip bins have already been prepared.
+pub struct RasterWorkspace<'a> {
+    pub segments: &'a mut [Segment],
+    pub trapezoids: &'a mut [Trapezoid],
+    pub row_area: &'a mut [u64],
+}
+
 /// Caller-owned storage for optional retained sparse coverage.
 pub struct CoverageWorkspace<'a> {
     pub strips: &'a mut [CoverageStrip],
@@ -454,6 +461,30 @@ pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
     region: (u32, u32, u32, u32), fill_rule: FillRule,
     workspace: &mut Workspace<'_>, sink: &mut S) ->
     Result<(), RenderError<S::Error>> where S: CoverageSink {
+    let Workspace { segments, trapezoids, row_area, strip_offsets, strip_indices } = workspace;
+    let bins = build_strip_bins(lines, height, strip_offsets, strip_indices)
+        .map_err(RenderError::Raster)?;
+    rasterize_lines_binned_region(lines, bins, (width, height), region, fill_rule,
+        &mut RasterWorkspace { segments, trapezoids, row_area }, sink)
+}
+
+/// Rasterizes prepared lines while reusing an immutable strip index.
+pub fn rasterize_lines_binned<S>(lines: &[Line], bins: StripBins<'_>,
+    width: u32, height: u32, fill_rule: FillRule,
+    workspace: &mut RasterWorkspace<'_>, sink: &mut S) ->
+    Result<(), RenderError<S::Error>> where S: CoverageSink {
+    rasterize_lines_binned_region(lines, bins, (width, height), (0, 0, width, height),
+        fill_rule, workspace, sink)
+}
+
+fn rasterize_lines_binned_region<S>(lines: &[Line], bins: StripBins<'_>,
+    target: (u32, u32), region: (u32, u32, u32, u32), fill_rule: FillRule,
+    workspace: &mut RasterWorkspace<'_>, sink: &mut S) ->
+    Result<(), RenderError<S::Error>> where S: CoverageSink {
+    let (width, height) = target;
+    if bins.height != height || bins.line_count != lines.len() {
+        return Err(RenderError::Raster(Error::InvalidEdgeBins));
+    }
     let (x0, y0, x1, y1) = region;
     let (x0, y0, x1, y1) = (
         x0.min(width), y0.min(height), x1.min(width), y1.min(height));
@@ -474,8 +505,6 @@ pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
     }
     if x0 >= x1 || y0 >= y1 { return Ok(()); }
     let Some((first_line, rest)) = lines.split_first() else { return Ok(()); };
-    let bins = build_strip_bins(lines, height,
-        workspace.strip_offsets, workspace.strip_indices).map_err(RenderError::Raster)?;
     let (mut minimum_y, mut maximum_y) =
         (first_line.y0, first_line.y0 + first_line.dy as i32);
     for line in rest {
@@ -742,7 +771,7 @@ impl CoverageSink for CoverageEncoder<'_> {
 /// Prepared strip index used by profiling and future retained-path reuse.
 #[derive(Clone, Copy, Debug)]
 pub struct StripBins<'a> {
-    offsets: &'a [u32], indices: &'a [u32],
+    offsets: &'a [u32], indices: &'a [u32], height: u32, line_count: usize,
 }
 
 impl StripBins<'_> {
@@ -804,7 +833,7 @@ pub fn build_strip_bins<'a>(lines: &[Line], height: u32, offsets: &'a mut [u32],
             left.y0.cmp(&right.y0)
                 .then_with(|| (left.y0 + left.dy as i32).cmp(&(right.y0 + right.dy as i32)))
         });
-    }   Ok(StripBins { offsets, indices })
+    }   Ok(StripBins { offsets, indices, height, line_count: lines.len() })
 }
 
 fn retain_active_lines(lines: &[Line], segments: &mut [Segment],

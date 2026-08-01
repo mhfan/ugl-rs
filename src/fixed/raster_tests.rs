@@ -214,6 +214,40 @@ fn render_region(edges: &[Edge<Scalar>], width: usize, height: usize,
     assert_eq!((offsets, indices), ([7; 5], [9; 4]));
 }
 
+#[test] fn prepared_strip_bins_replay_and_validate_their_binding() {
+    let edges = [
+        Edge { upper: (fixed(1.25), fixed(0.5)).into(),
+               lower: (fixed(1.25), fixed(3.5)).into(), winding: -1 },
+        Edge { upper: (fixed(3.5), fixed(0.5)).into(),
+               lower: (fixed(3.5), fixed(3.5)).into(), winding: 1 },
+    ];
+    let mut lines = [Line::default(); 2];
+    prepare_lines(&edges, &mut lines).unwrap();
+    let requirements = strip_requirements(&lines, 4).unwrap();
+    let (mut offsets, mut indices) =
+        (vec![0; requirements.offsets], vec![0; requirements.indices]);
+    let bins = build_strip_bins(&lines, 4, &mut offsets, &mut indices).unwrap();
+    let (mut segments, mut trapezoids, mut row_area) =
+        ([Segment::default(); 2], [Trapezoid::default(); 1], [0; 4]);
+    let mut pixels = [0; 16];
+    rasterize_lines_binned(&lines, bins, 4, 4, FillRule::NonZero,
+        &mut RasterWorkspace {
+            segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area,
+        }, &mut |x, y, coverage| {
+            pixels[(y * 4 + x) as usize] = coverage;
+            Ok::<_, Infallible>(())
+        }).unwrap();
+    assert_eq!(pixels, render(&edges, 4, 4, FillRule::NonZero).as_slice());
+
+    assert_eq!(rasterize_lines_binned(&lines, bins, 4, 3, FillRule::NonZero,
+        &mut RasterWorkspace {
+            segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area,
+        }, &mut |_, _, _| Ok::<_, Infallible>(())),
+        Err(RenderError::Raster(Error::InvalidEdgeBins)));
+}
+
 #[test] fn retained_coverage_is_compact_sparse_and_replays_exactly() {
     assert_eq!(core::mem::size_of::<CoverageRun>(), 12);
     let edge = |x, top, bottom, winding| Edge {
