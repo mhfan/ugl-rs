@@ -165,6 +165,36 @@ impl CoverageSink for CoverageMaskMut<'_> {
     }
 }
 
+/// Writes device-space coverage into tightly packed storage for one target subregion.
+pub(crate) struct RegionMaskSink<'a> {
+    data: &'a mut [u8], left: u32, top: u32, width: u32, height: u32,
+}
+
+impl<'a> RegionMaskSink<'a> {
+    pub(crate) fn new(data: &'a mut [u8],
+        region: (u32, u32, u32, u32)) -> Self {
+        let (left, top, right, bottom) = region;
+        Self { data, left, top, width: right - left, height: bottom - top }
+    }
+}
+
+impl CoverageSink for RegionMaskSink<'_> {
+    type Error = Infallible;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        if x < self.left || y < self.top || y >= self.top + self.height {
+            return Ok(());
+        }
+        let start_x = x - self.left;
+        if start_x >= self.width { return Ok(()); }
+        let len = len.min(self.width - start_x);
+        let start = (y - self.top) as usize * self.width as usize + start_x as usize;
+        self.data[start..start + len as usize].fill(coverage);
+        Ok(())
+    }
+}
+
 /// Coverage adapter that multiplies incoming spans by a borrowed mask.
 pub struct  MaskClipSink<'a, S> { mask: CoverageMask<'a>, sink: &'a mut S }
 

@@ -1,11 +1,10 @@
 //! Stateful drawing facades over the allocation-free rendering pipelines.
 
 use alloc::{rc::Rc, vec::Vec};
-use core::convert::Infallible;
 use crate::{
     common::{color::SRGBA, dash::DashContour, edge::Edge,
         geometry::{Affine, Path, Point, Rect},
-        raster::{CoverageMask, CoverageSink, FillRule},
+        raster::{CoverageMask, FillRule, RegionMaskSink},
         render::{Clip, DrawState, GlobalAlphaPaint}, stroke::StrokeContour,
         Pixmap, PixmapError, RenderError, SolidPaint},
     float::{analytic::{Cell, Intersection},
@@ -389,27 +388,6 @@ fn intersect_canvas_clip(current: &CanvasClip, next: &mut CanvasClip) {
     }
 }
 
-struct ClipMaskSink<'a> {
-    data: &'a mut [u8], left: u32, top: u32, width: u32, height: u32,
-}
-
-impl CoverageSink for ClipMaskSink<'_> {
-    type Error = Infallible;
-
-    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
-        Result<(), Self::Error> {
-        if x < self.left || y < self.top || y >= self.top + self.height {
-            return Ok(());
-        }
-        let start_x = x - self.left;
-        if start_x >= self.width { return Ok(()); }
-        let len = len.min(self.width - start_x);
-        let start = (y - self.top) as usize * self.width as usize + start_x as usize;
-        self.data[start..start + len as usize].fill(coverage);
-        Ok(())
-    }
-}
-
 impl Canvas<'static> {
     /// Creates a zero-initialized tightly packed RGBA8888 canvas.
     pub fn new(width: u32, height: u32) -> Result<Self, PixmapError> {
@@ -526,8 +504,7 @@ impl<'target> Canvas<'target> {
             .ok_or(RenderError::DimensionsOverflow)?;
         let mut data = alloc::vec![0; length];
         if length != 0 {
-            let mut sink = ClipMaskSink { data: &mut data, left, top,
-                width: region_width, height: region_height };
+            let mut sink = RegionMaskSink::new(&mut data, region);
             let mut context_workspace = self.storage.workspace();
             let mut workspace = render_workspace(&mut context_workspace.stroke);
             rasterize_built_region(edge_count, (width, height), region,
