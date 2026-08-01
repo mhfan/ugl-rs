@@ -365,6 +365,15 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   randomized scalar-equivalence coverage. Wider target-specific SIMD still
   needs long-span dispatch or a structure-of-arrays tile working buffer to
   amortize packing and deinterleaving.
+- Encoded paint samplers expose affine span traversal in addition to point
+  sampling. Linear gradients advance one projection parameter per pixel; the
+  fixed implementation does the same in widened integer arithmetic. Direct
+  full-coverage writes over transparent destinations avoid redundant coverage
+  multiplication. Together these changes reduced the matched large-gradient
+  draw from 381.33 to 192.50 µs for f32 and 446.92 to 225.93 µs for fixed,
+  while both backends remain byte-identical. Blend2D is still 6.05× faster, so
+  future work should batch ramp lookup/output rather than further tune path
+  coverage for this scene.
 - The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
   The canonical rectangle scene has one-pixel boundary runs around 16–21-pixel
   interiors; full-coverage runs contain about 83% of covered pixels. Future

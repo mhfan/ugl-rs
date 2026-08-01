@@ -323,6 +323,7 @@ frames produced:
 | Scene | f32 median | fixed median | Blend2D median | Blend2D vs f32 | fixed vs f32 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | large fractional rectangle, fill | 73.61 µs | 115.74 µs | 14.59 µs | 5.05× faster | 1.57× slower |
+| large rectangle, linear gradient | 192.50 µs | 225.93 µs | 31.83 µs | 6.05× faster | 1.17× slower |
 | 64 fractional rectangles, fill | 83.10 µs | 230.77 µs | 33.41 µs | 2.49× faster | 2.78× slower |
 | 64 triangles, fill | 118.49 µs | 261.31 µs | 33.62 µs | 3.52× faster | 2.21× slower |
 | 8 gentle cubic arches, fill | 17.85 µs | 30.97 µs | 8.21 µs | 2.17× faster | 1.73× slower |
@@ -334,6 +335,7 @@ frames produced:
 | Scene | f32 pixels changed from Blend2D | fixed pixels changed from f32 | fixed mean/max error from f32 |
 | --- | ---: | ---: | ---: |
 | large rectangle | 0.343% | 0% | 0 / 0 |
+| linear gradient rectangle | 10.800% | 0% | 0 / 0 |
 | rectangle grid | 2.246% | 0% | 0 / 0 |
 | triangles | 2.637% | 0.195% | 0.00147 / 1 |
 | cubic fill | 0.452% | 0.061% | 0.00024 / 1 |
@@ -365,8 +367,16 @@ gaps. Pairwise packed scalar source-over improved every f32 scene by roughly
 5–10%, but long encoded RGBA8 spans remain far behind Blend2D's JIT vector
 compositor. Integer rectangle clips now bypass per-pixel coverage
 multiplication, while their geometry/binning and raster row/x domain are not
-yet constrained early. Gradients, path masks, memory, and cold-start/JIT cost
-still require separate matched scenes.
+yet constrained early. Radial/conic paint, path masks, memory, and
+cold-start/JIT cost still require separate matched scenes.
+
+The matched horizontal linear gradient uses a 256-entry encoded ramp and black
+stops whose alpha changes from 32 to 224, avoiding ambiguity from different RGB
+interpolation spaces. Batched affine span stepping plus direct full-coverage
+composition reduced f32 from 381.33 to 192.50 µs and fixed from 446.92 to
+225.93 µs. Both ugl-rs backends are byte-identical; their one-code-value delta
+from Blend2D is its gradient quantization rule. The remaining 6.05× desktop gap
+is dominated by scalar ramp lookup and per-pixel writes rather than coverage.
 
 #### f32 stroke stage profile
 

@@ -103,6 +103,23 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     }
 }
 
+#[test] fn sampled_pixel_fast_path_matches_solid_span_composition() {
+    for color in [SRGBA::new(0, 0, 0, 0), SRGBA::new(40, 120, 220, 192),
+                  SRGBA::new(255, 255, 255, 255)] {
+        let color = color.premul_encoded();
+        for coverage in [0, 1, 127, 254, 255] {
+            for destination in [[0, 0, 0, 0], [8, 16, 24, 32],
+                                [40, 60, 80, 128], [255; 4]] {
+                let (mut expected, mut actual) = (destination, destination);
+                blend_solid_bytes(&mut expected,
+                    solid_blend_terms(color.into_legacy(), coverage));
+                blend_sampled_pixel(&mut actual, color, coverage);
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+}
+
 #[test] fn solid_rectangle_renders_end_to_end_without_allocation() {
     let path = rectangle(1.0, 1.0, 3.0, 3.0);
     let mut pixels = vec![0; 4 * 4 * 4];

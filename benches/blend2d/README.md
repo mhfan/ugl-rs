@@ -13,6 +13,9 @@ Third-party source and build products are intentionally not vendored.
   fill under an integer rectangle clip, the cubic path stroked at width 6,
   and a 32-segment polyline stroked with both butt/miter and round cap/join.
   All use non-zero fill and source-over color `(40, 120, 220, 192)`.
+- The linear-gradient scene uses a 256-entry ugl-rs ramp and black stops with
+  alpha 32 and 224. This keeps interpolation-space differences out of the RGB
+  channels while still exercising ramp lookup and varying-alpha composition.
 - The shared alternating cubic arches stay within y=112..144 so width-6 stroke
   expansion remains in the common non-crossing domain. The inflected
   y=24..232 case
