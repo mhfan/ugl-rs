@@ -370,10 +370,17 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   fixed implementation does the same in widened integer arithmetic. Direct
   full-coverage writes over transparent destinations avoid redundant coverage
   multiplication. Together these changes reduced the matched large-gradient
-  draw from 381.33 to 192.50 µs for f32 and 446.92 to 225.93 µs for fixed,
-  while both backends remain byte-identical. Blend2D is still 6.05× faster, so
+  draw from 381.33 to 192.50 µs for f32 and 446.92 to 221.24 µs for fixed.
+  Direct Pad-ramp traversal further reduced f32 to 130.14 µs, while both
+  backends remain byte-identical. Blend2D is still 4.09× faster, so
   future work should batch ramp lookup/output rather than further tune path
   coverage for this scene.
+- Retained path masks scan equal coverage runs in eight-byte words before
+  forwarding spans. This preserves the generic coverage-sink contract and
+  fixed memory while reducing the matched circular-mask draw from 119.02 to
+  81.07 µs for f32 and 164.03 to 123.87 µs for fixed. Blend2D has no public
+  free-path clip; its 29.98 µs comparison is a retained PRGB32 `DST_IN`
+  emulation and must remain labeled as such.
 - The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
   The canonical rectangle scene has one-pixel boundary runs around 16–21-pixel
   interiors; full-coverage runs contain about 83% of covered pixels. Future

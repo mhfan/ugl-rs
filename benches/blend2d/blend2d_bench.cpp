@@ -15,7 +15,9 @@ constexpr uint32_t kWidth = 256;
 constexpr uint32_t kHeight = 256;
 constexpr uint32_t kShapes = 64;
 
-enum class Operation { kFill, kFillClipped, kFillGradient, kStroke, kStrokeRound };
+enum class Operation {
+  kFill, kFillClipped, kFillGradient, kFillMasked, kBuildMask, kStroke, kStrokeRound
+};
 
 uint32_t argument(int argc, char** argv, const char* name, uint32_t fallback) {
   for (int index = 1; index + 1 < argc; ++index) {
@@ -101,6 +103,18 @@ BLPath curves() {
   return path;
 }
 
+BLPath mask_path() {
+  constexpr double k = 55.228474;
+  BLPath path;
+  path.move_to(228.0, 128.0);
+  path.cubic_to(228.0, 128.0 + k, 128.0 + k, 228.0, 128.0, 228.0);
+  path.cubic_to(128.0 - k, 228.0, 28.0, 128.0 + k, 28.0, 128.0);
+  path.cubic_to(28.0, 128.0 - k, 128.0 - k, 28.0, 128.0, 28.0);
+  path.cubic_to(128.0 + k, 28.0, 228.0, 128.0 - k, 228.0, 128.0);
+  path.close();
+  return path;
+}
+
 bool normalized_rgba(const BLImage& image, std::vector<uint8_t>& output) {
   BLImageData data;
   if (image.get_data(&data) != BL_SUCCESS) return false;
@@ -139,6 +153,14 @@ int main(int argc, char** argv) {
     path = large_rectangle();
     operation = Operation::kFillGradient;
   }
+  else if (std::strcmp(scene, "fill_rectangle_path_mask") == 0) {
+    path = large_rectangle();
+    operation = Operation::kFillMasked;
+  }
+  else if (std::strcmp(scene, "build_path_mask") == 0) {
+    path = mask_path();
+    operation = Operation::kBuildMask;
+  }
   else if (std::strcmp(scene, "fill_triangles_64") == 0) path = triangles();
   else if (std::strcmp(scene, "fill_cubics_8") == 0) path = curves();
   else if (std::strcmp(scene, "fill_cubics_8_clip_rect") == 0) {
@@ -171,11 +193,26 @@ int main(int argc, char** argv) {
   gradient.add_stop(0.0, BLRgba32(0, 0, 0, 32));
   gradient.add_stop(1.0, BLRgba32(0, 0, 0, 224));
   if (operation == Operation::kFillGradient) context.set_fill_style(gradient);
+  if (operation == Operation::kBuildMask)
+    context.set_fill_style(BLRgba32(255, 255, 255, 255));
   if (operation == Operation::kFillClipped)
     context.clip_to_rect(BLRect(48.0, 104.0, 160.0, 48.0));
+  BLImage mask(kWidth, kHeight, BL_FORMAT_PRGB32);
+  if (operation == Operation::kFillMasked) {
+    BLContext mask_context(mask);
+    mask_context.clear_all();
+    mask_context.set_fill_style(BLRgba32(255, 255, 255, 255));
+    mask_context.fill_path(mask_path());
+    mask_context.end();
+  }
   auto render = [&]() {
     context.clear_all();
-    if (operation == Operation::kStroke || operation == Operation::kStrokeRound)
+    if (operation == Operation::kFillMasked) {
+      context.set_comp_op(BL_COMP_OP_SRC_OVER);
+      context.fill_path(path);
+      context.set_comp_op(BL_COMP_OP_DST_IN);
+      context.blit_image(BLPointI(0, 0), mask);
+    } else if (operation == Operation::kStroke || operation == Operation::kStrokeRound)
       context.stroke_path(path);
     else
       context.fill_path(path);

@@ -9,13 +9,21 @@ Third-party source and build products are intentionally not vendored.
 
 - Scenes: `256x256`; 64 independent fractional-coordinate rectangles, one
   large fractional rectangle with solid and linear-gradient paint, 64
-  triangles, an eight-cubic closed fill, that
+  triangles, a large rectangle through a retained circular path mask, an
+  eight-cubic closed fill, that
   fill under an integer rectangle clip, the cubic path stroked at width 6,
   and a 32-segment polyline stroked with both butt/miter and round cap/join.
   All use non-zero fill and source-over color `(40, 120, 220, 192)`.
 - The linear-gradient scene uses a 256-entry ugl-rs ramp and black stops with
   alpha 32 and 224. This keeps interpolation-space differences out of the RGB
   channels while still exercising ramp lookup and varying-alpha composition.
+- The path-mask scene excludes mask construction. ugl-rs consumes its retained
+  8-bit coverage mask in one draw. Blend2D has no public free-path clip entry;
+  its explicitly labeled equivalent renders the shape and applies a retained
+  PRGB32 mask with `DST_IN`, including the extra image-composition pass.
+- `build_path_mask` separately times clear plus rasterization of the same
+  circular path into an 8-bit ugl-rs mask or a white PRGB32 Blend2D image.
+  RGBA normalization and file output remain outside the timed region.
 - The shared alternating cubic arches stay within y=112..144 so width-6 stroke
   expansion remains in the common non-crossing domain. The inflected
   y=24..232 case

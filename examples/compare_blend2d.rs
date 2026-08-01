@@ -5,10 +5,12 @@ use std::{env, fs, hint::black_box, process::ExitCode, time::Instant};
 use ugl_rs::{
     analytic::{Cell, Intersection},
     canvas::{Pixmap, RenderOptions, RenderWorkspace, StrokePathOptions, StrokeWorkspace,
-        render_paint, render_solid, render_solid_clipped, render_stroke_solid},
+        rasterize_path_clip, render_paint, render_solid, render_solid_clipped,
+        render_solid_masked, render_stroke_solid},
     color::{PremulSRGBA8, SRGBA},
     edge::Edge,
     geometry::{Affine, Path, PathBuilder, Rect},
+    raster::{CoverageMask, CoverageMaskMut},
     sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode},
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions},
 };
@@ -19,7 +21,7 @@ const SHAPES: usize = 64;
 const EDGE_CAPACITY: usize = 4096;
 
 #[derive(Clone, Copy)] enum Operation {
-    Fill, FillClipped, FillGradient, Stroke { round: bool },
+    Fill, FillClipped, FillGradient, FillMasked, BuildMask, Stroke { round: bool },
 }
 
 fn rectangles() -> Path {
@@ -72,6 +74,17 @@ fn curves() -> Path {
     path.build()
 }
 
+fn mask_path() -> Path {
+    let mut path = PathBuilder::with_capacity(6);
+    const K: f32 = 55.228_474;
+    path.move_to((228.0, 128.0))
+        .cubic_to((228.0, 128.0 + K), (128.0 + K, 228.0), (128.0, 228.0))
+        .cubic_to((128.0 - K, 228.0), (28.0, 128.0 + K), (28.0, 128.0))
+        .cubic_to((28.0, 128.0 - K), (128.0 - K, 28.0), (128.0, 28.0))
+        .cubic_to((128.0 + K, 28.0), (228.0, 128.0 - K), (228.0, 128.0));
+    path.build()
+}
+
 fn scene() -> Result<(&'static str, Path, Operation), String> {
     match path_argument("--scene")?.as_deref().unwrap_or("fill_rectangles_64") {
         "fill_rectangles_64" => Ok(("fill_rectangles_64", rectangles(), Operation::Fill)),
@@ -79,6 +92,9 @@ fn scene() -> Result<(&'static str, Path, Operation), String> {
             Operation::Fill)),
         "fill_rectangle_linear_gradient" => Ok(("fill_rectangle_linear_gradient",
             large_rectangle(), Operation::FillGradient)),
+        "fill_rectangle_path_mask" => Ok(("fill_rectangle_path_mask",
+            large_rectangle(), Operation::FillMasked)),
+        "build_path_mask" => Ok(("build_path_mask", mask_path(), Operation::BuildMask)),
         "fill_triangles_64" => Ok(("fill_triangles_64", triangles(), Operation::Fill)),
         "fill_cubics_8" => Ok(("fill_cubics_8", curves(), Operation::Fill)),
         "fill_cubics_8_clip_rect" => Ok(("fill_cubics_8_clip_rect", curves(),
@@ -163,9 +179,28 @@ fn run_f32() -> Result<(), String> {
     let gradient = LinearGradient::new((16.0, 128.0), (240.0, 128.0),
         GradientStops::with_ramp(&stop_values, &mut ramp).unwrap(), SpreadMode::Pad)
         .unwrap();
+    let mut mask_data = vec![0; WIDTH as usize * HEIGHT as usize];
+    if matches!(operation, Operation::FillMasked) {
+        rasterize_path_clip(&mask_path(), Affine::identity(), RenderOptions::default(),
+            &mut CoverageMaskMut::new(&mut mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
+            &mut RenderWorkspace {
+                edges: &mut edges, intersections: &mut intersections, cells: &mut cells,
+                row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
+            }).map_err(|error| format!("mask: {error:?}"))?;
+    }
 
     let mut timings = {
         let mut render = || -> Result<(), String> {
+            if matches!(operation, Operation::BuildMask) {
+                return rasterize_path_clip(&path, Affine::identity(),
+                    RenderOptions::default(),
+                    &mut CoverageMaskMut::new(&mut mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
+                    &mut RenderWorkspace {
+                        edges: &mut edges, intersections: &mut intersections,
+                        cells: &mut cells, row_offsets: &mut row_offsets,
+                        edge_indices: &mut edge_indices,
+                    }).map_err(|error| format!("mask: {error:?}"));
+            }
             pixels.fill(0);
             let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4)
                 .map_err(|error| format!("target: {error:?}"))?;
@@ -192,6 +227,15 @@ fn run_f32() -> Result<(), String> {
                         cells: &mut cells, row_offsets: &mut row_offsets,
                         edge_indices: &mut edge_indices,
                     }),
+                Operation::FillMasked => render_solid_masked(&path, Affine::identity(),
+                    SRGBA::new(40, 120, 220, 192),
+                    CoverageMask::new(&mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
+                    RenderOptions::default(), &mut target, &mut RenderWorkspace {
+                        edges: &mut edges, intersections: &mut intersections,
+                        cells: &mut cells, row_offsets: &mut row_offsets,
+                        edge_indices: &mut edge_indices,
+                    }),
+                Operation::BuildMask => unreachable!(),
                 Operation::Stroke { round } => render_stroke_solid(&path, Affine::identity(),
                     SRGBA::new(40, 120, 220, 192), StrokePathOptions {
                         stroke: if round {
@@ -221,6 +265,12 @@ fn run_f32() -> Result<(), String> {
     };
     timings.sort_by(f64::total_cmp);
 
+    if matches!(operation, Operation::BuildMask) {
+        for (pixel, &coverage) in pixels.chunks_exact_mut(4).zip(&mask_data) {
+            pixel.fill(coverage);
+        }
+    }
+
     if let Some(path) = path_argument("--output")? {
         fs::write(path, &pixels).map_err(|error| format!("write output: {error}"))?;
     }
@@ -239,6 +289,7 @@ fn run_f32() -> Result<(), String> {
 #[cfg(feature = "fixed")]
 fn fixed_path(scene: &str) -> Path<ugl_rs::fixed::Scalar> {
     use ugl_rs::fixed::Scalar;
+    if scene == "build_path_mask" { return fixed_mask_path(); }
     let fixed = Scalar::from_num;
     let mut path = PathBuilder::new();
     match scene {
@@ -249,7 +300,8 @@ fn fixed_path(scene: &str) -> Path<ugl_rs::fixed::Scalar> {
                 .line_to((x + fixed(22.5), y + fixed(21.75)))
                 .line_to((x, y + fixed(21.75)));
         },
-        "fill_rectangle_large" | "fill_rectangle_linear_gradient" => {
+        "fill_rectangle_large" | "fill_rectangle_linear_gradient" |
+        "fill_rectangle_path_mask" => {
             path.move_to((fixed(16.25), fixed(20.5)))
                 .line_to((fixed(239.5), fixed(20.5)))
                 .line_to((fixed(239.5), fixed(235.25)))
@@ -282,11 +334,30 @@ fn fixed_path(scene: &str) -> Path<ugl_rs::fixed::Scalar> {
 }
 
 #[cfg(feature = "fixed")]
+fn fixed_mask_path() -> Path<ugl_rs::fixed::Scalar> {
+    use ugl_rs::fixed::Scalar;
+    let fixed = Scalar::from_num;
+    let mut path = PathBuilder::with_capacity(6);
+    let k = fixed(55.228_474);
+    path.move_to((fixed(228.0), fixed(128.0)))
+        .cubic_to((fixed(228.0), fixed(128.0) + k),
+            (fixed(128.0) + k, fixed(228.0)), (fixed(128.0), fixed(228.0)))
+        .cubic_to((fixed(128.0) - k, fixed(228.0)),
+            (fixed(28.0), fixed(128.0) + k), (fixed(28.0), fixed(128.0)))
+        .cubic_to((fixed(28.0), fixed(128.0) - k),
+            (fixed(128.0) - k, fixed(28.0)), (fixed(128.0), fixed(28.0)))
+        .cubic_to((fixed(128.0) + k, fixed(28.0)),
+            (fixed(228.0), fixed(128.0) - k), (fixed(228.0), fixed(128.0)));
+    path.build()
+}
+
+#[cfg(feature = "fixed")]
 fn run_fixed() -> Result<(), String> {
     use ugl_rs::{
         fixed::{Scalar,
             canvas::{GeometryWorkspace, RenderOptions, StrokePathOptions, render_path,
-                render_path_clipped, render_stroke_path},
+                rasterize_path_clip as rasterize_fixed_path_clip, render_path_clipped,
+                render_path_masked, render_stroke_path},
             raster::{Line, Segment, Trapezoid, Workspace},
             sampler::LinearGradient as FixedLinearGradient,
             stroke::Options as FixedStrokeOptions,
@@ -325,9 +396,32 @@ fn run_fixed() -> Result<(), String> {
         vec![0; EDGE_CAPACITY]);
     let mut stroke_points = vec![Default::default(); 2048];
     let mut stroke_contours = vec![StrokeContour::default(); 16];
+    let mut mask_data = vec![0; WIDTH as usize * HEIGHT as usize];
+    if matches!(operation, Operation::FillMasked) {
+        let mut geometry = GeometryWorkspace { edges: &mut edges, lines: &mut lines };
+        let mut raster = Workspace {
+            segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+            strip_indices: &mut strip_indices,
+        };
+        rasterize_fixed_path_clip(&fixed_mask_path(), RenderOptions::default(),
+            &mut CoverageMaskMut::new(&mut mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
+            &mut geometry, &mut raster).map_err(|error| format!("mask: {error:?}"))?;
+    }
 
     let mut timings = {
         let mut render = || -> Result<(), String> {
+            if matches!(operation, Operation::BuildMask) {
+                let mut geometry = GeometryWorkspace { edges: &mut edges, lines: &mut lines };
+                let mut raster = Workspace {
+                    segments: &mut segments, trapezoids: &mut trapezoids,
+                    row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+                    strip_indices: &mut strip_indices,
+                };
+                return rasterize_fixed_path_clip(&path, RenderOptions::default(),
+                    &mut CoverageMaskMut::new(&mut mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
+                    &mut geometry, &mut raster).map_err(|error| format!("mask: {error:?}"));
+            }
             pixels.fill(0);
             let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4)
                 .map_err(|error| format!("target: {error:?}"))?;
@@ -345,6 +439,10 @@ fn run_fixed() -> Result<(), String> {
                     RenderOptions::default(), &mut target, &mut geometry, &mut raster),
                 Operation::FillGradient => render_path(&path, &gradient,
                     RenderOptions::default(), &mut target, &mut geometry, &mut raster),
+                Operation::FillMasked => render_path_masked(&path, &paint,
+                    CoverageMask::new(&mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
+                    RenderOptions::default(), &mut target, &mut geometry, &mut raster),
+                Operation::BuildMask => unreachable!(),
                 Operation::Stroke { round } => render_stroke_path(&path, &paint,
                     StrokePathOptions {
                     stroke: if round {
@@ -370,6 +468,12 @@ fn run_fixed() -> Result<(), String> {
         timings
     };
     timings.sort_by(f64::total_cmp);
+
+    if matches!(operation, Operation::BuildMask) {
+        for (pixel, &coverage) in pixels.chunks_exact_mut(4).zip(&mask_data) {
+            pixel.fill(coverage);
+        }
+    }
 
     if let Some(path) = path_argument("--output")? {
         fs::write(path, &pixels).map_err(|error| format!("write output: {error}"))?;
