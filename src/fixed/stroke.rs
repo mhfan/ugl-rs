@@ -97,6 +97,18 @@ pub fn stroke_polyline<S: EdgeSink<Scalar>>(points: &[Point<Scalar>],
     if points.iter().any(|point| !point_in_range(*point)) {
         return Err(ExpandError::CoordinateOutOfRange);
     }
+    if !closed && points.len() >= 2 && points.windows(2).all(|pair|
+        pair[0] != pair[1]) && points.windows(3).all(|triple| {
+            let before = direction(triple[0], triple[1]).unwrap();
+            let after = direction(triple[1], triple[2]).unwrap();
+            let cross = before.dx as i128 * after.dy as i128 -
+                        before.dy as i128 * after.dx as i128;
+            let dot = before.dx as i128 * after.dx as i128 +
+                      before.dy as i128 * after.dy as i128;
+            cross != 0 || dot >= 0
+        }) {
+        return stroke_open_outline(points, options, sink);
+    }
     let Some(&point) = points.first() else { return Ok(()) };
     let slots = points.len().saturating_sub(1) + usize::from(closed && points.len() > 1);
     let (mut first, mut previous) = (None, None);
@@ -124,6 +136,127 @@ pub fn stroke_polyline<S: EdgeSink<Scalar>>(points: &[Point<Scalar>],
         emit_cap(first_point, first_direction, true, options, sink)?;
         emit_cap(last_point, last_direction, false, options, sink)
     }
+}
+
+/// Emits a regular open stroke as one boundary instead of overlapping segment,
+/// join, and cap polygons. Besides reducing edge storage, this keeps the fixed
+/// rasterizer's active set proportional to the visible outline.
+fn stroke_open_outline<S: EdgeSink<Scalar>>(points: &[Point<Scalar>],
+    options: Options, sink: &mut S) -> Result<(), ExpandError<S::Error>> {
+    let first_direction = direction(points[0], points[1]).unwrap();
+    let last = points.len() - 1;
+    let last_direction = direction(points[last - 1], points[last]).unwrap();
+    let extension = options.cap == LineCap::Square;
+    let (start_extension, end_extension) =
+        if extension { (-1, 1) } else { (0, 0) };
+    let mut contour = EdgeContour::new(sink);
+
+    contour.point(outline_endpoint(points[0], first_direction, options.width,
+        1, start_extension)?)?;
+    for index in 1..last {
+        outline_join(&mut contour, points[index],
+            direction(points[index - 1], points[index]).unwrap(),
+            direction(points[index], points[index + 1]).unwrap(),
+            1, options)?;
+    }
+    contour.point(outline_endpoint(points[last], last_direction, options.width,
+        1, end_extension)?)?;
+    if options.cap == LineCap::Round {
+        contour_arc(&mut contour, points[last], options.width,
+            cordic_turn(-last_direction.dy, last_direction.dx),
+            -(Angle::HALF_TURN.to_bits() as i64), options.round_segments as _)?;
+    } else {
+        contour.point(outline_endpoint(points[last], last_direction, options.width,
+            -1, end_extension)?)?;
+    }
+    for index in (1..last).rev() {
+        let before = reverse(direction(points[index], points[index + 1]).unwrap());
+        let after = reverse(direction(points[index - 1], points[index]).unwrap());
+        outline_join(&mut contour, points[index], before, after, 1, options)?;
+    }
+    contour.point(outline_endpoint(points[0], first_direction, options.width,
+        -1, start_extension)?)?;
+    if options.cap == LineCap::Round {
+        contour_arc(&mut contour, points[0], options.width,
+            cordic_turn(first_direction.dy, -first_direction.dx),
+            -(Angle::HALF_TURN.to_bits() as i64), options.round_segments as _)?;
+    }
+    contour.close()
+}
+
+fn reverse(direction: Direction) -> Direction {
+    Direction { dx: -direction.dx, dy: -direction.dy, ..direction }
+}
+
+fn outline_endpoint<E>(point: Point<Scalar>, direction: Direction, width: i32,
+    side: i64, extension: i64) -> Result<Point<Scalar>, ExpandError<E>> {
+    let (nx, ny) = normal(direction, width);
+    let denominator = direction.length as i128 * 2;
+    let (tx, ty) = (
+        round_ratio(direction.dx as i128 * width as i128, denominator),
+        round_ratio(direction.dy as i128 * width as i128, denominator),
+    );
+    offset(point, nx * side + tx * extension, ny * side + ty * extension)
+}
+
+fn outline_join<S: EdgeSink<Scalar>>(contour: &mut EdgeContour<'_, S>,
+    point: Point<Scalar>, before: Direction, after: Direction, side: i64,
+    options: Options) -> Result<(), ExpandError<S::Error>> {
+    let cross = before.dx as i128 * after.dy as i128 -
+                before.dy as i128 * after.dx as i128;
+    let (before_x, before_y) = normal(before, options.width);
+    let (after_x, after_y) = normal(after, options.width);
+    let before_offset = offset(point, before_x * side, before_y * side)?;
+    let after_offset = offset(point, after_x * side, after_y * side)?;
+    if cross == 0 { return contour.point(after_offset); }
+    let (delta_x, delta_y) = (
+        after_offset.x.to_bits() as i128 - before_offset.x.to_bits() as i128,
+        after_offset.y.to_bits() as i128 - before_offset.y.to_bits() as i128,
+    );
+    let distance = delta_x * after.dy as i128 - delta_y * after.dx as i128;
+    let intersection = offset(before_offset,
+        round_ratio(before.dx as i128 * distance, cross),
+        round_ratio(before.dy as i128 * distance, cross))?;
+    if cross * side as i128 >= 0 { return contour.point(intersection); }
+    if options.join == LineJoin::Round {
+        contour.point(before_offset)?;
+        let start = cordic_turn(
+            before_offset.x.to_bits() as i64 - point.x.to_bits() as i64,
+            before_offset.y.to_bits() as i64 - point.y.to_bits() as i64);
+        let end = cordic_turn(
+            after_offset.x.to_bits() as i64 - point.x.to_bits() as i64,
+            after_offset.y.to_bits() as i64 - point.y.to_bits() as i64);
+        // The compact contour visits both sides in their forward direction,
+        // so every exposed round join advances clockwise to the next offset.
+        let sweep = -(start.wrapping_sub(end) as i64);
+        let segments = (options.round_segments as u64 * sweep.unsigned_abs())
+            .div_ceil(Angle::HALF_TURN.to_bits() as u64).max(1) as usize;
+        return contour_arc(contour, point, options.width, start, sweep, segments);
+    }
+    if options.join == LineJoin::Miter {
+        let (dx, dy) = (
+            intersection.x.to_bits() as i128 - point.x.to_bits() as i128,
+            intersection.y.to_bits() as i128 - point.y.to_bits() as i128,
+        );
+        let scale = 2_i128 * Scalar::ONE.to_bits() as i128;
+        let limit = options.width as i128 * options.miter_limit as i128;
+        if (dx * dx + dy * dy) * scale * scale <= limit * limit {
+            return contour.point(intersection);
+        }
+    }
+    contour.point(before_offset)?;
+    contour.point(after_offset)
+}
+
+fn contour_arc<S: EdgeSink<Scalar>>(contour: &mut EdgeContour<'_, S>,
+    center: Point<Scalar>, width: i32, start: u32, sweep: i64, segments: usize) ->
+    Result<(), ExpandError<S::Error>> {
+    for index in 1..=segments {
+        let angle = start.wrapping_add((sweep as i128 * index as i128 /
+            segments as i128) as _);
+        contour.point(circle_point(center, width, Angle::from_bits(angle))?)?;
+    }
+    Ok(())
 }
 
 fn point_in_range(point: Point<Scalar>) -> bool {
@@ -415,7 +548,11 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
         let plain = collect(&[(1.0, 2.0), (5.0, 2.0)], false, base);
         let repeated = collect(
             &[(1.0, 2.0), (1.0, 2.0), (5.0, 2.0), (5.0, 2.0)], false, base);
-        assert_eq!(plain, repeated);
+        assert_eq!(x_bounds(&plain), x_bounds(&repeated));
+        assert_eq!(plain.iter().flat_map(|edge| [edge.upper.y, edge.lower.y]).min(),
+            repeated.iter().flat_map(|edge| [edge.upper.y, edge.lower.y]).min());
+        assert_eq!(plain.iter().flat_map(|edge| [edge.upper.y, edge.lower.y]).max(),
+            repeated.iter().flat_map(|edge| [edge.upper.y, edge.lower.y]).max());
         assert!(!collect(&[(1.0, 2.0), (5.0, 2.0)], true, base).is_empty());
     }
 

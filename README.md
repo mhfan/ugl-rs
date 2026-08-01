@@ -314,7 +314,7 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
 version metadata. The current three-backend baseline was measured on 2026-08-01
-after ugl-rs `6ad5cb1`, using Blend2D
+from the work following ugl-rs `e17fca7`, using Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
 rustc 1.97.1 on macOS 15.6 arm64. Nine 5,000-frame samples after 500 warm-up
@@ -322,15 +322,25 @@ frames produced:
 
 | Scene | f32 median | fixed median | Blend2D median | Blend2D vs f32 | fixed vs f32 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 64 fractional rectangles, fill | 93.53 µs | 235.38 µs | 33.66 µs | 2.78× faster | 2.52× slower |
-| 8 gentle cubic arches, fill | 19.06 µs | 30.79 µs | 8.32 µs | 2.29× faster | 1.62× slower |
-| 8 gentle cubic arches, width-6 stroke | 34.66 µs | 284.75 µs | 14.55 µs | 2.38× faster | 8.22× slower |
+| large fractional rectangle, fill | 73.61 µs | 115.74 µs | 14.59 µs | 5.05× faster | 1.57× slower |
+| 64 fractional rectangles, fill | 83.10 µs | 230.77 µs | 33.41 µs | 2.49× faster | 2.78× slower |
+| 64 triangles, fill | 118.49 µs | 261.31 µs | 33.62 µs | 3.52× faster | 2.21× slower |
+| 8 gentle cubic arches, fill | 17.85 µs | 30.97 µs | 8.21 µs | 2.17× faster | 1.73× slower |
+| cubic fill under rectangle clip | 19.26 µs | 31.08 µs | 3.53 µs | 5.45× faster | 1.61× slower |
+| cubic arches, width-6 butt/miter stroke | 32.61 µs | 77.26 µs | 14.29 µs | 2.28× faster | 2.37× slower |
+| 32-segment polyline, butt/miter stroke | 78.46 µs | 196.81 µs | 25.75 µs | 3.05× faster | 2.51× slower |
+| 32-segment polyline, round stroke | 95.88 µs | 292.81 µs | 34.56 µs | 2.77× faster | 3.05× slower |
 
 | Scene | f32 pixels changed from Blend2D | fixed pixels changed from f32 | fixed mean/max error from f32 |
 | --- | ---: | ---: | ---: |
-| rectangles | 2.246% | 0% | 0 / 0 |
+| large rectangle | 0.343% | 0% | 0 / 0 |
+| rectangle grid | 2.246% | 0% | 0 / 0 |
+| triangles | 2.637% | 0.195% | 0.00147 / 1 |
 | cubic fill | 0.452% | 0.061% | 0.00024 / 1 |
-| cubic stroke | 1.321% | 0.208% | 0.00124 / 1 |
+| clipped cubic fill | 0.301% | 0.015% | 0.00004 / 1 |
+| cubic stroke | 1.321% | 0.311% | 0.00171 / 1 |
+| polyline stroke | 3.024% | 0.865% | 0.00442 / 1 |
+| round polyline stroke | 3.267% | 1.184% | 0.05475 / 37 |
 
 The fixed results are reported separately: f32 versus Blend2D measures desktop
 competitiveness, while fixed versus f32 measures the Q24.8 cost and output
@@ -345,10 +355,18 @@ inflected cubic strokes currently make the fixed backend return
 `CrossingEdges`; they remain a production-reliability task rather than being
 timed as if all backends supported the same input. Stroke still includes curve
 flattening and outline construction on every draw, while Blend2D uses its
-production stroker and JIT raster pipeline, but compact outline emission has
-moved this scene within 2.38×. The repeated-rectangle fill is now the largest
-matched gap. Gradients, clipping, memory, and cold-start/JIT cost require
-separate matched scenes.
+production stroker and JIT raster pipeline. Compact fixed outline emission
+reduced the cubic-stroke median from 284.75 to 76.89 µs without increasing its
+maximum f32 delta beyond one code value. Long round strokes remain expensive
+because fixed arc construction and the resulting edge count are still scalar.
+
+The large solid span and rectangle-clip scenes expose the next structural
+gaps. Pairwise packed scalar source-over improved every f32 scene by roughly
+5–10%, but long encoded RGBA8 spans remain far behind Blend2D's JIT vector
+compositor. Integer rectangle clips now bypass per-pixel coverage
+multiplication, while their geometry/binning and raster row/x domain are not
+yet constrained early. Gradients, path masks, memory, and cold-start/JIT cost
+still require separate matched scenes.
 
 #### f32 stroke stage profile
 

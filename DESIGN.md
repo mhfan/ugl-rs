@@ -358,11 +358,13 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
 
 ## Performance decisions
 
-- SIMD remains measurement-gated. Per-pixel channel packing and four-pixel
-  interleaved NEON kernels both regressed the scalar linear compositor. The
-  current array-of-structures target and short spans do not amortize packing or
-  deinterleaving; revisit SIMD with long batches or a structure-of-arrays tile
-  working buffer.
+- SIMD remains measurement-gated. Single-pixel packing and four-pixel
+  interleaved NEON kernels regressed earlier experiments. A later two-pixel
+  `u64` encoded-source-over loop, with a transparent-pair overwrite path,
+  improved all synchronized f32 scenes by roughly 5–10% and is retained with
+  randomized scalar-equivalence coverage. Wider target-specific SIMD still
+  needs long-span dispatch or a structure-of-arrays tile working buffer to
+  amortize packing and deinterleaving.
 - The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
   The canonical rectangle scene has one-pixel boundary runs around 16–21-pixel
   interiors; full-coverage runs contain about 83% of covered pixels. Future
@@ -401,6 +403,13 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   near 29.9 µs, and the complete draw near 34.7 µs. Blend2D measures 14.6 µs
   on the same harness. Prepared stroke remains useful for retained content,
   but analytic coverage math and batching dominate the remaining desktop gap.
+- The fixed stroker now uses the same compact-boundary policy for regular open
+  polylines, with a pure-Q24.8 intersection and CORDIC arc implementation and
+  the previous polygon-union path retained for repeated/reversing degeneracy.
+  On the synchronized host benchmark this reduced the eight-cubic fixed stroke
+  from 284.75 to 76.89 µs; butt/miter and round 32-segment polylines measure
+  195.20 and 294.09 µs respectively. The next fixed stroke work is therefore
+  round-arc/edge-count reduction rather than more general polygon emission.
 - The production analytic-cell path stops slabs only at edge starts, ends, and
   real crossings. It integrates boundary cells with the closed-form primitive
   of `clamp(edge_x - cell_x, 0, 1)`, records full intervals with two range
