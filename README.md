@@ -334,7 +334,7 @@ frames produced:
 | build circular path mask | 21.09 µs | 46.41 µs | 9.55 µs | 2.21× faster | 2.20× slower |
 | 64 triangles, fill | 65.95 µs | 130.68 µs | 33.62 µs | 1.96× faster | 1.98× slower |
 | 8 gentle cubic arches, fill | 13.73 µs | 20.68 µs | 8.27 µs | 1.66× faster | 1.51× slower |
-| cubic fill under rectangle clip | 12.42 µs | 18.99 µs | 3.54 µs | 3.51× faster | 1.53× slower |
+| cubic fill under rectangle clip | 11.68 µs | 18.64 µs | 3.54 µs | 3.30× faster | 1.60× slower |
 | cubic arches, width-6 butt/miter stroke | 29.44 µs | 64.71 µs | 14.35 µs | 2.05× faster | 2.20× slower |
 | 32-segment polyline, butt/miter stroke | 62.12 µs | 133.42 µs | 25.71 µs | 2.42× faster | 2.15× slower |
 | 32-segment polyline, round stroke | 78.27 µs | 181.42 µs | 34.51 µs | 2.27× faster | 2.32× slower |
@@ -402,10 +402,11 @@ because fixed arc construction and the resulting edge count are still scalar.
 The large solid span and rectangle-clip scenes expose the next structural
 gaps. Pairwise packed scalar source-over improved every f32 scene by roughly
 5–10%, but long encoded RGBA8 spans remain far behind Blend2D's JIT vector
-compositor. Integer rectangle clips bypass per-pixel coverage multiplication
-and constrain analytic/fixed row and cell processing to the conservative
-clipped domain. This reduced the matched clipped cubic from 19.26 to 15.72 µs
-for f32 and from 31.08 to 25.22 µs for fixed without changing either checksum.
+compositor. Integer rectangle clips cache their classification and bounds once,
+bypass per-pixel coverage multiplication, and constrain analytic/fixed row and
+cell processing to the conservative clipped domain. This reduced the matched
+clipped cubic from 19.26 to 11.68 µs for f32 and from 31.08 to 18.64 µs for
+fixed without changing either checksum.
 Memory and cold-start/JIT cost still require separate matched scenes.
 
 The nested-prefix 1/16/64 rectangle series separates fixed frame overhead from
