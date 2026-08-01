@@ -324,12 +324,13 @@ frames produced:
 | --- | ---: | ---: | ---: | ---: | ---: |
 | large fractional rectangle, fill | 73.61 µs | 115.74 µs | 14.59 µs | 5.05× faster | 1.57× slower |
 | large rectangle, linear gradient | 130.14 µs | 221.24 µs | 31.83 µs | 4.09× faster | 1.70× slower |
+| large rectangle, radial gradient | 177.50 µs | 471.43 µs | 41.84 µs | 4.24× faster | 2.66× slower |
 | large rectangle, retained path mask | 81.07 µs | 123.87 µs | 29.98 µs¹ | 2.70× faster | 1.53× slower |
 | build circular path mask | 59.44 µs | 118.73 µs | 9.16 µs | 6.49× faster | 2.00× slower |
 | 64 fractional rectangles, fill | 83.10 µs | 230.77 µs | 33.41 µs | 2.49× faster | 2.78× slower |
 | 64 triangles, fill | 118.49 µs | 261.31 µs | 33.62 µs | 3.52× faster | 2.21× slower |
 | 8 gentle cubic arches, fill | 17.85 µs | 30.97 µs | 8.21 µs | 2.17× faster | 1.73× slower |
-| cubic fill under rectangle clip | 19.26 µs | 31.08 µs | 3.53 µs | 5.45× faster | 1.61× slower |
+| cubic fill under rectangle clip | 15.72 µs | 25.22 µs | 3.53 µs | 4.45× faster | 1.60× slower |
 | cubic arches, width-6 butt/miter stroke | 32.61 µs | 77.26 µs | 14.29 µs | 2.28× faster | 2.37× slower |
 | 32-segment polyline, butt/miter stroke | 78.46 µs | 196.81 µs | 25.75 µs | 3.05× faster | 2.51× slower |
 | 32-segment polyline, round stroke | 95.88 µs | 292.81 µs | 34.56 µs | 2.77× faster | 3.05× slower |
@@ -338,6 +339,7 @@ frames produced:
 | --- | ---: | ---: | ---: |
 | large rectangle | 0.343% | 0% | 0 / 0 |
 | linear gradient rectangle | 10.800% | 0% | 0 / 0 |
+| radial gradient rectangle | 11.160% | 0.098% | 0.00024 / 1 |
 | retained path mask | 0.505% | 0.764% | 0.00539 / 3 |
 | built path mask | 0.529% | 0.801% | 0.01152 / 4 |
 | rectangle grid | 2.246% | 0% | 0 / 0 |
@@ -369,10 +371,12 @@ because fixed arc construction and the resulting edge count are still scalar.
 The large solid span and rectangle-clip scenes expose the next structural
 gaps. Pairwise packed scalar source-over improved every f32 scene by roughly
 5–10%, but long encoded RGBA8 spans remain far behind Blend2D's JIT vector
-compositor. Integer rectangle clips now bypass per-pixel coverage
-multiplication, while their geometry/binning and raster row/x domain are not
-yet constrained early. Radial/conic paint, mask-density complexity, memory,
-and cold-start/JIT cost still require separate matched scenes.
+compositor. Integer rectangle clips bypass per-pixel coverage multiplication
+and constrain analytic/fixed row and cell processing to the conservative
+clipped domain. This reduced the matched clipped cubic from 19.26 to 15.72 µs
+for f32 and from 31.08 to 25.22 µs for fixed without changing either checksum.
+Conic paint, mask-density complexity, memory, and cold-start/JIT cost still
+require separate matched scenes.
 
 The matched horizontal linear gradient uses a 256-entry encoded ramp and black
 stops whose alpha changes from 32 to 224, avoiding ambiguity from different RGB

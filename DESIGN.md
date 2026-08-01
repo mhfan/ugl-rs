@@ -375,6 +375,12 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   backends remain byte-identical. Blend2D is still 4.09× faster, so
   future work should batch ramp lookup/output rather than further tune path
   coverage for this scene.
+- Concentric radial samplers advance squared distance with a second-order
+  difference across each span instead of rebuilding coordinates and products
+  per pixel. The output checksum is unchanged; the matched f32 median fell from
+  202.22 to 177.50 µs and fixed from 542.18 to 471.43 µs. Blend2D measures
+  41.84 µs, leaving square-root throughput and encoded ramp/compositor batching
+  as the measured paint costs.
 - Retained path masks scan equal coverage runs in eight-byte words before
   forwarding spans. This preserves the generic coverage-sink contract and
   fixed memory while reducing the matched circular-mask draw from 119.02 to

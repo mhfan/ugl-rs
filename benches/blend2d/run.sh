@@ -20,6 +20,7 @@ for scene in \
   fill_rectangles_64 \
   fill_rectangle_large \
   fill_rectangle_linear_gradient \
+  fill_rectangle_radial_gradient \
   fill_rectangle_path_mask \
   build_path_mask \
   fill_triangles_64 \

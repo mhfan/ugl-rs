@@ -177,7 +177,10 @@ impl<'a> RadialGradient<'a> {
         }
         let (dx, dy) = (x as i64 - self.start[0] as i64,
                         y as i64 - self.start[1] as i64);
-        let squared = (dx * dx + dy * dy) as u64;
+        Some(self.concentric_ramp_index_squared((dx * dx + dy * dy) as _))
+    }
+
+    fn concentric_ramp_index_squared(&self, squared: u64) -> usize {
         let floor = integer_sqrt_u64(squared);
         let distance = if squared - floor * floor > floor { floor + 1 } else { floor };
         let (mut parameter, mut denominator) =
@@ -186,8 +189,7 @@ impl<'a> RadialGradient<'a> {
             parameter = -parameter;
             denominator = -denominator;
         }
-        Some(ramp_index_i64(
-            parameter, denominator, self.ramp.len(), self.spread))
+        ramp_index_i64(parameter, denominator, self.ramp.len(), self.spread)
     }
 
     fn parameter(&self, x: u32, y: u32) -> Option<(i128, i128)> {
@@ -240,6 +242,36 @@ impl PaintSampler for RadialGradient<'_> {
         self.parameter(x, y).map_or_else(PremulSRGBA8::zeroed,
             |(parameter, denominator)| self.ramp[
                 ramp_index(parameter, denominator, self.ramp.len(), self.spread)])
+    }
+
+
+    fn sample_span(&self, x: u32, y: u32, len: u32,
+        mut emit: impl FnMut(PremulSRGBA8)) {
+        const HALF_PIXEL_RAW: u64 = 1 << 7;
+        const SUBPIXEL_SCALE: u64 = 1 << 8;
+        let last = len.checked_sub(1).and_then(|offset| x.checked_add(offset));
+        if self.center_delta != [0, 0] || last.is_none() ||
+            last.unwrap_or(x) as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW >
+                DEVICE_RAW_LIMIT as u64 ||
+            y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW > DEVICE_RAW_LIMIT as u64 {
+            for offset in 0..len {
+                emit(x.checked_add(offset).map_or_else(PremulSRGBA8::zeroed,
+                    |x| self.sample(x, y)));
+            }
+            return;
+        }
+        let (half, scale) = (HALF_PIXEL_RAW as i64, SUBPIXEL_SCALE as i64);
+        let (x, y) = (x as i64 * scale + half - self.start[0] as i64,
+                      y as i64 * scale + half - self.start[1] as i64);
+        let (mut squared, mut step) = (
+            x * x + y * y, 2 * x * scale + scale * scale,
+        );
+        let second_difference = 2 * scale * scale;
+        for _ in 0..len {
+            emit(self.ramp[self.concentric_ramp_index_squared(squared as _)]);
+            squared += step;
+            step += second_difference;
+        }
     }
 }
 
@@ -407,7 +439,13 @@ impl PaintSampler for ConicGradient<'_> {
             let reference =
                 ReferenceRadialGradient::new((8.0, 8.0), 8.0, stops, spread).unwrap();
             for y in 0..16 {
+                let mut span = [PremulSRGBA8::default(); 16];
+                let mut count = 0;
+                fixed.sample_span(0, y, span.len() as _,
+                    |color| { span[count] = color; count += 1; });
+                assert_eq!(count, span.len());
                 for x in 0..16 {
+                    assert_eq!(span[x as usize], fixed.sample(x, y));
                     let (actual, expected) = (fixed.sample(x, y),
                         reference.sample(x as f32 + 0.5, y as f32 + 0.5));
                     let actual = ramp.iter().position(|color| *color == actual).unwrap();

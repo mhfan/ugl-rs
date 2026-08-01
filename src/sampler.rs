@@ -458,6 +458,29 @@ impl PaintSampler for RadialGradient<'_> {
         self.parameter(x, y).map_or_else(PremulSRGBA8::zeroed,
             |t| self.stops.sample(self.spread.map(t)))
     }
+
+    fn sample_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        mut emit: impl FnMut(PremulSRGBA8)) {
+        if !self.is_concentric() {
+            for offset in 0..len {
+                emit(self.sample(x + offset as f32 * dx, y + offset as f32 * dy));
+            }   return;
+        }
+        let (x, y) = (x - self.start.x, y - self.start.y);
+        let step_squared = dx * dx + dy * dy;
+        let (mut distance_squared, mut distance_step) = (
+            x * x + y * y,
+            2.0 * (x * dx + y * dy) + step_squared,
+        );
+        let second_difference = 2.0 * step_squared;
+        for _ in 0..len {
+            emit(self.concentric_parameter(distance_squared).map_or_else(
+                PremulSRGBA8::zeroed,
+                |t| self.stops.sample(self.spread.map(t))));
+            distance_squared += distance_step;
+            distance_step += second_difference;
+        }
+    }
 }
 
 impl LinearPaintSampler for RadialGradient<'_> {
@@ -768,6 +791,23 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
     }
 
     #[test] fn specialized_gradient_span_stepping_matches_point_sampling() {
+        fn assert_encoded_span<S: PaintSampler>(sampler: &S, start: Point, step: Point) {
+            let mut actual = [PremulSRGBA8::default(); 512];
+            let mut count = 0;
+            sampler.sample_span(start.x, start.y, step.x, step.y, actual.len() as _,
+                |color| { actual[count] = color; count += 1; });
+            assert_eq!(count, actual.len());
+            for (offset, actual) in actual.into_iter().enumerate() {
+                let expected = sampler.sample(
+                    start.x + offset as f32 * step.x,
+                    start.y + offset as f32 * step.y);
+                for (actual, expected) in actual.to_array().into_iter()
+                    .zip(expected.to_array()) {
+                    assert!(actual.abs_diff(expected) <= 1, "offset={offset}");
+                }
+            }
+        }
+
         fn assert_span<S: LinearPaintSampler>(sampler: &S, start: Point, step: Point) {
             let mut actual = [LinearPremulRGBA::default(); 512];
             let mut count = 0;
@@ -797,6 +837,7 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
 
             let radial = RadialGradient::two_circle(
                 (1.0, -2.0), 0.5, (1.0, -2.0), 6.0, stops, spread).unwrap();
+            assert_encoded_span(&radial, (-4.5, -2.0).into(), (0.5, 0.0).into());
             assert_span(&radial, (1.0, -2.0).into(), (0.25, 0.125).into());
             assert_span(&radial, (-4.5, -2.0).into(), (0.5, 0.0).into());
             let transformed = TransformedPaint::new(radial,
