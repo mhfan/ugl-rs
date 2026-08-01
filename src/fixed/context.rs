@@ -115,11 +115,11 @@ impl CanvasStorage {
 }
 
 #[derive(Clone)] enum CanvasClip {
-    None, Rect(Rect), Mask { data: Rc<[u8]>, width: u32, height: u32, stride: u32 },
+    None, Rect(Rect<Scalar>), Mask { data: Rc<[u8]>, width: u32, height: u32, stride: u32 },
 }
 
 impl CanvasClip {
-    fn as_clip(&self) -> Result<Clip<'_>, RenderError> { Ok(match self {
+    fn as_clip(&self) -> Result<Clip<'_, Scalar>, RenderError> { Ok(match self {
         Self::None => Clip::None,
         Self::Rect(rect) => Clip::Rect(*rect),
         Self::Mask { data, width, height, stride } => Clip::Mask(
@@ -134,14 +134,12 @@ impl CanvasClip {
 
 /// Stateful Q24.8 drawing facade.
 ///
-/// Methods accepting [`PaintSampler`] are no-FPU except rectangle
-/// clipping, whose compatibility coverage adapter currently uses f32. Use a
-/// pre-rasterized fixed path mask when the complete clip path must avoid an FPU.
+/// Methods accepting [`PaintSampler`] use fixed-point geometry and coverage.
 pub struct CanvasRef<'a, 'target, 'workspace, 'clip> {
     target: &'a mut Pixmap<'target>,
     workspace: Workspace<'workspace>,
     state: DrawState<Scalar, FlattenOptions, StrokeOptions, SolidPaint>,
-    clip: Clip<'clip>,
+    clip: Clip<'clip, Scalar>,
 }
 
 impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
@@ -195,8 +193,7 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
 
     pub fn clear_clip(&mut self) -> &mut Self { self.clip = Clip::None; self }
 
-    /// Uses the f32 compatibility rectangle coverage adapter.
-    pub fn set_clip_rect(&mut self, rect: Rect) -> &mut Self {
+    pub fn set_clip_rect(&mut self, rect: Rect<Scalar>) -> &mut Self {
         self.clip = Clip::Rect(rect); self
     }
 
@@ -393,7 +390,7 @@ impl<'target> Canvas<'target> {
         (self.state, self.clip) = (saved.draw, saved.clip); true
     }
     pub fn clear_clip(&mut self) -> &mut Self { self.clip = CanvasClip::None; self }
-    pub fn set_clip_rect(&mut self, value: Rect) -> &mut Self {
+    pub fn set_clip_rect(&mut self, value: Rect<Scalar>) -> &mut Self {
         self.clip = CanvasClip::Rect(value); self
     }
     pub fn set_clip_mask(&mut self, value: CoverageMask<'_>) -> &mut Self {

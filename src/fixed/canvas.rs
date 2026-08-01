@@ -15,8 +15,7 @@ use crate::{
             flatten_path as flatten_stroke_path, stroke_polyline},
         tile::{CoverageTiles, DirectTileWorkspace, TileKind, rasterize_lines_to_tiles}},
     geometry::{Affine, Path, Point, Rect},
-    raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink,
-        RectClipSink, clip_region, rect_is_integer},
+    raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
     sampler::SolidPaint,
     stroke::{StrokePathWorkspace, StrokeWorkspaceError},
 };
@@ -32,6 +31,65 @@ fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
         offset += 1;
     });
     debug_assert_eq!(offset, len);
+}
+
+const SUBPIXEL_SCALE: i64 = 256;
+
+fn fixed_rect_is_integer(rect: Rect<Scalar>) -> bool {
+    [rect.left(), rect.top(), rect.right(), rect.bottom()]
+        .iter().all(|value| i64::from(value.to_bits()).rem_euclid(SUBPIXEL_SCALE) == 0)
+}
+
+fn fixed_clip_region(rect: Rect<Scalar>, width: u32, height: u32) ->
+    (u32, u32, u32, u32) {
+    let bound = |raw: i32, maximum: u32, upper: bool| {
+        let raw = i64::from(raw);
+        let pixel = if upper {
+            (raw + SUBPIXEL_SCALE - 1).div_euclid(SUBPIXEL_SCALE)
+        } else { raw.div_euclid(SUBPIXEL_SCALE) };
+        pixel.clamp(0, i64::from(maximum)) as _
+    };
+    (bound(rect.left().to_bits(), width, false),
+     bound(rect.top().to_bits(), height, false),
+     bound(rect.right().to_bits(), width, true),
+     bound(rect.bottom().to_bits(), height, true))
+}
+
+struct FixedRectClipSink<'a, S> { rect: Rect<Scalar>, sink: &'a mut S }
+
+impl<'a, S> FixedRectClipSink<'a, S> {
+    fn new(rect: Rect<Scalar>, sink: &'a mut S) -> Self { Self { rect, sink } }
+}
+
+impl<S: CoverageSink> CoverageSink for FixedRectClipSink<'_, S> {
+    type Error = S::Error;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        let overlap = |from: Scalar, to: Scalar, pixel: u32| {
+            let pixel = i64::from(pixel) * SUBPIXEL_SCALE;
+            (i64::from(to.to_bits()).min(pixel + SUBPIXEL_SCALE) -
+             i64::from(from.to_bits()).max(pixel)).clamp(0, SUBPIXEL_SCALE) as u64
+        };
+        let vertical = overlap(self.rect.top(), self.rect.bottom(), y);
+        if vertical == 0 { return Ok(()); }
+        let (left, _, right, _) = fixed_clip_region(self.rect, u32::MAX, u32::MAX);
+        let (start, end) = (x.max(left), x.saturating_add(len).min(right));
+        let quantize = |pixel| {
+            let horizontal = overlap(self.rect.left(), self.rect.right(), pixel);
+            ((u64::from(coverage) * horizontal * vertical + 32_768) / 65_536) as u8
+        };
+        let mut cursor = start;
+        while cursor < end {
+            let (clipped, run_start) = (quantize(cursor), cursor);
+            cursor += 1;
+            while cursor < end && quantize(cursor) == clipped { cursor += 1; }
+            if clipped != 0 {
+                self.sink.span(run_start, y, cursor - run_start, clipped)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 pub struct GeometryWorkspace<'a> {
@@ -152,7 +210,7 @@ pub fn render_solid(lines: &[Line],
 
 /// Renders fixed coverage and solid paint through an antialiased rectangle clip.
 pub fn render_solid_clipped(lines: &[Line],
-    color: SRGBA<u8>, clip: Rect, fill_rule: FillRule, target: &mut Pixmap<'_>,
+    color: SRGBA<u8>, clip: Rect<Scalar>, fill_rule: FillRule, target: &mut Pixmap<'_>,
     workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
     render_paint_clipped(
         lines, &SolidPaint::new(color), clip, fill_rule, target, workspace)
@@ -191,7 +249,7 @@ pub fn render_path<
 /// Transforms, flattens, and fills a Q24.8 path through a rectangle clip.
 pub fn render_path_clipped<
     S: PaintSampler>(path: &Path<Scalar>,
-    sampler: &S, clip: Rect, options: RenderOptions,
+    sampler: &S, clip: Rect<Scalar>, options: RenderOptions,
     target: &mut Pixmap<'_>, geometry: &mut GeometryWorkspace<'_>,
     raster_workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
     let usage = prepare_path(path, options, geometry)?;
@@ -335,17 +393,17 @@ pub(crate) fn prepare_dashed_stroke_path(path: &Path<Scalar>,
 /// Renders fixed geometry and no-FPU paint through a rectangle clip.
 pub fn render_paint_clipped<
     S: PaintSampler>(lines: &[Line], sampler: &S,
-    clip: Rect, fill_rule: FillRule, target: &mut Pixmap<'_>,
+    clip: Rect<Scalar>, fill_rule: FillRule, target: &mut Pixmap<'_>,
     workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width(), target.height());
     let mut compositor = PaintCompositor { target, sampler };
-    let region = clip_region(clip, width, height);
-    if rect_is_integer(clip) {
+    let region = fixed_clip_region(clip, width, height);
+    if fixed_rect_is_integer(clip) {
         rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
             &mut compositor).map_err(map_render_error)
     } else {
         rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
-            &mut RectClipSink::new(clip, &mut compositor)).map_err(map_render_error)
+            &mut FixedRectClipSink::new(clip, &mut compositor)).map_err(map_render_error)
     }
 }
 
@@ -393,10 +451,10 @@ pub fn composite_paint_strips<
 /// Composites retained fixed strips and no-FPU paint through a rectangle clip.
 pub fn composite_paint_strips_clipped<
     S: PaintSampler>(strips: CoverageStrips<'_>,
-    sampler: &S, clip: Rect, target: &mut Pixmap<'_>) -> Result<(), RenderError> {
+    sampler: &S, clip: Rect<Scalar>, target: &mut Pixmap<'_>) -> Result<(), RenderError> {
     validate_coverage_dimensions(strips.width(), strips.height(), target)?;
     let mut compositor = PaintCompositor { target, sampler };
-    finish_infallible(strips.replay(&mut RectClipSink::new(clip, &mut compositor)))
+    finish_infallible(strips.replay(&mut FixedRectClipSink::new(clip, &mut compositor)))
 }
 
 /// Composites retained fixed strips and no-FPU paint through a path mask.
@@ -447,11 +505,11 @@ pub fn composite_paint_tiles<
 /// Composites retained fixed tiles and no-FPU paint through a rectangle clip.
 pub fn composite_paint_tiles_clipped<
     S: PaintSampler>(tiled: CoverageTiles<'_>,
-    sampler: &S, clip: Rect, target: &mut Pixmap<'_>) -> Result<(), RenderError> {
+    sampler: &S, clip: Rect<Scalar>, target: &mut Pixmap<'_>) -> Result<(), RenderError> {
     validate_coverage_dimensions(tiled.width(), tiled.height(), target)?;
     let mut compositor = PaintCompositor { target, sampler };
     finish_infallible(replay_tiles(
-        tiled, &mut RectClipSink::new(clip, &mut compositor)))
+        tiled, &mut FixedRectClipSink::new(clip, &mut compositor)))
 }
 
 /// Composites retained fixed tiles and no-FPU paint through a path mask.

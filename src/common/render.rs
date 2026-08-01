@@ -5,8 +5,8 @@ use crate::{color::PremulSRGBA8, dash::{DashError}, edge::{Edge, EdgeSink},
     geometry::{Affine, PathError, Rect}, raster::{CoverageMask, FillRule}};
 #[cfg(feature = "fixed")] use crate::fixed::raster::Error as FixedRasterError;
 
-#[derive(Clone, Copy, Debug)] pub(crate) enum Clip<'a> {
-    None, Rect(Rect), Mask(CoverageMask<'a>),
+#[derive(Clone, Copy, Debug)] pub(crate) enum Clip<'a, T = f32> {
+    None, Rect(Rect<T>), Mask(CoverageMask<'a>),
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -222,7 +222,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(native_retained, native_pixels);
     native_retained.fill(0);
     composite_paint_strips_clipped(strips, &gradient,
-        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
+        Rect::from_ltrb(fixed(0.5), fixed(0.0), fixed(1.0), fixed(1.0)).unwrap(),
         &mut Pixmap::from_buffer(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 0, 0]);
     native_retained.fill(0);
@@ -236,7 +236,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(native_retained, native_pixels);
     native_retained.fill(0);
     composite_paint_tiles_clipped(tiled, &gradient,
-        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
+        Rect::from_ltrb(fixed(0.5), fixed(0.0), fixed(1.0), fixed(1.0)).unwrap(),
         &mut Pixmap::from_buffer(&mut native_retained, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(native_retained, [64, 0, 0, 64, 0, 0, 0, 0]);
     native_retained.fill(0);
@@ -260,6 +260,21 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
         }).is_err());
     assert_eq!(untouched, [17; 8]);
+}
+
+#[test] fn fixed_rectangle_clip_clamps_region_and_quantizes_subpixels() {
+    let fixed = Scalar::from_num;
+    let rect = Rect::from_ltrb(fixed(-0.5), fixed(0.25), fixed(2.25), fixed(1.0)).unwrap();
+    assert_eq!(fixed_clip_region(rect, 4, 2), (0, 0, 3, 1));
+    assert!(!fixed_rect_is_integer(rect));
+    assert!(fixed_rect_is_integer(Rect::from_ltrb(
+        fixed(0.0), fixed(0.0), fixed(2.0), fixed(1.0)).unwrap()));
+
+    let mut coverage = [0; 4];
+    FixedRectClipSink::new(rect, &mut |x, _, value| {
+        coverage[x as usize] = value; Ok::<_, core::convert::Infallible>(())
+    }).span(0, 0, 4, u8::MAX).unwrap();
+    assert_eq!(coverage, [191, 191, 48, 0]);
 }
 
 

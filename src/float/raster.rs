@@ -1,6 +1,70 @@
 //! Supersampled floating-point reference rasterizer.
 
-use crate::{edge::Edge, float::{ceil, floor}, raster::{CoverageSink, FillRule}};
+use crate::{edge::Edge, float::{ceil, floor}, geometry::Rect,
+    raster::{CoverageSink, FillRule}};
+
+/// Coverage adapter that intersects incoming spans with an antialiased rectangle.
+pub struct RectClipSink<'a, S> {
+    rect: Rect, integer_bounds: Option<[u32; 4]>, sink: &'a mut S,
+}
+
+impl<'a, S> RectClipSink<'a, S> {
+    pub fn new(rect: Rect, sink: &'a mut S) -> Self {
+        let integer_bounds = rect_is_integer(rect).then(|| [
+                rect.left().max(0.0) as _, rect.top().max(0.0) as _,
+                rect.right().max(0.0) as _, rect.bottom().max(0.0) as _,
+            ]);
+        Self { rect, integer_bounds, sink }
+    }
+}
+
+pub(crate) fn rect_is_integer(rect: Rect) -> bool {
+    [rect.left(), rect.top(), rect.right(), rect.bottom()]
+        .iter().all(|value| *value == floor(*value))
+}
+
+pub(crate) fn clip_region(rect: Rect, width: u32, height: u32) -> (u32, u32, u32, u32) {
+    (floor(rect.left()).clamp(0.0, width as _) as _,
+     floor(rect.top()).clamp(0.0, height as _) as _,
+      ceil(rect.right()).clamp(0.0, width as _) as _,
+      ceil(rect.bottom()).clamp(0.0, height as _) as _)
+}
+
+impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
+    type Error = S::Error;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        if let Some([left, top, right, bottom]) = self.integer_bounds {
+            if y < top || y >= bottom { return Ok(()); }
+            let (start, end) = (x.max(left), x.saturating_add(len).min(right));
+            if start < end { self.sink.span(start, y, end - start, coverage)?; }
+            return Ok(());
+        }
+        let overlap = |from: f32, to: f32, pixel: u32| {
+            (to.min(pixel as f32 + 1.0) - from.max(pixel as f32)).clamp(0.0, 1.0)
+        };
+        let vertical = overlap(self.rect.top(), self.rect.bottom(), y);
+        if  vertical == 0.0 { return Ok(()); }
+        let (start, end) = (x.max(floor(self.rect. left()).max(0.0) as _),
+                    (x + len).min(ceil(self.rect.right()).max(0.0) as _));
+        if start >= end { return Ok(()); }
+        let combined = |x| {
+            let clip = overlap(self.rect.left(), self.rect.right(), x) * vertical;
+            ((coverage as f32 * clip) + 0.5).clamp(0.0, 255.0) as u8
+        };
+        let mut cursor = start;
+        while   cursor < end {
+            let (clipped, run_start) = (combined(cursor), cursor);
+                cursor += 1;
+            while cursor < end && combined(cursor) == clipped { cursor += 1; }
+            if clipped != 0 {
+                self.sink.span(run_start, y, cursor - run_start, clipped)?;
+            }
+        }   Ok(())
+    }
+}
+
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct RasterOptions {
     /// Number of deterministic vertical samples per pixel row.

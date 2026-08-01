@@ -13,7 +13,8 @@ use crate::{
         StrokeWorkspace, Pixmap, RenderError, render_path_to,
         render_stroke_dashed_to, render_stroke_to},
     color::{LinearPremulRGBA, Srgb8Encoder, SRGBA}, geometry::{Affine, Path, Rect},
-    raster::{CoverageMask, CoverageSink, MaskClipSink, RectClipSink},
+    raster::{CoverageMask, CoverageSink, MaskClipSink},
+    float::raster::RectClipSink,
     sampler::{LinearPaintSampler, SolidPaint},
 };
 
