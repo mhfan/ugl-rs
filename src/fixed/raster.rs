@@ -275,15 +275,38 @@ fn integrate_clamped_edge_twice(start: i64, end: i64, height: u32) -> u64 {
         .clamp(0, 2 * scale * height as i128) as _
 }
 
-fn full_row_pixel_area_twice(trapezoid: Trapezoid, x: u32) -> u64 {
+#[derive(Clone, Copy)]
+struct RoundedTrapezoid { left_top: i64, left_bottom: i64,
+    right_top: i64, right_bottom: i64, height: u32 }
+
+fn round_trapezoid(trapezoid: Trapezoid) -> Result<RoundedTrapezoid, Error> {
+    if trapezoid.left.top_y != trapezoid.right.top_y ||
+        trapezoid.left.bottom_y != trapezoid.right.bottom_y ||
+        trapezoid.left.top_y >= trapezoid.left.bottom_y {
+        return Err(Error::InvalidTrapezoid);
+    }
+    let rounded = RoundedTrapezoid {
+        left_top: trapezoid.left.top_x.round_raw(),
+        left_bottom: trapezoid.left.bottom_x.round_raw(),
+        right_top: trapezoid.right.top_x.round_raw(),
+        right_bottom: trapezoid.right.bottom_x.round_raw(),
+        height: trapezoid.left.height_raw(),
+    };
+    if rounded.right_top < rounded.left_top ||
+        rounded.right_bottom < rounded.left_bottom {
+        return Err(Error::InvalidTrapezoid);
+    }
+    Ok(rounded)
+}
+
+fn full_row_pixel_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u64 {
     let pixel_left = x as i64 * SUBPIXEL_SCALE as i64;
-    let height = trapezoid.left.height_raw();
     let right = integrate_clamped_edge_twice(
-        trapezoid.right.top_x.round_raw() - pixel_left,
-        trapezoid.right.bottom_x.round_raw() - pixel_left, height);
+        trapezoid.right_top - pixel_left,
+        trapezoid.right_bottom - pixel_left, trapezoid.height);
     let left = integrate_clamped_edge_twice(
-        trapezoid.left.top_x.round_raw() - pixel_left,
-        trapezoid.left.bottom_x.round_raw() - pixel_left, height);
+        trapezoid.left_top - pixel_left,
+        trapezoid.left_bottom - pixel_left, trapezoid.height);
     right.saturating_sub(left).min(PIXEL_AREA_TWICE)
 }
 
@@ -554,11 +577,9 @@ fn emit_disjoint_trapezoids<S>(trapezoids: &[Trapezoid], x_origin: u32,
     x_end: u32, y: u32, sink: &mut S) -> Result<bool, RenderError<S::Error>>
     where S: CoverageSink {
     let scale = SUBPIXEL_SCALE as i64;
-    let bounds = |trapezoid: Trapezoid| {
-        let xs = [trapezoid.left.top_x.round_raw(),
-                  trapezoid.left.bottom_x.round_raw(),
-                  trapezoid.right.top_x.round_raw(),
-                  trapezoid.right.bottom_x.round_raw()];
+    let bounds = |trapezoid: RoundedTrapezoid| {
+        let xs = [trapezoid.left_top, trapezoid.left_bottom,
+                  trapezoid.right_top, trapezoid.right_bottom];
         let (minimum, maximum) = (*xs.iter().min().unwrap(), *xs.iter().max().unwrap());
         let first = minimum.div_euclid(scale)
             .clamp(x_origin as i64, x_end as i64) as u32;
@@ -569,8 +590,8 @@ fn emit_disjoint_trapezoids<S>(trapezoids: &[Trapezoid], x_origin: u32,
     };
     let mut previous_end = x_origin;
     for &trapezoid in trapezoids {
-        trapezoid.area_twice_raw().map_err(RenderError::Raster)?;
-        let (start, end) = bounds(trapezoid);
+        let rounded = round_trapezoid(trapezoid).map_err(RenderError::Raster)?;
+        let (start, end) = bounds(rounded);
         if start < previous_end { return Ok(false); }
         previous_end = end;
     }
@@ -600,22 +621,36 @@ fn emit_disjoint_trapezoids<S>(trapezoids: &[Trapezoid], x_origin: u32,
 
     let mut run = None;
     for &trapezoid in trapezoids {
+        let trapezoid = round_trapezoid(trapezoid).map_err(RenderError::Raster)?;
         let (first, last) = bounds(trapezoid);
-        let interior = trapezoid.interior_pixel_range(x_end);
-        let (full_start, full_end) = (
-            interior.start.max(first).max(x_origin),
-            interior.end.min(last).min(x_end),
+        let (left, right) = (
+            trapezoid.left_top.max(trapezoid.left_bottom),
+            trapezoid.right_top.min(trapezoid.right_bottom),
         );
-        for x in first..full_start {
-            let area = full_row_pixel_area_twice(trapezoid, x);
-            append(&mut run, x, 1, quantize_area_coverage(area), y, sink)?;
-        }
+        let interior = (
+            (left.div_euclid(scale) + (left.rem_euclid(scale) != 0) as i64)
+                .clamp(0, x_end as i64) as u32,
+            right.div_euclid(scale).clamp(0, x_end as i64) as u32,
+        );
+        let (full_start, full_end) = (
+            interior.0.max(first).max(x_origin),
+            interior.1.min(last).min(x_end),
+        );
         if full_start < full_end {
+            for x in first..full_start {
+                let area = full_row_pixel_area_twice(trapezoid, x);
+                append(&mut run, x, 1, quantize_area_coverage(area), y, sink)?;
+            }
             append(&mut run, full_start, full_end - full_start, u8::MAX, y, sink)?;
-        }
-        for x in full_end.max(first)..last {
-            let area = full_row_pixel_area_twice(trapezoid, x);
-            append(&mut run, x, 1, quantize_area_coverage(area), y, sink)?;
+            for x in full_end..last {
+                let area = full_row_pixel_area_twice(trapezoid, x);
+                append(&mut run, x, 1, quantize_area_coverage(area), y, sink)?;
+            }
+        } else {
+            for x in first..last {
+                let area = full_row_pixel_area_twice(trapezoid, x);
+                append(&mut run, x, 1, quantize_area_coverage(area), y, sink)?;
+            }
         }
     }
     flush(&mut run, y, sink)?;

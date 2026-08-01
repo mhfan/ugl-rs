@@ -371,7 +371,7 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   full-coverage writes over transparent destinations avoid redundant coverage
   multiplication. Together these changes reduced the matched large-gradient
   draw from 381.33 to 192.50 µs for f32 and 446.92 to 221.24 µs for fixed.
-  Direct Pad-ramp traversal plus vertical-run emission reduced f32 to 73.66 µs,
+  Direct Pad-ramp traversal plus vertical-run emission reduced f32 to 64.41 µs,
   while both backends remain byte-identical. Blend2D is still 2.31× faster, so
   future work should batch ramp lookup/output rather than further tune path
   coverage for this scene.
@@ -393,25 +393,26 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   forwarding spans. `CoverageMask` caches non-zero bounds at retained-resource
   construction, and both rasterizers constrain coverage work to that region;
   the f32 sink continues word-wise filtering inside it. Radius-24/radius-100
-  density scenes measure 5.44/22.14 µs for f32, 10.64/93.36 µs for fixed,
+  density scenes measure 6.20/23.59 µs for f32, 8.11/33.14 µs for fixed,
   and roughly 30 µs for Blend2D. This preserves the generic coverage-sink
   contract and fixed memory. Blend2D has
   no public free-path clip; its 29.98 µs comparison is a retained PRGB32 `DST_IN`
   emulation and must remain labeled as such.
-- Building the circular mask separately measures 59.44 µs for f32, 118.73 µs
-  for fixed, and 9.16 µs for Blend2D. RGBA normalization is excluded. This
-  6.49× f32 gap belongs to curve flattening and coverage rasterization; it must
-  not be attributed to retained-mask lookup or source-over composition.
+- Building the circular mask separately measures 21.58 µs for f32, 60.66 µs
+  for fixed, and 9.55 µs for Blend2D. RGBA normalization is excluded. Direct
+  disjoint-row emission closed much of the former gap; the remainder belongs
+  to curve flattening and coverage rasterization, not retained-mask lookup or
+  source-over composition.
 - Nested-prefix 1/16/64-rectangle scenes separate fixed frame overhead from
-  edge-count slope. Formal f32 medians are 3.94/14.60/48.78 µs versus
-  Blend2D's 3.55/10.97/33.68 µs. The f32 increment is about 0.71 µs per shape
-  versus Blend2D's 0.48 µs, so the widening fill gap belongs to repeated edge,
+  edge-count slope. Current f32 medians are 4.09/17.50/59.45 µs versus
+  Blend2D's 3.97/11.53/34.13 µs. The widening fill gap belongs to repeated edge,
   coverage-run, and composition work rather than clear or runner overhead.
   Direct vertical-run emission removes dense cell scans for unchanged vertical
   active sets. Fixed initially measured 9.43/60.31/238.70 µs. Coverage attribution
   showed 203.61 µs in its raster stage; direct vertical-trapezoid boundary area
-  reduced that to 144.04 µs and the current formal 1/16/64 draws to
-  8.40/43.03/173.11 µs. Sloped edges retain polygon clipping and exact rational
+  reduced that to 144.04 µs; guarded direct trapezoid emission brings the
+  current 1/16/64 draws to 7.07/35.15/129.65 µs. Sloped edges retain polygon
+  clipping and exact rational
   crossings, while axis-aligned rectangles no longer pay that general cost.
 - The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
   The canonical rectangle scene has one-pixel boundary runs around 16–21-pixel
@@ -438,7 +439,7 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   winding-aware emitter reconstructs boundary pixels and full spans directly;
   a pending boundary cell merges disjoint intervals that share one pixel.
   This avoids both reintegration and dense-cell rescans, reducing the matched
-  64-rectangle draw from 83.67 to 48.78 µs without changing output.
+  64-rectangle draw from 83.67 to the current 59.45 µs without changing output.
 - The core remains `no_std` capable, while default desktop builds enable
   `std`. Floating-point capability is independent: `std` uses platform
   floor/ceil, Arm `eabihf` targets select a hardware-friendly no_std
@@ -489,6 +490,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   piecewise primitive of `clamp(edge_x - pixel_x, 0, 256)`; no floating-point
   operation or dense row buffer is required. Multi-slab, touching, overlapping,
   or crossing geometry retains exact rational events and polygon accumulation.
+  Rounded rational endpoints are cached once per trapezoid traversal rather
+  than recomputed for validation, bounds, interiors, and boundary pixels; the
+  matched fixed triangle draw consequently measures 204.70 µs while retaining
+  its previous checksum.
 - Rejected analytic experiments remain explicit decisions: generic polygon
   clipping and a whole-row difference accumulator did not amortize their work;
   removing midpoint ordering broke self-intersections; hybrid introsort
