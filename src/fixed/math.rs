@@ -10,6 +10,13 @@
 //  https://johnmcfarlane.github.io/cnl/
 //  https://gitlab.com/tspiteri/fixed
 /// Unsigned binary angle where the complete `u32` range represents one turn.
+///
+/// ```
+/// use ugl_rs::fixed::math::Angle;
+///
+/// assert_eq!(Angle::from_turn_fraction(1, 4), Some(Angle::QUARTER_TURN));
+/// assert_eq!(Angle::from_turn_fraction(1, 0), None);
+/// ```
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub struct Angle(u32);
 
 impl Angle {

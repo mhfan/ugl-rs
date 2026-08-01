@@ -3,6 +3,21 @@
 use crate::common::geometry::{Affine, Point, ScalarConstants};
 
 /// Q24.8 coordinate scalar used by the fixed backend.
+///
+/// Shared geometry containers accept fixed coordinates without conversion:
+///
+/// ```
+/// use ugl_rs::{common::geometry::{Affine, PathBuilder}, fixed::Scalar};
+///
+/// let (one, half) = (Scalar::from_num(1), Scalar::from_num(0.5));
+/// let transform = Affine::<Scalar>::translate(half, one);
+/// assert_eq!(transform.try_transform_point((one, half).into()).unwrap(),
+///     (Scalar::from_num(1.5), Scalar::from_num(1.5)).into());
+///
+/// let mut path = PathBuilder::<Scalar>::new();
+/// path.move_to((Scalar::ZERO, Scalar::ZERO)).line_to((one, half));
+/// assert_eq!(path.build().len(), 2);
+/// ```
 pub type Scalar = fixed::types::I24F8;
 
 /// Raw Q24.8 coordinate magnitude supported by the bounded render path.
@@ -50,19 +65,6 @@ pub mod dash;
 pub use context::{Canvas, CanvasRef};
 
 #[cfg(test)] mod tests { use super::*;
-    use crate::common::geometry::PathBuilder;
-
-    #[test] fn geometry_reuses_generic_point_path_and_affine_types() {
-        let (one, half) = (Scalar::from_num(1), Scalar::from_num(0.5));
-        let transform = Affine::<Scalar>::translate(half, one);
-        assert_eq!(transform.try_transform_point((one, half).into()).unwrap(),
-            (Scalar::from_num(1.5), Scalar::from_num(1.5)).into());
-
-        let mut builder = PathBuilder::<Scalar>::new();
-        builder.move_to((Scalar::ZERO, Scalar::ZERO)).line_to((one, half));
-        assert_eq!(builder.build().len(), 2);
-    }
-
     #[test] fn affine_widens_rounds_symmetrically_and_checks_output() {
         let raw = Scalar::from_bits;
         let half_scale = Affine::new(raw(128), raw(0), raw(0), raw(128), raw(0), raw(0));

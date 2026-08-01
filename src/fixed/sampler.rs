@@ -555,8 +555,6 @@ impl PaintSampler for ConicGradient<'_> {
     #[test] fn conic_validates_ramp_and_device_domain() {
         let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
         let fixed = Scalar::from_num;
-        assert_eq!(Angle::from_turn_fraction(1, 4), Some(Angle::QUARTER_TURN));
-        assert_eq!(Angle::from_turn_fraction(1, 0), None);
         assert_eq!(ConicGradient::new((fixed(0), fixed(0)),
             Angle::ZERO, &ramp[..1]).unwrap_err(), GradientError::RampTooSmall);
         assert_eq!(ConicGradient::new(
