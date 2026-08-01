@@ -182,6 +182,10 @@ impl<'a> RadialGradient<'a> {
 
     fn concentric_ramp_index_squared(&self, squared: u64) -> usize {
         let floor = integer_sqrt_u64(squared);
+        self.concentric_ramp_index_with_floor(squared, floor)
+    }
+
+    fn concentric_ramp_index_with_floor(&self, squared: u64, floor: u64) -> usize {
         let distance = if squared - floor * floor > floor { floor + 1 } else { floor };
         let (mut parameter, mut denominator) =
             (distance as i64 - self.start_radius, self.radius_delta);
@@ -267,12 +271,23 @@ impl PaintSampler for RadialGradient<'_> {
             x * x + y * y, 2 * x * scale + scale * scale,
         );
         let second_difference = 2 * scale * scale;
-        for _ in 0..len {
-            emit(self.ramp[self.concentric_ramp_index_squared(squared as _)]);
+        let mut floor = integer_sqrt_u64(squared as _);
+        for index in 0..len {
+            emit(self.ramp[self.concentric_ramp_index_with_floor(squared as _, floor)]);
+            if index + 1 == len { break; }
             squared += step;
             step += second_difference;
+            floor = nearby_integer_sqrt(squared as _, floor);
         }
     }
+}
+
+fn nearby_integer_sqrt(value: u64, previous: u64) -> u64 {
+    if value < 2 || previous == 0 { return integer_sqrt_u64(value); }
+    let mut root = (previous + value / previous) / 2;
+    while root * root > value { root -= 1; }
+    while (root + 1) * (root + 1) <= value { root += 1; }
+    root
 }
 
 fn normalize_ratio(mut numerator: i128, mut denominator: i128) -> Option<(i128, i128)> {
@@ -328,12 +343,22 @@ fn ramp_index_i64(parameter: i64, denominator: i64, ramp_len: usize,
 /// Allocation-free, no-FPU conic gradient using a 16-step integer CORDIC.
 #[derive(Clone, Copy, Debug)] pub struct ConicGradient<'a> {
     center: [i32; 2], start_angle: Angle,
-    ramp: &'a [PremulSRGBA8],
+    ramp: &'a [PremulSRGBA8], angle_mode: ConicAngleMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub enum ConicAngleMode {
+    #[default] Exact,
+    Fast,
 }
 
 impl<'a> ConicGradient<'a> {
     pub fn new(center: impl Into<Point<Scalar>>, start_angle: Angle,
         ramp: &'a [PremulSRGBA8]) -> Result<Self, GradientError> {
+        Self::with_angle_mode(center, start_angle, ramp, ConicAngleMode::Exact)
+    }
+
+    pub fn with_angle_mode(center: impl Into<Point<Scalar>>, start_angle: Angle,
+        ramp: &'a [PremulSRGBA8], angle_mode: ConicAngleMode) -> Result<Self, GradientError> {
         validate_ramp(ramp)?;
         let center = center.into();
         let center = [center.x.to_bits(), center.y.to_bits()];
@@ -341,7 +366,7 @@ impl<'a> ConicGradient<'a> {
             value.unsigned_abs() > DEVICE_RAW_LIMIT as u32) {
             return Err(GradientError::CoordinateOutOfRange);
         }
-        Ok(Self { center, start_angle, ramp })
+        Ok(Self { center, start_angle, ramp, angle_mode })
     }
 
     pub fn ramp(&self) -> &'a [PremulSRGBA8] { self.ramp }
@@ -356,12 +381,35 @@ impl<'a> ConicGradient<'a> {
         if x > DEVICE_RAW_LIMIT as u64 || y > DEVICE_RAW_LIMIT as u64 {
             return None;
         }
-        let angle = cordic_turn(x as i64 - self.center[0] as i64,
-                                y as i64 - self.center[1] as i64);
+        let (x, y) = (x as i64 - self.center[0] as i64,
+                      y as i64 - self.center[1] as i64);
+        let angle = match self.angle_mode {
+            ConicAngleMode::Exact => cordic_turn(x, y),
+            ConicAngleMode::Fast => unit_angle_approx(x, y),
+        };
         let parameter = angle.wrapping_sub(self.start_angle.to_bits()) as u64;
         let scale = (self.ramp.len() - 1) as u64;
         Some(((parameter * scale + FULL_TURN / 2) / FULL_TURN) as _)
     }
+}
+
+fn unit_angle_approx(x: i64, y: i64) -> u32 {
+    const QUARTER: i128 = 1 << 30;
+    const HALF: i128 = 1 << 31;
+    const SCALE: u128 = 1 << 32;
+    let (x_abs, y_abs) = (x.unsigned_abs(), y.unsigned_abs());
+    let maximum = x_abs.max(y_abs);
+    if maximum == 0 { return 0; }
+    let slope = (x_abs.min(y_abs) as u128 * SCALE / maximum as u128) as i128;
+    let squared = slope * slope >> 32;
+    let polynomial = 683_420_221_i128 + (squared * (-222_711_105_i128 +
+        (squared * (106_347_771_i128 +
+        (squared * -30_299_868_i128 >> 32)) >> 32)) >> 32);
+    let mut turn = slope * polynomial >> 32;
+    if x_abs < y_abs { turn = QUARTER - turn; }
+    if x < 0 { turn = HALF - turn; }
+    if y < 0 { turn = (1_i128 << 32) - turn; }
+    turn as _
 }
 
 impl PaintSampler for ConicGradient<'_> {
@@ -573,18 +621,24 @@ impl PaintSampler for ConicGradient<'_> {
         assert_eq!(cordic_turn( 0,  1), Angle::QUARTER_TURN.to_bits());
         assert_eq!(cordic_turn(-1,  0), Angle::HALF_TURN.to_bits());
         assert_eq!(cordic_turn( 0, -1), Angle::THREE_QUARTER_TURN.to_bits());
-        let mut maximum_error = 0.0_f32;
+        let (mut maximum_error, mut maximum_fast_error) = (0.0_f32, 0.0_f32);
         for y in -64_i64..=64 {
             for x in -64_i64..=64 {
                 if x == 0 && y == 0 { continue; }
                 let actual = cordic_turn(x, y) as f32 / 4_294_967_296.0;
                 let turn = atan2(y as _, x as _) / TAU;
                 let expected = turn - floor(turn);
-                let difference = (actual - expected).abs();
-                maximum_error = maximum_error.max(difference.min(1.0 - difference));
-            }
+            let difference = (actual - expected).abs();
+            maximum_error = maximum_error.max(difference.min(1.0 - difference));
+            let fast = unit_angle_approx(x, y) as f32 / 4_294_967_296.0;
+            let difference = (fast - expected).abs();
+            maximum_fast_error =
+                maximum_fast_error.max(difference.min(1.0 - difference));
+        }
         }
         assert!(maximum_error <= 6e-6, "maximum turn error={maximum_error}");
+        assert!(maximum_fast_error <= 3e-5,
+            "maximum fast turn error={maximum_fast_error}");
 
         let stop_values = red_blue_stops();
         let mut storage = [PremulSRGBA8::zeroed(); 257];
@@ -597,6 +651,8 @@ impl PaintSampler for ConicGradient<'_> {
         ] {
             let conic = ConicGradient::new(
                 (fixed(16), fixed(16)), angle, ramp).unwrap();
+            let fast = ConicGradient::with_angle_mode(
+                (fixed(16), fixed(16)), angle, ramp, ConicAngleMode::Fast).unwrap();
             let reference =
                 ReferenceConicGradient::new((16.0, 16.0), start_angle, stops).unwrap();
             for y in 0..32 {
@@ -607,6 +663,10 @@ impl PaintSampler for ConicGradient<'_> {
                     let expected = ramp.iter().position(|color| *color == expected).unwrap();
                     assert!(actual.abs_diff(expected) <= 1,
                         "point=({x}, {y}), actual={actual}, expected={expected}");
+                    let fast = ramp.iter().position(|color|
+                        *color == fast.sample(x, y)).unwrap();
+                    assert!(fast.abs_diff(expected) <= 1,
+                        "fast point=({x}, {y}), actual={fast}, expected={expected}");
                 }
             }
         }
