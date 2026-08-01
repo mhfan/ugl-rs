@@ -13,7 +13,7 @@ use ugl_rs::{
     raster::{CoverageMask, CoverageMaskMut},
     sampler::{ConicAngleMode, ConicGradient, GradientStop, GradientStops,
         LinearGradient, RadialGradient, SpreadMode},
-    stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions},
+    stroke::{LineCap, LineJoin, StrokeContour}, float::stroke::StrokeOptions,
 };
 
 const WIDTH: u32 = 256;

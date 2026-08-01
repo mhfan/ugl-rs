@@ -20,8 +20,8 @@ use crate::{color::SRGBA,
     }, geometry::{Affine, Path, Point, Rect},
     render::{BYTES_PER_PIXEL, EdgeCapacity, EdgeSliceSink, blend_sampled_pixel,
         map_dash_error, validate_coverage_dimensions},
-    stroke::{flatten_stroke_path, stroke_polyline, StrokeContour, StrokeExpandError,
-        StrokeOptions, StrokePathWorkspace, StrokeWorkspaceError},
+    stroke::{StrokeContour, StrokePathWorkspace, StrokeWorkspaceError},
+    float::stroke::{flatten_stroke_path, stroke_polyline, StrokeExpandError, StrokeOptions},
 };
 
 pub use crate::render::{Pixmap, PixmapError, RenderError};

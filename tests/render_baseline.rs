@@ -7,7 +7,7 @@ use ugl_rs::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersecti
     }, canvas_linear::{LinearPixmap, render_paint as render_paint_linear,
         render_solid as render_solid_linear},
     edge::Edge, geometry::{Affine, PathBuilder}, raster::FillRule,
-    stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions},
+    stroke::{LineCap, LineJoin, StrokeContour}, float::stroke::StrokeOptions,
     sampler::{ConicGradient, GradientStop, GradientStops, LinearGradient, LinearPaintSampler,
         PaintSampler, RadialGradient, SpreadMode, TransformedPaint},
 };

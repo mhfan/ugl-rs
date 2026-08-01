@@ -19,8 +19,8 @@ use ugl_rs::{analytic::{BinWorkspace as AnalyticBinWorkspace,
     geometry::{Affine, Path, PathBuilder, Point},
     sampler::{ConicAngleMode, ConicGradient, GradientStop, GradientStops, LinearGradient,
         LinearPaintSampler, PaintSampler, RadialGradient, SolidPaint, SpreadMode},
-    stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions, StrokePathWorkspace,
-        flatten_stroke_path, stroke_polyline},
+    stroke::{LineCap, LineJoin, StrokeContour, StrokePathWorkspace},
+    float::stroke::{StrokeOptions, flatten_stroke_path, stroke_polyline},
 };
 #[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
 #[derive(Default)] struct SpanStatistics {

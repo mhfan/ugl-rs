@@ -510,8 +510,8 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
         let options = Options::new(fixed(2.0)).unwrap();
         let actual = collect(&[(2.0, 2.0), (6.0, 6.0)], false, options);
         let mut expected = Vec::new();
-        crate::stroke::stroke_line((2.0, 2.0).into(), (6.0, 6.0).into(),
-            crate::stroke::StrokeOptions::new(2.0).unwrap(), &mut |edge| {
+        crate::float::stroke::stroke_line((2.0, 2.0).into(), (6.0, 6.0).into(),
+            crate::float::stroke::StrokeOptions::new(2.0).unwrap(), &mut |edge| {
                 expected.push(edge); Ok::<_, Infallible>(())
             }).unwrap();
         let actual_bounds = actual.iter().flat_map(|edge| [edge.upper, edge.lower]).fold(
