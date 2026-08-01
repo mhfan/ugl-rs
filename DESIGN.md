@@ -615,7 +615,7 @@ Status: complete (2026-07-30).
 
 ### M3 — Stroke
 
-Status: scalar f32/fixed dash, cap, join, and Context entry points implemented;
+Status: scalar f32/fixed dash, cap, join, and `CanvasRef` entry points implemented;
 reliability validation ongoing (2026-07-31).
 
 - Width, cap, join, and miter behavior.
@@ -722,7 +722,7 @@ changing antialiased intersection semantics:
   target, allocate/clear only that rectangle, and intersect bounds before
   multiplying nested clips;
 - preserve zero-copy borrowed full-canvas masks while allowing bounded masks
-  through the same `Context` and low-level rendering adapters;
+  through the same `CanvasRef` and low-level rendering adapters;
 - specialize empty, rectangular, and fully opaque masks so they do not become
   dense image-sized buffers;
 - use bounded dense masks for the desktop f32 path, and evaluate sparse
@@ -743,13 +743,14 @@ respect to image area and therefore does not scan caller-owned destination
 contents. Compositing over existing bytes requires the caller to uphold the
 premultiplied invariant.
 
-## Context facade and backend organization
+## Canvas and CanvasRef facade and backend organization
 
 `Pixmap` owns or borrows compact RGBA8888 storage, while `LinearPixmap` owns or
 borrows its linear working buffer. They remain separate concrete types so the
 compositing domain and the explicit presentation boundary cannot be inferred
-incorrectly through a generic pixel-format abstraction. Neither is a drawing state machine. The bounded
-drawing facade is therefore named `Context`: it borrows a target, owns
+incorrectly through a generic pixel-format abstraction. Neither is a drawing
+state machine. The bounded drawing facade is therefore named `CanvasRef`: it
+borrows a target and
 caller-supplied workspace slices by value, retains small drawing state, and
 delegates to allocation-free functions. Those low-level functions remain
 public expert APIs for retained coverage, custom sinks, exact capacity
@@ -757,9 +758,9 @@ planning, and applications that keep state elsewhere.
 
 `Canvas` (implemented by `context::Canvas` and re-exported at crate root) is the
 ordinary allocation-backed facade. It owns and reuses f32 scratch, performs
-exact planning and any growth before drawing, and then delegates to `Context`.
+exact planning and any growth before drawing, and then delegates to `CanvasRef`.
 Consequently its public workflow does not expose edge, intersection, row-bin,
-or coverage-row storage. `Context` remains the bounded zero-allocation
+or coverage-row storage. `CanvasRef` remains the bounded zero-allocation
 boundary; low-level workspace layout belongs to expert APIs.
 
 `Canvas::new` owns a tightly packed zero-initialized RGBA8888 destination;
@@ -769,15 +770,15 @@ only layout and pixel bytes rather than a raster pipeline object.
 
 The facade uses two concrete, deliberately parallel entry points:
 
-- `Context` selects the analytic f32 geometry/raster path and the encoded
+- `context::CanvasRef` selects the analytic f32 geometry/raster path and the encoded
   compatibility compositor.
-- `fixed::context::Context` selects Q24.8 geometry/rasterization and fixed paint sampling.
+- `fixed::context::CanvasRef` selects Q24.8 geometry/rasterization and fixed paint sampling.
   Compatibility `PaintSampler` entry points remain available explicitly but
   must not be mistaken for a no-FPU path.
 
 A public backend trait is intentionally avoided. Associated scalar, flatten,
 stroke, sampler, workspace, and error types would expose implementation
-machinery and make ordinary calls harder to infer. Instead, both contexts reuse
+machinery and make ordinary calls harder to infer. Instead, both borrowed facades reuse
 a generic private/shared state record parameterized by coordinate, flatten,
 and stroke option types. Their method names and state transitions stay
 isomorphic where semantics match; concrete methods remain where the numeric or
@@ -800,22 +801,22 @@ The first stable method vocabulary is small:
   borrowed coverage mask. `Canvas` additionally owns accumulated clip masks
   and scopes them together with drawing state through `save`/`restore`.
 
-Status: the first `Context` and `fixed::context::Context` fill/stroke/dash
+Status: the first `context::CanvasRef` and `fixed::context::CanvasRef` fill/stroke/dash
 facade is implemented. Both share generic state storage and parallel method
 names; rectangle/mask clip state and statically dispatched custom paint are
 supported. `Canvas::set_clip_path` provides ordinary owned path clipping;
-bounded Context and low-level callers use `rasterize_path_clip` with a
+bounded `CanvasRef` and low-level callers use `rasterize_path_clip` with a
 caller-owned `CoverageMaskMut`, then borrow it with `set_clip_mask`.
 `Canvas` save/restore and intersecting rectangle, mask, and free-path clips are
-implemented. The bounded Context deliberately retains a single borrowed clip;
+implemented. The bounded `CanvasRef` deliberately retains a single borrowed clip;
 callers that require a bounded clip stack own its mask storage explicitly.
 Exact fill/stroke/dash planning is available
-both through low-level functions and Context methods; path clips reuse the fill
+both through low-level functions and `CanvasRef` methods; path clips reuse the fill
 planner through the semantic `path_clip_requirements` entry point.
 
 All methods preserve existing error and mutation contracts. Geometry/capacity
 failure before rasterization leaves the target unchanged. Once span emission
-begins, sink/raster errors follow the documented low-level behavior. Context
+begins, sink/raster errors follow the documented low-level behavior. `CanvasRef`
 construction performs no allocation and does not infer or resize workspace.
 `Canvas` performs requirement planning before growing its reusable storage.
 

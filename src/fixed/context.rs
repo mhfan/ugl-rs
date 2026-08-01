@@ -18,7 +18,7 @@ use crate::{
     stroke::StrokePathWorkspace,
 };
 
-/// Caller-owned scratch borrowed by [`Context`].
+/// Caller-owned scratch borrowed by [`CanvasRef`].
 pub struct Workspace<'a> {
     path: StrokePathWorkspace<'a, Scalar>,
     dash_points: &'a mut [Point<Scalar>],
@@ -47,14 +47,14 @@ impl PaintSampler for SolidPaint {
 /// Methods accepting [`PaintSampler`] are no-FPU except rectangle
 /// clipping, whose compatibility coverage adapter currently uses f32. Use a
 /// pre-rasterized fixed path mask when the complete clip path must avoid an FPU.
-pub struct Context<'a, 'target, 'workspace, 'clip> {
+pub struct CanvasRef<'a, 'target, 'workspace, 'clip> {
     target: &'a mut Pixmap<'target>,
     workspace: Workspace<'workspace>,
     state: DrawState<Scalar, FlattenOptions, StrokeOptions, SolidPaint>,
     clip: Clip<'clip>,
 }
 
-impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
+impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
     pub fn new(target: &'a mut Pixmap<'target>,
         workspace: Workspace<'workspace>) -> Self {
         Self {
@@ -238,7 +238,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
     use crate::{edge::Edge, fixed::raster::{Line, Segment, Trapezoid},
         geometry::PathBuilder, stroke::{StrokeContour, StrokePathWorkspace}};
 
-    #[test] fn context_matches_state_clip_and_workspace_shape() {
+    #[test] fn canvas_ref_matches_state_clip_and_workspace_shape() {
         let fixed = Scalar::from_num;
         let mut builder = PathBuilder::new();
         builder.move_to((fixed(0), fixed(0))).line_to((fixed(2), fixed(0)))
@@ -277,7 +277,7 @@ impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
         ];
         let mut pixels = [0; 4 * 3 * 4];
         let mut target = Pixmap::from_buffer(&mut pixels, 4, 3, 16).unwrap();
-        let mut context = Context::new(&mut target, workspace);
+        let mut context = CanvasRef::new(&mut target, workspace);
         context.set_color(SRGBA::new(255, 0, 0, 128))
             .set_transform(Affine::translate(fixed(1), Scalar::ZERO))
             .set_clip_mask(CoverageMask::new(&mask_data, 4, 3, 4).unwrap());

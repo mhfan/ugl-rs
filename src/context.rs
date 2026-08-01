@@ -20,7 +20,7 @@ use crate::{
     stroke::{StrokeContour, StrokeOptions},
 };
 
-/// Caller-owned scratch borrowed by [`Context`].
+/// Caller-owned scratch borrowed by [`CanvasRef`].
 ///
 /// Empty dash slices are valid when dashed strokes are not used.
 pub struct Workspace<'a> {
@@ -30,7 +30,7 @@ pub struct Workspace<'a> {
 }
 
 impl<'a> Workspace<'a> {
-    /// Wraps explicitly managed low-level scratch for an allocation-free [`Context`].
+    /// Wraps explicitly managed low-level scratch for an allocation-free [`CanvasRef`].
     pub fn new(stroke: StrokeWorkspace<'a>, dash_points: &'a mut [Point],
         dash_contours: &'a mut [DashContour]) -> Self {
         Self { stroke, dash_points, dash_contours }
@@ -75,17 +75,17 @@ impl<S: PaintSampler> PaintSampler for GlobalAlphaPaint<'_, S> {
 
 /// Stateful analytic f32 drawing facade.
 ///
-/// The context borrows both target and scratch storage. It allocates nothing,
+/// `CanvasRef` borrows both target and scratch storage. It allocates nothing,
 /// and every draw call has the same capacity and error behavior as the
 /// corresponding low-level function in [`crate::canvas`].
-pub struct Context<'a, 'target, 'workspace, 'clip> {
+pub struct CanvasRef<'a, 'target, 'workspace, 'clip> {
     target: &'a mut Pixmap<'target>,
     workspace: Workspace<'workspace>,
     state: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>,
     clip: Clip<'clip>,
 }
 
-impl<'a, 'target, 'workspace, 'clip> Context<'a, 'target, 'workspace, 'clip> {
+impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
     pub fn new(target: &'a mut Pixmap<'target>,
         workspace: Workspace<'workspace>) -> Self {
         Self {
@@ -317,8 +317,8 @@ impl CanvasStorage {
 /// Convenient stateful f32 renderer with automatically managed scratch storage.
 ///
 /// `Canvas` plans and grows scratch before every draw, then delegates to the
-/// allocation-free [`Context`]. Geometry or capacity failure therefore occurs
-/// before the destination is modified. Use `Context` or [`crate::canvas`]
+/// allocation-free [`CanvasRef`]. Geometry or capacity failure therefore occurs
+/// before the destination is modified. Use `CanvasRef` or [`crate::canvas`]
 /// directly when scratch must be statically supplied.
 pub struct Canvas<'target> {
     target: Pixmap<'target>, storage: CanvasStorage,
@@ -574,17 +574,22 @@ impl<'target> Canvas<'target> {
         }
     }
 
+    fn as_canvas_ref(&mut self) -> Result<CanvasRef<'_, 'target, '_, '_>, RenderError> {
+        let state = self.state;
+        let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
+        let mut canvas = CanvasRef::new(target, storage.workspace());
+        canvas.state = state;
+        canvas.clip = clip.as_clip()?;
+        Ok(canvas)
+    }
+
     pub fn fill(&mut self, path: &Path) -> Result<(), RenderError> {
         let paint = self.state.paint; self.fill_with(path, &paint)
     }
     pub fn fill_with<S: PaintSampler>(&mut self, path: &Path, paint: &S) ->
         Result<(), RenderError> {
         self.plan_fill(path)?;
-        let state = self.state;
-        let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
-        let workspace = storage.workspace();
-        let mut context = Context::new(target, workspace);
-        context.state = state; context.clip = clip.as_clip()?; context.fill_with(path, paint)
+        self.as_canvas_ref()?.fill_with(path, paint)
     }
     pub fn stroke(&mut self, path: &Path) -> Result<(), RenderError> {
         let paint = self.state.paint; self.stroke_with(path, &paint)
@@ -592,11 +597,7 @@ impl<'target> Canvas<'target> {
     pub fn stroke_with<S: PaintSampler>(&mut self, path: &Path, paint: &S) ->
         Result<(), RenderError> {
         self.plan_stroke(path)?;
-        let state = self.state;
-        let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
-        let workspace = storage.workspace();
-        let mut context = Context::new(target, workspace);
-        context.state = state; context.clip = clip.as_clip()?; context.stroke_with(path, paint)
+        self.as_canvas_ref()?.stroke_with(path, paint)
     }
     pub fn stroke_dashed(&mut self, path: &Path, dash: DashPattern<'_>) ->
         Result<(), RenderError> {
@@ -605,12 +606,7 @@ impl<'target> Canvas<'target> {
     pub fn stroke_dashed_with<S: PaintSampler>(&mut self, path: &Path,
         paint: &S, dash: DashPattern<'_>) -> Result<(), RenderError> {
         self.plan_dashed(path, dash)?;
-        let state = self.state;
-        let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
-        let workspace = storage.workspace();
-        let mut context = Context::new(target, workspace);
-        context.state = state; context.clip = clip.as_clip()?;
-        context.stroke_dashed_with(path, paint, dash)
+        self.as_canvas_ref()?.stroke_dashed_with(path, paint, dash)
     }
 }
 
@@ -767,7 +763,7 @@ impl<'target> Canvas<'target> {
         assert_eq!(canvas.target().pixel_bytes(3, 1).unwrap(), [0; 4]);
     }
 
-    #[test] fn context_fill_state_and_clip_match_low_level_pipeline() {
+    #[test] fn canvas_ref_fill_state_and_clip_match_low_level_pipeline() {
         let mut pixels = [0; 4 * 4 * 4];
         let mut target = Pixmap::from_buffer(&mut pixels, 4, 4, 16).unwrap();
         let mut buffers = Buffers::new();
@@ -778,7 +774,7 @@ impl<'target> Canvas<'target> {
             0,   0,   0, 0,
             0,   0,   0, 0,
         ];
-        let mut context = Context::new(&mut target, workspace);
+        let mut context = CanvasRef::new(&mut target, workspace);
         context.set_color(SRGBA::new(255, 0, 0, 128))
             .set_transform(Affine::translate(1.0, 0.0))
             .set_clip_mask(CoverageMask::new(&mask_data, 4, 4, 4).unwrap());
@@ -790,7 +786,7 @@ impl<'target> Canvas<'target> {
             &pixels[..16], &[0, 0, 0, 0, 64, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0]);
     }
 
-    #[test] fn context_stroke_and_custom_paint_share_current_state() {
+    #[test] fn canvas_ref_stroke_and_custom_paint_share_current_state() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 1.0)).line_to((4.0, 1.0));
         let path = builder.build();
@@ -802,7 +798,7 @@ impl<'target> Canvas<'target> {
         let mut target = Pixmap::from_buffer(&mut pixels, 4, 3, 16).unwrap();
         let mut buffers = Buffers::new();
         let workspace = buffers.workspace();
-        let mut context = Context::new(&mut target, workspace);
+        let mut context = CanvasRef::new(&mut target, workspace);
         context.set_stroke(StrokeOptions::new(2.0).unwrap())
             .set_clip_rect(Rect::from_ltrb(1.0, 0.0, 3.0, 3.0).unwrap());
         context.stroke_with(&path, &gradient).unwrap();
@@ -815,14 +811,14 @@ impl<'target> Canvas<'target> {
         assert_eq!(&pixels[32..], &[0; 16]);
     }
 
-    #[test] fn context_dashed_stroke_uses_current_paint_and_clip() {
+    #[test] fn canvas_ref_dashed_stroke_uses_current_paint_and_clip() {
         let mut builder = PathBuilder::new();
         builder.move_to((0.0, 1.0)).line_to((4.0, 1.0));
         let mut pixels = [0; 4 * 3 * 4];
         let mut target = Pixmap::from_buffer(&mut pixels, 4, 3, 16).unwrap();
         let mut buffers = Buffers::new();
         let workspace = buffers.workspace();
-        let mut context = Context::new(&mut target, workspace);
+        let mut context = CanvasRef::new(&mut target, workspace);
         context.set_color(SRGBA::red())
             .set_stroke(StrokeOptions::new(1.0).unwrap())
             .set_clip_rect(Rect::from_ltrb(0.0, 0.0, 3.0, 3.0).unwrap());

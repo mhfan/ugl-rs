@@ -53,7 +53,7 @@ feature combinations, 32-bit Linux, and a Cortex-M target without an FPU.
 | Paint and color | Solid and gradient samplers; encoded compatibility and linear-light paths |
 | Stroke | Allocation-free f32/fixed dashes, caps, joins, and path stroke pipelines implemented |
 | Fixed point | Q24.8 transformed path fill/stroke, sparse strips/tiles, clipping, native fixed gradients, and all fixed caps/joins implemented |
-| Facade | Parallel f32/fixed `Context` APIs for fill, stroke, dash, rectangle clip, and borrowed path masks |
+| Facade | Primary owning f32 `Canvas`, plus parallel f32/fixed `CanvasRef` APIs for bounded scratch |
 | Production readiness | Pre-release: API stabilization, broader fuzzing/goldens, code-size work, and real-device validation remain |
 
 The f32 dash reference accepts finite, strictly positive alternating on/off
@@ -130,7 +130,7 @@ applies uniformly to solid and custom paints. Consecutive `set_clip_rect`,
 `set_clip_mask`, and `set_clip_path` calls intersect with the current clip;
 `clear_clip()` explicitly resets it.
 
-`Context` is the allocation-free facade for callers that provide bounded
+`CanvasRef` is the allocation-free facade for callers that provide bounded
 scratch explicitly. The lower-level `canvas::*` functions expose individual
 workspace arrays only for static-memory systems, custom allocators, retained
 coverage integration, and renderer development; they are not required for
@@ -170,7 +170,7 @@ Fixed-only context, numeric helpers, sampler contracts, flattening,
 rasterization, stroking, tiling, and their focused tests live under
 `src/fixed/`. The canonical public API uses `fixed::*` paths directly. Backend
 modules use concise names such as `fixed::raster::Workspace`,
-`fixed::stroke::Options`, and `fixed::context::Context`; no legacy crate-root
+`fixed::stroke::Options`, and `fixed::context::CanvasRef`; no legacy crate-root
 backend aliases are retained.
 
 Both exact-area f32 and Q24.8 fixed paths rasterize arbitrary path clips into
@@ -186,7 +186,7 @@ The fixed execution contract is deliberately per entry point:
 | geometry, flattening, stroke, dash, raster, strip/tile encoding | yes |
 | `fixed::sampler::*` solid/linear/radial/conic paint | yes |
 | path-mask production and native mask composition | yes |
-| `fixed::context::Context` with a native fixed sampler and no clip/mask clip | yes |
+| `fixed::context::CanvasRef` with a native fixed sampler and no clip/mask clip | yes |
 | rectangle clipping | no; the shared antialiased rectangle adapter uses `f32` |
 | compatibility entry points accepting `sampler::PaintSampler` | no |
 
@@ -200,7 +200,7 @@ encoded `SRGBA<u8>`, while `Pixmap::pixel` returns only validated
 Pixmap construction intentionally validates layout without scanning the image;
 source-over callers are responsible for valid premultiplied destination data.
 
-`context::Context` and `fixed::context::Context` provide parallel bounded
+`context::CanvasRef` and `fixed::context::CanvasRef` provide parallel bounded
 drawing APIs for the exact-area f32 and Q24.8 pipelines. They retain transform,
 fill rule, flattening, stroke, solid color, and rectangle/mask clip state while
 borrowing the target and bounded scratch storage. `fill_with`, `stroke_with`, and
@@ -213,7 +213,7 @@ Choose the narrowest layer that owns the required state:
 
 - `Canvas` for ordinary f32 drawing with automatically managed scratch and
   retained path clips;
-- `context::Context` or `fixed::context::Context` when scratch must be bounded
+- `context::CanvasRef` or `fixed::context::CanvasRef` when scratch must be bounded
   and supplied by the caller;
 - `canvas::render_*` for direct exact-area f32 rendering;
 - `canvas::render_*_sampled` only as the supersampled reference;
@@ -222,7 +222,7 @@ Choose the narrowest layer that owns the required state:
 
 `Canvas::new` allocates its destination, while `Canvas::from_buffer` borrows an
 existing one. It owns reusable raster scratch and grows it transactionally
-before drawing. Context construction takes a
+before drawing. `CanvasRef` construction takes a
 `context::Workspace` containing caller-owned slices; dash buffers may be empty
 when dashed strokes are not used.
 
@@ -238,7 +238,7 @@ format trait obscures which compositing domain is active.
 Both backends expose exact, target-independent planners for fill, stroke, and
 dash. The f32 entry points are `render_requirements`, `stroke_requirements`,
 and `dashed_stroke_requirements`; fixed equivalents live under
-`fixed::canvas`. Context methods with matching names apply the current
+`fixed::canvas`. `CanvasRef` methods with matching names apply the current
 transform, fill/stroke state, and target dimensions.
 
 Planning is deliberately staged. Exact stroke edges depend on actual curve
@@ -259,13 +259,13 @@ and retains the antialiased mask in internal storage, intersecting it with the
 current clip; subsequent fill, stroke, and dashed-stroke calls apply it without
 exposing mask storage. `save`/`restore` scopes nested clips.
 
-The bounded Context and low-level APIs deliberately use a two-stage operation
+The bounded `CanvasRef` and low-level APIs deliberately use a two-stage operation
 so image-sized storage and lifetime remain visible:
 
 1. Rasterize any path into caller-owned `CoverageMaskMut` with
    `canvas::rasterize_path_clip` or
    `fixed::canvas::rasterize_path_clip`.
-2. Borrow it with `as_mask()` and pass it to `context::Context::set_clip_mask`,
+2. Borrow it with `as_mask()` and pass it to `context::CanvasRef::set_clip_mask`,
    or to a low-level `render_*_masked` function.
 
 During rendering, shape and mask coverage are multiplied before paint
