@@ -122,6 +122,7 @@ impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
 /// Borrowed 8-bit coverage mask with explicit row stride.
 #[derive(Clone, Copy, Debug)] pub struct CoverageMask<'a> {
     data: &'a [u8], width: u32, height: u32, stride: u32,
+    origin_x: u32, origin_y: u32, data_width: u32, data_height: u32,
     non_zero_bounds: Option<(u32, u32, u32, u32)>,
 }
 
@@ -158,13 +159,35 @@ impl<'a> CoverageMask<'a> {
         Result<Self, CoverageMaskError> {
         validate_mask_buffer(data.len(), width, height, stride)?;
         let non_zero_bounds = find_non_zero_bounds(data, width, height, stride);
-        Ok(Self { data, width, height, stride, non_zero_bounds })
+        Ok(Self { data, width, height, stride, origin_x: 0, origin_y: 0,
+            data_width: width, data_height: height, non_zero_bounds })
+    }
+
+    pub(crate) fn from_region(data: &'a [u8], dimensions: (u32, u32),
+        region: (u32, u32, u32, u32), stride: u32) -> Result<Self, CoverageMaskError> {
+        let (width, height) = dimensions;
+        let (origin_x, origin_y, right, bottom) = region;
+        if origin_x > right || origin_y > bottom || right > width || bottom > height {
+            return Err(CoverageMaskError::DimensionsOverflow);
+        }
+        let (data_width, data_height) = (right - origin_x, bottom - origin_y);
+        validate_mask_buffer(data.len(), data_width, data_height, stride)?;
+        let non_zero_bounds = find_non_zero_bounds(data, data_width, data_height, stride)
+            .map(|(left, top, right, bottom)|
+                (left + origin_x, top + origin_y, right + origin_x, bottom + origin_y));
+        Ok(Self { data, width, height, stride, origin_x, origin_y,
+            data_width, data_height, non_zero_bounds })
     }
 
     pub fn  width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
     pub fn as_bytes(&self) -> &[u8] { self.data }
+
+    pub(crate) fn storage_region(&self) -> (u32, u32, u32, u32) {
+        (self.origin_x, self.origin_y,
+            self.origin_x + self.data_width, self.origin_y + self.data_height)
+    }
 
     pub(crate) fn non_zero_bounds(&self) -> Option<(u32, u32, u32, u32)> {
         self.non_zero_bounds
@@ -233,18 +256,20 @@ impl<S> CoverageSink for MaskClipSink<'_, S> where S: CoverageSink {
 
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
         Result<(), Self::Error> {
-        if y >= self.mask.height { return Ok(()); }
-        let end = x.saturating_add(len).min(self.mask.width);
-        if x >= end { return Ok(()); }
-        let row = y as usize * self.mask.stride as usize;
-        let mask = &self.mask.data[row + x as usize..row + end as usize];
+        let (left, top, right, bottom) = self.mask.storage_region();
+        if y < top || y >= bottom { return Ok(()); }
+        let (start, end) = (x.max(left), x.saturating_add(len).min(right));
+        if start >= end { return Ok(()); }
+        let row = (y - top) as usize * self.mask.stride as usize;
+        let mask = &self.mask.data[row + (start - left) as usize..
+            row + (end - left) as usize];
         let mut cursor = 0;
         while cursor < mask.len() {
             let value = mask[cursor];
             let run = equal_prefix(&mask[cursor..], value);
             let clipped = (coverage as u16 * value as u16 + 127).div_euclid(255) as u8;
             if clipped != 0 {
-                self.sink.span(x + cursor as u32, y, run as _, clipped)?;
+                self.sink.span(start + cursor as u32, y, run as _, clipped)?;
             }
             cursor += run;
         }   Ok(())
@@ -454,6 +479,12 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
         MaskClipSink::new(mask.as_mask(), &mut spans).span(0, 0, 3, 128).unwrap();
         assert_eq!(spans.0, [(1, 0, 2, 64)]);
         assert_eq!(data, [0, 128, 128, 9, 0, 0, 0, 9]);
+
+        spans.0.clear();
+        let bounded = CoverageMask::from_region(&[255, 128, 0, 255], (6, 4),
+            (2, 1, 4, 3), 2).unwrap();
+        MaskClipSink::new(bounded, &mut spans).span(0, 2, 6, u8::MAX).unwrap();
+        assert_eq!(spans.0, [(3, 2, 1, 255)]);
 
         let data: Vec<_> = [0_u8; 13].into_iter().chain([255; 20])
             .chain([128; 7]).collect();

@@ -708,16 +708,18 @@ no_std f32 math backend will need an explicit positive feature or an equivalent
 additive feature design. Do not make `libm` optional before that complete split:
 `--no-default-features` must remain a valid, unsurprising build in the meantime.
 
-### Planned clip/mask bounds optimization
+### Clip/mask bounds optimization
 
-The current owned path clip uses a canvas-sized 8-bit mask. Rasterization skips
-unoccupied path rows, and masked drawing touches only emitted shape spans, but
-mask allocation, clearing, rectangle intersection, and path-mask intersection
-still scale with the complete canvas area. Replace that storage model without
-changing antialiased intersection semantics:
+Owned `Canvas` clips now retain only their non-zero integer bounds plus a
+tightly packed 8-bit mask. The internal coverage-mask view carries a device
+origin, treats samples outside its storage rectangle as zero, and keeps the
+logical target dimensions for validation. Rectangle and nested path
+intersection therefore visit only the retained region; borrowed public masks
+remain zero-copy and full-canvas by default.
 
-- add an integer device-space origin and bounds to coverage masks, treating
-  samples outside those bounds as zero;
+The remaining work is to avoid the temporary canvas-sized buffer used while a
+new path clip is rasterized, without changing antialiased intersection semantics:
+
 - derive conservative clipped bounds from transformed path geometry and the
   target, allocate/clear only that rectangle, and intersect bounds before
   multiplying nested clips;
@@ -732,8 +734,9 @@ changing antialiased intersection semantics:
   benchmarks for small clips on large targets, nested clips, clearing,
   intersection, peak bytes, and masked draw throughput.
 
-The optimization is complete only when mask memory and preprocessing scale
-with the clipped region while drawing continues to visit only emitted spans.
+Retained memory and subsequent intersection now scale with the clipped region.
+The optimization is complete when initial mask allocation and rasterization do
+so as well, and the planned large-target benchmarks cover that construction path.
 
 The framebuffer boundary now distinguishes raw storage from valid color:
 solid paint and gradient-stop inputs use straight encoded `SRGBA<u8>`;
