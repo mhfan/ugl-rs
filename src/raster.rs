@@ -148,9 +148,6 @@ impl<'a> CoverageMask<'a> {
     pub fn stride(&self) -> u32 { self.stride }
     pub fn as_bytes(&self) -> &[u8] { self.data }
 
-    fn coverage(&self, x: u32, y: u32) -> u8 {
-        self.data[y as usize * self.stride as usize + x as usize]
-    }
 }
 
 impl<'a> CoverageMaskMut<'a> {
@@ -201,21 +198,36 @@ impl<S> CoverageSink for MaskClipSink<'_, S> where S: CoverageSink {
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
         Result<(), Self::Error> {
         if y >= self.mask.height { return Ok(()); }
-        let (mut cursor, end, mask) = (x, (x + len).min(self.mask.width), self.mask);
-        let clipped_coverage = |x|
-            (coverage as u16 * mask.coverage(x, y) as u16 + 127).div_euclid(255) as u8;
-        while cursor < end {
-            let clipped   = clipped_coverage(cursor);
-            let start = cursor;
-            cursor += 1;
-            while cursor < end {
-                let next  = clipped_coverage(cursor);
-                if  next != clipped { break; }
-                cursor += 1;
+        let end = x.saturating_add(len).min(self.mask.width);
+        if x >= end { return Ok(()); }
+        let row = y as usize * self.mask.stride as usize;
+        let mask = &self.mask.data[row + x as usize..row + end as usize];
+        let mut cursor = 0;
+        while cursor < mask.len() {
+            let value = mask[cursor];
+            let run = equal_prefix(&mask[cursor..], value);
+            let clipped = (coverage as u16 * value as u16 + 127).div_euclid(255) as u8;
+            if clipped != 0 {
+                self.sink.span(x + cursor as u32, y, run as _, clipped)?;
             }
-            if clipped != 0 { self.sink.span(start, y, cursor - start, clipped)?; }
+            cursor += run;
         }   Ok(())
     }
+}
+
+fn equal_prefix(bytes: &[u8], value: u8) -> usize {
+    let repeated = u64::from(value) * 0x0101_0101_0101_0101;
+    let mut length = 0;
+    let mut chunks = bytes.chunks_exact(8);
+    for chunk in &mut chunks {
+        if u64::from_ne_bytes(chunk.try_into().unwrap()) != repeated { break; }
+        length += 8;
+    }
+    for &byte in &bytes[length..] {
+        if byte != value { break; }
+        length += 1;
+    }
+    length
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RasterError<E> {
@@ -406,6 +418,15 @@ fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32
         MaskClipSink::new(mask.as_mask(), &mut spans).span(0, 0, 3, 128).unwrap();
         assert_eq!(spans.0, [(1, 0, 2, 64)]);
         assert_eq!(data, [0, 128, 128, 9, 0, 0, 0, 9]);
+
+        let data: Vec<_> = [0_u8; 13].into_iter().chain([255; 20])
+            .chain([128; 7]).collect();
+        spans.0.clear();
+        let mask = CoverageMask::new(&data, 40, 1, 40).unwrap();
+        MaskClipSink::new(mask, &mut spans).span(0, 0, 40, 128).unwrap();
+        assert_eq!(spans.0, [(13, 0, 20, 128), (33, 0, 7, 64)]);
+        MaskClipSink::new(mask, &mut spans)
+            .span(u32::MAX, 0, u32::MAX, 255).unwrap();
     }
 
     #[test] fn non_zero_and_even_odd_differ_for_nested_same_direction_subpaths() {
