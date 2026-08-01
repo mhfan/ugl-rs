@@ -731,13 +731,8 @@ pub(crate) fn render_path_to<S>(path: &Path, transform: Affine,
     options: RenderOptions, width: u32, height: u32, sink: &mut S,
     workspace: &mut RenderWorkspace<'_>) ->
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
-    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
-    rasterize(&workspace.edges[..edge_count], width, height, options.fill_rule,
-        AnalyticWorkspace {
-            intersections: workspace.intersections, cells: workspace.cells,
-        }, AnalyticBinWorkspace {
-            row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
-        }, sink)
+    render_path_to_region(path, transform, options, (width, height),
+        (0, 0, width, height), sink, workspace)
 }
 
 fn render_path_to_region<S>(path: &Path, transform: Affine, options: RenderOptions,
@@ -757,13 +752,8 @@ pub(crate) fn render_stroke_to<S>(path: &Path, transform: Affine,
     options: StrokePathOptions, width: u32, height: u32, sink: &mut S,
     workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
-    let StrokeWorkspace {
-        points, contours, edges, intersections, cells, row_offsets, edge_indices,
-    } = workspace;
-    let usage = build_stroke_edges(path, transform, options, points, contours, edges)?;
-    rasterize(&edges[..usage.edges], width, height, FillRule::NonZero,
-        AnalyticWorkspace { intersections, cells },
-        AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
+    render_stroke_to_region(path, transform, options, (width, height),
+        (0, 0, width, height), sink, workspace)
 }
 
 fn render_stroke_to_region<S>(path: &Path, transform: Affine,
@@ -784,20 +774,8 @@ pub(crate) fn render_stroke_dashed_to<S>(path: &Path, transform: Affine,
     options: DashedStrokePathOptions<'_>, width: u32, height: u32, sink: &mut S,
     workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> where S: CoverageSink<Error = Infallible> {
-    let DashedStrokeWorkspace {
-        stroke: StrokeWorkspace {
-            points, contours, edges, intersections, cells, row_offsets, edge_indices,
-        }, dash_points, dash_contours,
-    } = workspace;
-    let mut path_workspace = StrokePathWorkspace { points, contours };
-    let mut dash_workspace = DashWorkspace {
-        points: dash_points, contours: dash_contours,
-    };
-    let usage = build_dashed_stroke_edges(path, transform, options,
-        &mut path_workspace, &mut dash_workspace, edges)?;
-    rasterize(&edges[..usage.edges], width, height, FillRule::NonZero,
-        AnalyticWorkspace { intersections, cells },
-        AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
+    render_stroke_dashed_to_region(path, transform, options, (width, height),
+        (0, 0, width, height), sink, workspace)
 }
 
 fn render_stroke_dashed_to_region<S>(path: &Path, transform: Affine,
