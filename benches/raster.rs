@@ -110,6 +110,76 @@ fn rectangle_scene() -> Path {
     }   path.build()
 }
 
+fn triangle_scene() -> Path {
+    let mut path = PathBuilder::with_capacity(SHAPES * 4);
+    for index in 0..SHAPES {
+        let x = (index % 8) as f32 * 30.0 + 4.25;
+        let y = (index / 8) as f32 * 30.0 + 4.5;
+        path.move_to((x, y + 21.5)).line_to((x + 11.25, y))
+            .line_to((x + 22.5, y + 21.5));
+    }   path.build()
+}
+
+fn fill_curve_scene() -> Path {
+    let mut path = PathBuilder::with_capacity(9);
+    path.move_to((8.0, 128.0));
+    for index in 0..8 {
+        let x = 8.0 + index as f32 * 30.0;
+        let y = if index & 1 == 0 { 112.0 } else { 144.0 };
+        path.cubic_to((x + 10.0, y), (x + 20.0, y), (x + 30.0, 128.0));
+    }   path.build()
+}
+
+fn benchmark_fill_stages(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fill_stages_f32");
+    for (name, path) in [("triangles_64", triangle_scene()),
+                         ("cubics_8", fill_curve_scene())] {
+        let mut edges = Vec::new();
+        build_fill_edges(&path, Affine::identity(), FlattenOptions::default(),
+            &mut |edge| {
+                edges.push(edge); Ok::<_, core::convert::Infallible>(())
+            }).unwrap();
+        let edge_count = edges.len();
+        group.throughput(Throughput::Elements(edge_count as _));
+
+        let mut built_edges = Vec::with_capacity(edge_count);
+        group.bench_function(BenchmarkId::new("edge_build", name), |b| b.iter(|| {
+            built_edges.clear();
+            build_fill_edges(&path, Affine::identity(), FlattenOptions::default(),
+                &mut |edge| {
+                    built_edges.push(edge); Ok::<_, core::convert::Infallible>(())
+                }).unwrap();
+            black_box(built_edges.len());
+        }));
+
+        let requirements = bin_requirements(&edges, HEIGHT).unwrap();
+        let (mut offsets, mut indices) =
+            (vec![0; requirements.offsets], vec![0; requirements.indices]);
+        group.bench_function(BenchmarkId::new("row_binning", name), |b| b.iter(|| {
+            black_box(build_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
+                row_offsets: &mut offsets, edge_indices: &mut indices,
+            }).unwrap());
+        }));
+
+        let bins = build_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
+            row_offsets: &mut offsets, edge_indices: &mut indices,
+        }).unwrap();
+        let (mut active, mut cells) = (
+            vec![AnalyticIntersection::default(); edge_count],
+            vec![AnalyticCell::default(); WIDTH as usize],
+        );
+        group.bench_function(BenchmarkId::new("coverage_cells", name), |b| b.iter(|| {
+            let mut sink = RunCounter::default();
+            rasterize_edges_cells(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+                &mut AnalyticCellWorkspace {
+                    intersections: &mut active, cells: &mut cells,
+                }, &mut sink).unwrap();
+            black_box((sink.runs, sink.pixels));
+        }));
+    }
+    group.finish();
+}
+
 fn report_span_statistics(path: &Path) {
     if std::env::var_os("UGL_SPAN_STATS").is_none() { return; }
     let mut edges = Vec::with_capacity(EDGE_CAPACITY);
@@ -1229,6 +1299,7 @@ fn  benchmarks(c: &mut Criterion) {
     benchmark_f32(c);
     benchmark_linear_presentation(c);
     benchmark_active(c);
+    benchmark_fill_stages(c);
     benchmark_stroke(c);
     benchmark_paint(c);
 }
