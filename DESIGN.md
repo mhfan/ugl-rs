@@ -424,6 +424,11 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   365.88/371.54/381.04 µs for Blend2D. This intentionally includes Blend2D's
   first pipeline JIT but excludes resource construction for every backend; it
   is a latency diagnostic and must not replace warmed throughput results.
+- A warmed 64-rectangle `time -l` diagnostic reports 2.89 MiB peak RSS for the
+  Blend2D process, 1.92 MiB for f32, and 2.55 MiB for fixed. Harness executable
+  sizes are 1.87 MiB and 0.58 MiB respectively, but the latter links both Rust
+  backends. These values include runtime/allocator/JIT state and never replace
+  planner-derived scratch capacities or a target-specific code-size build.
 - A separate translucent full-coverage closure intended to omit `scale(1.0)`
   regressed both solid and gradient diagnostics. LLVM already removes the
   trivial scale from the compact general expression; that specialization stays

@@ -49,6 +49,9 @@ Third-party source and build products are intentionally not vendored.
 - Cold latency: run nine independent processes with
   `--warmup 0 --iterations 1 --samples 1`; report the median first draw
   separately from warmed throughput.
+- Process memory is a separately labeled `time -l` peak-RSS diagnostic. It
+  includes runtime, allocator, and JIT state; use ugl-rs planners—not RSS—for
+  exact caller-owned scratch requirements.
 - Output: each runner emits CSV, an FNV-1a checksum, and optionally normalized
   premultiplied RGBA bytes. The Rust runner reports exact-pixel rate, mean
   absolute channel error, and maximum channel error against Blend2D.

@@ -372,6 +372,15 @@ Blend2D's first pipeline compilation makes its median roughly 4–8× the f32
 draw, while ugl-rs has no JIT warm-up. OS scheduling and code-page state make
 the cold range noisier; warmed 9×5,000 medians remain the throughput baseline.
 
+For the warmed 64-rectangle process, macOS `time -l` reported 2.89 MiB peak
+RSS for Blend2D, 1.92 MiB for the f32 runner, and 2.55 MiB for the fixed runner.
+The static Blend2D harness executable was 1.87 MiB; the Rust comparison binary
+was 0.58 MiB but contains both f32 and fixed code. These are process/harness
+diagnostics—including runtime, allocator, and JIT state—not renderer-owned
+memory or minimum deployment sizes. Bounded deployments should use the exact
+workspace planners; a future pure-fixed feature gate is required before a
+fixed-only code-size claim is meaningful.
+
 The fixed results are reported separately: f32 versus Blend2D measures desktop
 competitiveness, while fixed versus f32 measures the Q24.8 cost and output
 delta. Same-host fixed versus Blend2D numbers are not evidence about an MCU or
