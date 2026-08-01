@@ -3,6 +3,7 @@
 mod math;
 mod edge;
 mod render;
+pub mod color;
 pub mod dash;
 pub mod raster;
 pub mod stroke;

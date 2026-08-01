@@ -12,9 +12,9 @@ use crate::{
         RenderOptions, RenderWorkspace, StrokePathOptions,
         StrokeWorkspace, Pixmap, RenderError, render_path_to,
         render_stroke_dashed_to, render_stroke_to},
-    color::{LinearPremulRGBA, Srgb8Encoder, SRGBA}, geometry::{Affine, Path, Rect},
+    color::{LinearPremulRGBA, SRGBA}, geometry::{Affine, Path, Rect},
     raster::{CoverageMask, CoverageSink, MaskClipSink},
-    float::raster::RectClipSink,
+    float::{color::Srgb8Encoder, raster::RectClipSink},
     sampler::{LinearPaintSampler, SolidPaint},
 };
 
@@ -516,7 +516,8 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         assert_eq!(bytes, [188, 0, 187, 255]);
         assert_ne!(bytes, [128, 0, 127, 255]);
 
-        let (mut lut, mut approximate) = ([0; crate::color::SRGB8_ENCODE_LUT_SIZE], [0; 4]);
+        let (mut lut, mut approximate) =
+            ([0; crate::float::color::SRGB8_ENCODE_LUT_SIZE], [0; 4]);
         target.encode_into_with(
             &mut Pixmap::from_buffer(&mut approximate, 1, 1, 4).unwrap(),
             Srgb8Encoder::new(&mut lut).unwrap()).unwrap();
