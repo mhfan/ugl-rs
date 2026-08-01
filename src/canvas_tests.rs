@@ -120,6 +120,33 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     }
 }
 
+#[test] fn sampled_pair_spans_match_scalar_composition() {
+    struct SequencePaint;
+    impl PaintSampler for SequencePaint {
+        fn sample(&self, x: f32, _y: f32) -> PremulSRGBA8 {
+            let value = (x * 24.0) as u8;
+            PremulSRGBA8::new(value, value / 2, value / 3, 160).unwrap()
+        }
+    }
+
+    let initial = [
+        0, 0, 0, 0, 8, 16, 24, 32, 0, 0, 0, 0,
+        40, 60, 80, 128, 0, 0, 0, 0,
+    ];
+    for len in 1..=5 {
+        for coverage in [1, 127, 254, 255] {
+            let (mut actual, mut expected) = (initial, initial);
+            for (index, pixel) in expected.chunks_exact_mut(4).take(len).enumerate() {
+                blend_sampled_pixel(pixel,
+                    SequencePaint.sample(index as f32 + 0.5, 0.5), coverage);
+            }
+            Pixmap::from_buffer(&mut actual, 5, 1, 20).unwrap()
+                .blend_sampled_span(0, 0, len as _, &SequencePaint, coverage);
+            assert_eq!(actual, expected, "len={len}, coverage={coverage}");
+        }
+    }
+}
+
 #[test] fn solid_rectangle_renders_end_to_end_without_allocation() {
     let path = rectangle(1.0, 1.0, 3.0, 3.0);
     let mut pixels = vec![0; 4 * 4 * 4];
