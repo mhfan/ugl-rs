@@ -16,31 +16,12 @@ pub(crate) struct DrawState<T, F, S, P> {
     pub(crate) global_alpha: u8,
 }
 
-pub(crate) struct GlobalAlphaPaint<'a, S> { sampler: &'a S, alpha: u8 }
+pub(crate) struct GlobalAlphaPaint<'a, S> {
+    pub(crate) sampler: &'a S, pub(crate) alpha: u8,
+}
 
 impl<'a, S> GlobalAlphaPaint<'a, S> {
     pub(crate) fn new(sampler: &'a S, alpha: u8) -> Self { Self { sampler, alpha } }
-}
-
-#[cfg(feature = "f32")]
-impl<S: crate::sampler::PaintSampler> crate::sampler::PaintSampler
-    for GlobalAlphaPaint<'_, S> {
-    fn sample(&self, x: f32, y: f32) -> crate::color::PremulSRGBA8 {
-        self.sampler.sample(x, y).scale_alpha(self.alpha)
-    }
-    fn solid_color(&self) -> Option<crate::color::PremulSRGBA8> {
-        self.sampler.solid_color().map(|color| color.scale_alpha(self.alpha))
-    }
-}
-
-#[cfg(feature = "fixed")] impl<S: crate::fixed::sampler::PaintSampler>
-    crate::fixed::sampler::PaintSampler for GlobalAlphaPaint<'_, S> {
-    fn sample(&self, x: u32, y: u32) -> crate::color::PremulSRGBA8 {
-        self.sampler.sample(x, y).scale_alpha(self.alpha)
-    }
-    fn solid_color(&self) -> Option<crate::color::PremulSRGBA8> {
-        self.sampler.solid_color().map(|color| color.scale_alpha(self.alpha))
-    }
 }
 
 pub(crate) const BYTES_PER_PIXEL: u32 = 4;
@@ -143,15 +124,6 @@ impl<'a> Pixmap<'a> {
         PremulSRGBA8::from_array(self.pixel_bytes(x, y)?)
     }
 
-    #[cfg(feature = "f32")]
-    pub(crate) fn write_encoded_pixel(&mut self, x: u32, y: u32,
-        color: PremulSRGBA8) {
-        let offset = y as usize * self.stride as usize +
-                     x as usize * BYTES_PER_PIXEL as usize;
-        self.as_bytes_mut()[offset..offset + BYTES_PER_PIXEL as usize]
-            .copy_from_slice(&color.to_array());
-    }
-
     pub(crate) fn blend_solid_span(&mut self, x: u32, y: u32, len: u32,
         color: PremulSRGBA8, coverage: u8) {
         let terms = solid_blend_terms(color, coverage);
@@ -172,29 +144,6 @@ impl<'a> Pixmap<'a> {
         }
     }
 
-}
-
-#[cfg(feature = "f32")]
-pub(crate) fn blend_sampled_pixel(pixel: &mut [u8], color: PremulSRGBA8,
-    coverage: u8) {
-    if coverage == u8::MAX && pixel[3] == 0 {
-        pixel.copy_from_slice(&color.to_array());
-        return;
-    }
-    blend_solid_pixel(pixel, solid_blend_terms(color, coverage));
-}
-
-#[cfg(feature = "f32")]
-fn blend_solid_pixel(pixel: &mut [u8], (source, alpha, inverse): ([u8; 3], u8, u8)) {
-    if pixel[3] == 0 {
-        pixel.copy_from_slice(&[source[0], source[1], source[2], alpha]);
-        return;
-    }
-    let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
-    for (channel, source) in pixel[..3].iter_mut().zip(source) {
-        *channel = source.saturating_add(mul_div_255(*channel, inverse));
-    }
-    pixel[3] = alpha.saturating_add(mul_div_255(pixel[3], inverse));
 }
 
 pub(crate) fn solid_blend_terms(color: PremulSRGBA8, coverage: u8) -> ([u8; 3], u8, u8) {

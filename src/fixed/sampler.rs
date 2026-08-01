@@ -1,7 +1,7 @@
 //! Paint sampling contracts for the fixed-point rendering backend.
 
 use crate::{color::PremulSRGBA8, fixed::{DEVICE_RAW_LIMIT, Scalar}, geometry::Point,
-    sampler::{GradientError, SolidPaint, SpreadMode}};
+    render::GlobalAlphaPaint, sampler::{GradientError, SolidPaint, SpreadMode}};
 use super::math::{cordic_turn, integer_sqrt_u64, scaled_integer_sqrt};
 
 pub use super::math::Angle;
@@ -17,6 +17,15 @@ pub trait PaintSampler {
     fn sample_span(&self, x: u32, y: u32, len: u32,
         mut emit: impl FnMut(PremulSRGBA8)) {
         for x in x..x + len { emit(self.sample(x, y)); }
+    }
+}
+
+impl<S: PaintSampler> PaintSampler for GlobalAlphaPaint<'_, S> {
+    fn sample(&self, x: u32, y: u32) -> PremulSRGBA8 {
+        self.sampler.sample(x, y).scale_alpha(self.alpha)
+    }
+    fn solid_color(&self) -> Option<PremulSRGBA8> {
+        self.sampler.solid_color().map(|color| color.scale_alpha(self.alpha))
     }
 }
 
