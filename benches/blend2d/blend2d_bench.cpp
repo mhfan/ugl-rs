@@ -15,7 +15,7 @@ constexpr uint32_t kWidth = 256;
 constexpr uint32_t kHeight = 256;
 constexpr uint32_t kShapes = 64;
 
-enum class Operation { kFill, kFillClipped, kStroke, kStrokeRound };
+enum class Operation { kFill, kFillClipped, kFillGradient, kStroke, kStrokeRound };
 
 uint32_t argument(int argc, char** argv, const char* name, uint32_t fallback) {
   for (int index = 1; index + 1 < argc; ++index) {
@@ -135,6 +135,10 @@ int main(int argc, char** argv) {
   BLPath path;
   if (std::strcmp(scene, "fill_rectangles_64") == 0) path = rectangles();
   else if (std::strcmp(scene, "fill_rectangle_large") == 0) path = large_rectangle();
+  else if (std::strcmp(scene, "fill_rectangle_linear_gradient") == 0) {
+    path = large_rectangle();
+    operation = Operation::kFillGradient;
+  }
   else if (std::strcmp(scene, "fill_triangles_64") == 0) path = triangles();
   else if (std::strcmp(scene, "fill_cubics_8") == 0) path = curves();
   else if (std::strcmp(scene, "fill_cubics_8_clip_rect") == 0) {
@@ -163,6 +167,10 @@ int main(int argc, char** argv) {
   context.set_stroke_caps(round ? BL_STROKE_CAP_ROUND : BL_STROKE_CAP_BUTT);
   context.set_stroke_join(round ? BL_STROKE_JOIN_ROUND : BL_STROKE_JOIN_MITER_BEVEL);
   context.set_stroke_miter_limit(4.0);
+  BLGradient gradient(BLLinearGradientValues(16.0, 128.0, 240.0, 128.0));
+  gradient.add_stop(0.0, BLRgba32(0, 0, 0, 32));
+  gradient.add_stop(1.0, BLRgba32(0, 0, 0, 224));
+  if (operation == Operation::kFillGradient) context.set_fill_style(gradient);
   if (operation == Operation::kFillClipped)
     context.clip_to_rect(BLRect(48.0, 104.0, 160.0, 48.0));
   auto render = [&]() {

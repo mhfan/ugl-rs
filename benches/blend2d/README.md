@@ -8,7 +8,8 @@ Third-party source and build products are intentionally not vendored.
 ## Contract
 
 - Scenes: `256x256`; 64 independent fractional-coordinate rectangles, one
-  large fractional rectangle, 64 triangles, an eight-cubic closed fill, that
+  large fractional rectangle with solid and linear-gradient paint, 64
+  triangles, an eight-cubic closed fill, that
   fill under an integer rectangle clip, the cubic path stroked at width 6,
   and a 32-segment polyline stroked with both butt/miter and round cap/join.
   All use non-zero fill and source-over color `(40, 120, 220, 192)`.

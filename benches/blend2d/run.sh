@@ -19,6 +19,7 @@ cargo build --release --example compare_blend2d
 for scene in \
   fill_rectangles_64 \
   fill_rectangle_large \
+  fill_rectangle_linear_gradient \
   fill_triangles_64 \
   fill_cubics_8 \
   fill_cubics_8_clip_rect \

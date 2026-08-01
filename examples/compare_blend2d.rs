@@ -5,10 +5,11 @@ use std::{env, fs, hint::black_box, process::ExitCode, time::Instant};
 use ugl_rs::{
     analytic::{Cell, Intersection},
     canvas::{Pixmap, RenderOptions, RenderWorkspace, StrokePathOptions, StrokeWorkspace,
-        render_solid, render_solid_clipped, render_stroke_solid},
-    color::SRGBA,
+        render_paint, render_solid, render_solid_clipped, render_stroke_solid},
+    color::{PremulSRGBA8, SRGBA},
     edge::Edge,
     geometry::{Affine, Path, PathBuilder, Rect},
+    sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode},
     stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions},
 };
 
@@ -17,7 +18,9 @@ const HEIGHT: u32 = 256;
 const SHAPES: usize = 64;
 const EDGE_CAPACITY: usize = 4096;
 
-#[derive(Clone, Copy)] enum Operation { Fill, FillClipped, Stroke { round: bool } }
+#[derive(Clone, Copy)] enum Operation {
+    Fill, FillClipped, FillGradient, Stroke { round: bool },
+}
 
 fn rectangles() -> Path {
     let mut path = PathBuilder::with_capacity(SHAPES * 5);
@@ -74,6 +77,8 @@ fn scene() -> Result<(&'static str, Path, Operation), String> {
         "fill_rectangles_64" => Ok(("fill_rectangles_64", rectangles(), Operation::Fill)),
         "fill_rectangle_large" => Ok(("fill_rectangle_large", large_rectangle(),
             Operation::Fill)),
+        "fill_rectangle_linear_gradient" => Ok(("fill_rectangle_linear_gradient",
+            large_rectangle(), Operation::FillGradient)),
         "fill_triangles_64" => Ok(("fill_triangles_64", triangles(), Operation::Fill)),
         "fill_cubics_8" => Ok(("fill_cubics_8", curves(), Operation::Fill)),
         "fill_cubics_8_clip_rect" => Ok(("fill_cubics_8_clip_rect", curves(),
@@ -150,6 +155,14 @@ fn run_f32() -> Result<(), String> {
     let mut edge_indices = vec![0; EDGE_CAPACITY];
     let mut stroke_points = vec![Default::default(); 2048];
     let mut stroke_contours = vec![StrokeContour::default(); 16];
+    let stop_values = [
+        GradientStop::new(0.0, SRGBA::new(0, 0, 0, 32)),
+        GradientStop::new(1.0, SRGBA::new(0, 0, 0, 224)),
+    ];
+    let mut ramp = [PremulSRGBA8::default(); 256];
+    let gradient = LinearGradient::new((16.0, 128.0), (240.0, 128.0),
+        GradientStops::with_ramp(&stop_values, &mut ramp).unwrap(), SpreadMode::Pad)
+        .unwrap();
 
     let mut timings = {
         let mut render = || -> Result<(), String> {
@@ -168,6 +181,13 @@ fn run_f32() -> Result<(), String> {
                     SRGBA::new(40, 120, 220, 192),
                     Rect::from_ltrb(48.0, 104.0, 208.0, 152.0).unwrap(),
                     RenderOptions::default(), &mut target, &mut RenderWorkspace {
+                        edges: &mut edges, intersections: &mut intersections,
+                        cells: &mut cells, row_offsets: &mut row_offsets,
+                        edge_indices: &mut edge_indices,
+                    }),
+                Operation::FillGradient => render_paint(&path, Affine::identity(),
+                    &gradient, RenderOptions::default(), &mut target,
+                    &mut RenderWorkspace {
                         edges: &mut edges, intersections: &mut intersections,
                         cells: &mut cells, row_offsets: &mut row_offsets,
                         edge_indices: &mut edge_indices,
@@ -229,7 +249,7 @@ fn fixed_path(scene: &str) -> Path<ugl_rs::fixed::Scalar> {
                 .line_to((x + fixed(22.5), y + fixed(21.75)))
                 .line_to((x, y + fixed(21.75)));
         },
-        "fill_rectangle_large" => {
+        "fill_rectangle_large" | "fill_rectangle_linear_gradient" => {
             path.move_to((fixed(16.25), fixed(20.5)))
                 .line_to((fixed(239.5), fixed(20.5)))
                 .line_to((fixed(239.5), fixed(235.25)))
@@ -268,6 +288,7 @@ fn run_fixed() -> Result<(), String> {
             canvas::{GeometryWorkspace, RenderOptions, StrokePathOptions, render_path,
                 render_path_clipped, render_stroke_path},
             raster::{Line, Segment, Trapezoid, Workspace},
+            sampler::LinearGradient as FixedLinearGradient,
             stroke::Options as FixedStrokeOptions,
         },
         sampler::SolidPaint,
@@ -283,6 +304,17 @@ fn run_fixed() -> Result<(), String> {
     let (scene, _, operation) = scene()?;
     let path = fixed_path(scene);
     let paint = SolidPaint::new(SRGBA::new(40, 120, 220, 192));
+    let stop_values = [
+        GradientStop::new(0.0, SRGBA::new(0, 0, 0, 32)),
+        GradientStop::new(1.0, SRGBA::new(0, 0, 0, 224)),
+    ];
+    let mut gradient_ramp = [PremulSRGBA8::default(); 256];
+    let gradient_stops = GradientStops::with_ramp(&stop_values, &mut gradient_ramp)
+        .unwrap();
+    let gradient = FixedLinearGradient::new(
+        (Scalar::from_num(16), Scalar::from_num(128)),
+        (Scalar::from_num(240), Scalar::from_num(128)),
+        gradient_stops.encoded_ramp().unwrap(), SpreadMode::Pad).unwrap();
     let mut pixels = vec![0; WIDTH as usize * HEIGHT as usize * 4];
     let (mut edges, mut lines) = (
         vec![Default::default(); EDGE_CAPACITY], vec![Line::default(); EDGE_CAPACITY]);
@@ -310,6 +342,8 @@ fn run_fixed() -> Result<(), String> {
                     &mut target, &mut geometry, &mut raster),
                 Operation::FillClipped => render_path_clipped(&path, &paint,
                     Rect::from_ltrb(48.0, 104.0, 208.0, 152.0).unwrap(),
+                    RenderOptions::default(), &mut target, &mut geometry, &mut raster),
+                Operation::FillGradient => render_path(&path, &gradient,
                     RenderOptions::default(), &mut target, &mut geometry, &mut raster),
                 Operation::Stroke { round } => render_stroke_path(&path, &paint,
                     StrokePathOptions {
