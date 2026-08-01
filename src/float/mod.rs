@@ -1,6 +1,8 @@
 //! Floating-point vector rendering backend.
 
 mod math;
+mod edge;
+pub mod dash;
 pub(crate) use math::*;
 
 pub mod analytic;

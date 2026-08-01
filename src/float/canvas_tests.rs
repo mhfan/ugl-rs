@@ -267,7 +267,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 #[test] fn analytic_dashed_stroke_renders_alternating_on_intervals() {
-    use crate::dash::{DashContour, DashPattern};
+    use crate::{dash::DashContour, float::dash::DashPattern};
 
     let mut builder = PathBuilder::new();
     builder.move_to((0.5, 0.5)).line_to((4.5, 0.5));

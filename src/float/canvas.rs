@@ -6,7 +6,7 @@
 
 use core::convert::Infallible;
 use crate::{color::SRGBA,
-    dash::{dash_polyline, DashContour, DashPattern, DashWorkspace},
+    dash::{DashContour, DashWorkspace}, float::dash::{dash_polyline, DashPattern},
     edge::{build_fill_edges, Edge},
     analytic::{BinError as AnalyticBinError, BinWorkspace as AnalyticBinWorkspace,
         Cell as AnalyticCell, CellWorkspace as AnalyticWorkspace,

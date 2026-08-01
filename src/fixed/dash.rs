@@ -70,7 +70,7 @@ impl<'a> Pattern<'a> {
 
 #[derive(Clone, Copy)] struct DashState { index: usize, remaining: i32 }
 
-/// Fixed-point counterpart of [`crate::dash::dash_polyline`] with integer distance state.
+/// Fixed-point counterpart of [`crate::float::dash::dash_polyline`] with integer distance state.
 pub fn dash_polyline<'a>(points: &[Point<Scalar>], closed: bool,
     pattern: Pattern<'_>, workspace: &'a mut DashWorkspace<'_, Scalar>) ->
     Result<DashedPath<'a, Scalar>, DashError> {
@@ -164,9 +164,9 @@ fn dash_segment<W: DashOutput<Point<Scalar>>>(
 
 #[cfg(test)] mod tests {
 use super::*;
-use crate::dash::{DashContour, DashError, DashPattern as ReferencePattern,
-    DashRequirements, DashWorkspace, dash_polyline as reference_dash_polyline,
-    dash_requirements};
+use crate::{dash::{DashContour, DashError, DashRequirements, DashWorkspace}, float::dash::{
+    DashPattern as ReferencePattern, dash_polyline as reference_dash_polyline,
+    dash_requirements}};
 use alloc::vec::Vec;
 use crate::fixed::{DEVICE_RAW_LIMIT, Scalar};
 

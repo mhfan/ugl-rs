@@ -16,7 +16,8 @@ use crate::{
         render_stroke_paint_dashed_masked,
         render_stroke_paint, render_stroke_paint_clipped,
         render_stroke_paint_masked},
-    color::SRGBA, dash::{DashContour, DashPattern}, edge::Edge, flatten::FlattenOptions,
+    color::SRGBA, dash::DashContour, edge::Edge, flatten::FlattenOptions,
+    float::dash::DashPattern,
     geometry::{Affine, Path, Point, Rect},
     raster::{CoverageMask, CoverageSink, FillRule}, sampler::{PaintSampler, SolidPaint},
     render::{Clip, DrawState, GlobalAlphaPaint},
@@ -645,7 +646,7 @@ impl<'target> Canvas<'target> {
 #[cfg(test)] mod tests {
     use super::*;
     use crate::{analytic::Intersection as AnalyticIntersection,
-        dash::DashPattern, edge::Edge, geometry::{PathBuilder, Point},
+        edge::Edge, float::dash::DashPattern, geometry::{PathBuilder, Point},
         raster::CoverageMask,
         sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode},
         stroke::StrokeContour,
