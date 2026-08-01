@@ -314,7 +314,7 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
 version metadata. The current three-backend baseline was measured on 2026-08-01
-after ugl-rs `0b87a15`, using Blend2D
+after ugl-rs `6999e33`, using Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
 rustc 1.97.1 on macOS 15.6 arm64. Nine 5,000-frame samples after 500 warm-up
@@ -371,8 +371,8 @@ gaps. Pairwise packed scalar source-over improved every f32 scene by roughly
 5–10%, but long encoded RGBA8 spans remain far behind Blend2D's JIT vector
 compositor. Integer rectangle clips now bypass per-pixel coverage
 multiplication, while their geometry/binning and raster row/x domain are not
-yet constrained early. Radial/conic paint, path masks, memory, and
-cold-start/JIT cost still require separate matched scenes.
+yet constrained early. Radial/conic paint, mask-density complexity, memory,
+and cold-start/JIT cost still require separate matched scenes.
 
 The matched horizontal linear gradient uses a 256-entry encoded ramp and black
 stops whose alpha changes from 32 to 224, avoiding ambiguity from different RGB
