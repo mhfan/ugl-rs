@@ -215,7 +215,7 @@ fn midpoint(a: Point, b: Point) -> Point {
 }
 
 #[cfg(test)] mod tests { use super::*;
-    use crate::common::geometry::PathBuilder;
+    use crate::common::geometry::{Edge, PathBuilder};
     use core::convert::Infallible;
     use alloc::vec::Vec;
 
@@ -227,6 +227,46 @@ fn midpoint(a: Point, b: Point) -> Point {
             Ok::<_, Infallible>(())
         })?;
         Ok(lines)
+    }
+
+    fn collect_edges(path: &Path) -> Result<Vec<Edge>, FlattenError<Infallible>> {
+        let mut edges = Vec::new();
+        build_fill_edges(path, Affine::identity(), FlattenOptions::default(),
+            &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) })?;
+        Ok(edges)
+    }
+
+    #[test] fn open_rectangle_is_implicitly_closed_and_horizontal_edges_are_omitted() {
+        let mut builder = PathBuilder::new();
+        builder.move_to((1.0, 2.0)).line_to((5.0, 2.0))
+               .line_to((5.0, 7.0)).line_to((1.0, 7.0));
+        assert_eq!(collect_edges(&builder.build()).unwrap(), [
+            Edge { upper: (5.0, 2.0).into(), lower: (5.0, 7.0).into(), winding: 1 },
+            Edge { upper: (1.0, 2.0).into(), lower: (1.0, 7.0).into(), winding: -1 },
+        ]);
+    }
+
+    #[test] fn explicit_close_does_not_duplicate_the_closing_edge() {
+        let mut builder = PathBuilder::new();
+        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).line_to((2.0, 0.0)).close();
+        assert_eq!(collect_edges(&builder.build()).unwrap().len(), 2);
+    }
+
+    #[test] fn move_to_closes_each_previous_subpath() {
+        let mut builder = PathBuilder::new();
+        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0));
+        builder.move_to((2.0, 0.0)).line_to((3.0, 1.0));
+        let edges = collect_edges(&builder.build()).unwrap();
+        assert_eq!(edges.len(), 4);
+        assert_eq!(edges.iter().map(|edge| edge.winding as i32).sum::<i32>(), 0);
+    }
+
+    #[test] fn edge_sink_capacity_error_propagates() {
+        let mut builder = PathBuilder::new();
+        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0));
+        let result = build_fill_edges(&builder.build(), Affine::identity(),
+            FlattenOptions::default(), &mut |_| Err("full"));
+        assert_eq!(result, Err(FlattenError::Sink("full")));
     }
 
     #[test] fn straight_curves_emit_one_directed_line() {

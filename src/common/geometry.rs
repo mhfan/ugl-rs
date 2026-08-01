@@ -128,6 +128,21 @@ impl<T> Default for Affine<T> where T: Copy + ScalarConstants {
 pub struct Path<T = Scalar> { segments: Vec<PathSegment<T>>, }
 
 impl<T> Path<T> {
+    /// Validates and takes ownership of a segment sequence.
+    ///
+    /// The source can be assembled in fixed-capacity storage before conversion:
+    ///
+    /// ```
+    /// use ugl_rs::common::geometry::{Path, PathSegment};
+    ///
+    /// let segments = [
+    ///     PathSegment::MoveTo((0_i32, 0_i32).into()),
+    ///     PathSegment::LineTo((256, 0).into()),
+    ///     PathSegment::Close,
+    /// ];
+    /// let path = Path::from_segments(segments.to_vec()).unwrap();
+    /// assert_eq!(path.segments(), &segments);
+    /// ```
     pub fn  from_segments( segments: Vec<PathSegment<T>>) -> Result<Self, PathError> {
         validate_segments(&segments)?;
         Ok(Self { segments })
@@ -234,30 +249,6 @@ impl<T> PathBuilder<T> {
     pub fn build(self) -> Path<T> { Path { segments: self.segments } }
 }
 
-impl Path<f32> {
-    pub fn validate_finite(&self) -> Result<(), PathError> {
-        let point_is_finite = |point: Point<f32>| point.x.is_finite() && point.y.is_finite();
-        for segment in   &self.segments {
-            let finite = match segment {
-                PathSegment::MoveTo(p) | PathSegment::LineTo(p) => point_is_finite(*p),
-                PathSegment::QuadTo { ctrl, to } =>
-                    point_is_finite(*ctrl)  && point_is_finite(*to),
-                PathSegment::CubicTo { ctrl1, ctrl2, to } =>
-                    point_is_finite(*ctrl1) &&
-                    point_is_finite(*ctrl2) && point_is_finite(*to),
-                PathSegment::Close => true,
-            };
-            if !finite { return Err(PathError::NonFiniteCoordinate); }
-        }   Ok(())
-    }
-}
-
-impl PathBuilder<f32> {
-    pub fn build_checked(self) -> Result<Path<f32>, PathError> {
-        let path = self.build(); path.validate_finite()?; Ok(path)
-    }
-}
-
 /// Receives flattened path lines while preserving subpath boundaries.
 pub trait LineSink<T = Scalar> { type Error;
     fn begin_subpath(&mut self, _: Point<T>) -> Result<(), Self::Error> { Ok(()) }
@@ -348,100 +339,4 @@ fn validate_segments<T>(segments: &[PathSegment<T>]) -> Result<(), PathError> {
             }   _ => {}
         }
     }   Ok(())
-}
-
-#[cfg(test)] mod tests { use super::*;
-    #[cfg(feature = "f32")]
-    use crate::float::flatten::{build_fill_edges, FlattenError, FlattenOptions};
-    #[cfg(feature = "fixed")]
-    use crate::fixed::{Scalar as DeviceScalar, TransformError};
-    #[cfg(feature = "f32")] use alloc::vec::Vec;
-    #[cfg(feature = "f32")] use core::convert::Infallible;
-
-    #[cfg(feature = "f32")]
-    fn collect(path: &Path) -> Result<Vec<Edge>, FlattenError<Infallible>> {
-        let mut edges = Vec::new();
-        build_fill_edges(path, Affine::identity(), FlattenOptions::default(),
-            &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) })?;
-        Ok(edges)
-    }
-    #[test] fn path_can_borrow_static_or_fixed_capacity_segments() {
-        let segments = [
-            PathSegment::MoveTo((0_i32, 0_i32).into()),
-            PathSegment::LineTo((256, 0).into()),
-            PathSegment::Close,
-        ];
-        assert_eq!(segments.len(), 3);
-        assert_eq!(Path::from_segments(segments.to_vec()).unwrap().len(), 3);
-    }
-
-    #[test] fn checked_reference_path_rejects_non_finite_coordinates() {
-        let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((f32::INFINITY, 1.0));
-        assert_eq!(builder.build_checked().unwrap_err(), PathError::NonFiniteCoordinate);
-    }
-
-    #[cfg(feature = "f32")]
-    #[test] fn open_rectangle_is_implicitly_closed_and_horizontal_edges_are_omitted() {
-        let mut builder = PathBuilder::new();
-        builder.move_to((1.0, 2.0)).line_to((5.0, 2.0))
-               .line_to((5.0, 7.0)).line_to((1.0, 7.0));
-        assert_eq!(collect(&builder.build()).unwrap(), [
-            Edge { upper: (5.0, 2.0).into(), lower: (5.0, 7.0).into(), winding: 1 },
-            Edge { upper: (1.0, 2.0).into(), lower: (1.0, 7.0).into(), winding: -1 },
-        ]);
-    }
-
-    #[cfg(feature = "f32")]
-    #[test] fn explicit_close_does_not_duplicate_the_closing_edge() {
-        let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0)).line_to((2.0, 0.0)).close();
-        assert_eq!(collect(&builder.build()).unwrap().len(), 2);
-    }
-
-    #[cfg(feature = "f32")]
-    #[test] fn move_to_closes_each_previous_subpath() {
-        let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0));
-        builder.move_to((2.0, 0.0)).line_to((3.0, 1.0));
-        let edges = collect(&builder.build()).unwrap();
-        assert_eq!(edges.len(), 4);
-        assert_eq!(edges.iter().map(|edge| edge.winding as i32).sum::<i32>(), 0);
-    }
-
-    #[cfg(feature = "f32")]
-    #[test] fn edge_sink_capacity_error_propagates() {
-        let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((1.0, 1.0));
-        let result = build_fill_edges(&builder.build(), Affine::identity(),
-            FlattenOptions::default(), &mut |_| Err("full"));
-        assert_eq!(result, Err(FlattenError::Sink("full")));
-    }
-
-    #[cfg(feature = "fixed")]
-    #[test] fn fixed_geometry_reuses_generic_point_path_and_affine_types() {
-        let (one, half) = (DeviceScalar::from_num(1), DeviceScalar::from_num(0.5));
-        let transform = Affine::<DeviceScalar>::translate(half, one);
-        assert_eq!(transform.try_transform_point((one, half).into()).unwrap(),
-            (DeviceScalar::from_num(1.5), DeviceScalar::from_num(1.5)).into());
-
-        let mut builder = PathBuilder::<DeviceScalar>::new();
-        builder.move_to((DeviceScalar::ZERO, DeviceScalar::ZERO))
-            .line_to((one, half));
-        assert_eq!(builder.build().len(), 2);
-    }
-
-    #[cfg(feature = "fixed")]
-    #[test] fn fixed_affine_widens_rounds_symmetrically_and_checks_output() {
-        let raw = DeviceScalar::from_bits;
-        let half_scale = Affine::new(raw(128), raw(0), raw(0), raw(128), raw(0), raw(0));
-        assert_eq!(half_scale.try_transform_point((raw(1), raw(-1)).into()).unwrap(),
-            (raw(1), raw(-1)).into());
-
-        let maximum = DeviceScalar::MAX;
-        let overflow = Affine::new(maximum, DeviceScalar::ZERO, DeviceScalar::ZERO,
-            maximum, maximum, maximum);
-        assert_eq!(overflow.try_transform_point((maximum, maximum).into()),
-            Err(TransformError::Overflow));
-    }
 }

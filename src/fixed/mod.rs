@@ -48,3 +48,31 @@ pub mod canvas;
 pub mod dash;
 
 pub use context::{Canvas, CanvasRef};
+
+#[cfg(test)] mod tests { use super::*;
+    use crate::common::geometry::PathBuilder;
+
+    #[test] fn geometry_reuses_generic_point_path_and_affine_types() {
+        let (one, half) = (Scalar::from_num(1), Scalar::from_num(0.5));
+        let transform = Affine::<Scalar>::translate(half, one);
+        assert_eq!(transform.try_transform_point((one, half).into()).unwrap(),
+            (Scalar::from_num(1.5), Scalar::from_num(1.5)).into());
+
+        let mut builder = PathBuilder::<Scalar>::new();
+        builder.move_to((Scalar::ZERO, Scalar::ZERO)).line_to((one, half));
+        assert_eq!(builder.build().len(), 2);
+    }
+
+    #[test] fn affine_widens_rounds_symmetrically_and_checks_output() {
+        let raw = Scalar::from_bits;
+        let half_scale = Affine::new(raw(128), raw(0), raw(0), raw(128), raw(0), raw(0));
+        assert_eq!(half_scale.try_transform_point((raw(1), raw(-1)).into()).unwrap(),
+            (raw(1), raw(-1)).into());
+
+        let maximum = Scalar::MAX;
+        let overflow = Affine::new(maximum, Scalar::ZERO, Scalar::ZERO,
+            maximum, maximum, maximum);
+        assert_eq!(overflow.try_transform_point((maximum, maximum).into()),
+            Err(TransformError::Overflow));
+    }
+}
