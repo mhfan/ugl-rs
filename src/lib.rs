@@ -4,10 +4,11 @@
 extern crate alloc;
 
 #[cfg(feature = "f32")] mod float;
-mod render;
-mod paint;
+pub mod common;
 
-pub mod color;      // rgba/rgb, intensity & quantization
+pub use common::{color, dash, edge, geometry, raster, stroke};
+pub(crate) use common::{paint, render};
+
 #[cfg(feature = "f32")] pub mod blend; // color blending & alpha compositing
 
 #[cfg(feature = "f32")] pub mod sampler;
@@ -16,12 +17,6 @@ pub mod color;      // rgba/rgb, intensity & quantization
 }
 pub mod shader;     // reserved for a future optional 3D layer
 
-pub mod geometry;   // shape, curve, free path
-
-pub mod raster;
-pub mod stroke;
-pub mod dash;
-pub mod edge;
 pub mod flatten;
 #[cfg(feature = "f32")] pub mod analytic;
 #[cfg(feature = "f32")] pub mod canvas;

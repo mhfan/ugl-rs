@@ -1,4 +1,4 @@
-//! Allocation-free dash decomposition for flattened `f32` contours.
+//! Shared dash storage and floating-point decomposition.
 
 use crate::geometry::{Point, Scalar};
 

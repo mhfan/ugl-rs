@@ -1,4 +1,4 @@
-//! Geometry shared by floating-point and future fixed-point render backends.
+//! Geometry shared by floating-point and fixed-point render backends.
 //!
 //! Containers are generic, while rasterization algorithms initially operate on
 //! [`f32`]. A renderer can consume [`Path::segments`] or any independently

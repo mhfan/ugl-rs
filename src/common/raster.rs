@@ -1,4 +1,4 @@
-//! Deterministic allocation-free reference scan conversion.
+//! Coverage protocols and shared clipping adapters.
 //!
 //! This module prioritizes a transparent contract over production throughput.
 //! It uses stratified vertical samples and exact horizontal span overlap.

@@ -1,4 +1,4 @@
-//! Stroke expansion options and scalar reference implementation.
+//! Shared stroke storage and floating-point reference expansion.
 
 use crate::{geometry::{Point, Scalar}, flatten::LineSink};
 
