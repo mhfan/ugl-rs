@@ -7,10 +7,11 @@ Third-party source and build products are intentionally not vendored.
 
 ## Contract
 
-- Scenes: `256x256`; 64 independent fractional-coordinate rectangles, an
-  eight-cubic closed fill, and the same cubic path stroked at width 6 with
-  butt caps and miter joins. All use non-zero fill and source-over color
-  `(40, 120, 220, 192)`.
+- Scenes: `256x256`; 64 independent fractional-coordinate rectangles, one
+  large fractional rectangle, 64 triangles, an eight-cubic closed fill, that
+  fill under an integer rectangle clip, the cubic path stroked at width 6,
+  and a 32-segment polyline stroked with both butt/miter and round cap/join.
+  All use non-zero fill and source-over color `(40, 120, 220, 192)`.
 - The shared alternating cubic arches stay within y=112..144 so width-6 stroke
   expansion remains in the common non-crossing domain. The inflected
   y=24..232 case
@@ -20,7 +21,7 @@ Third-party source and build products are intentionally not vendored.
   and ugl-rs caller-owned scratch allocation.
 - Timed frame: clear the complete destination and fill or stroke the retained
   path. Stroke flattening/expansion is included by both renderers.
-- Sampling: 200 warm-up frames, then 9 samples of 2,000 frames; compare the
+- Sampling: 500 warm-up frames, then 9 samples of 5,000 frames; compare the
   median and retain min/max as a noise check.
 - Output: each runner emits CSV, an FNV-1a checksum, and optionally normalized
   premultiplied RGBA bytes. The Rust runner reports exact-pixel rate, mean

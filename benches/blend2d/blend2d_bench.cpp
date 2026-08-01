@@ -15,6 +15,8 @@ constexpr uint32_t kWidth = 256;
 constexpr uint32_t kHeight = 256;
 constexpr uint32_t kShapes = 64;
 
+enum class Operation { kFill, kFillClipped, kStroke, kStrokeRound };
+
 uint32_t argument(int argc, char** argv, const char* name, uint32_t fallback) {
   for (int index = 1; index + 1 < argc; ++index) {
     if (std::strcmp(argv[index], name) == 0)
@@ -55,6 +57,39 @@ BLPath rectangles() {
   return path;
 }
 
+BLPath large_rectangle() {
+  BLPath path;
+  path.move_to(16.25, 20.5);
+  path.line_to(239.5, 20.5);
+  path.line_to(239.5, 235.25);
+  path.line_to(16.25, 235.25);
+  path.close();
+  return path;
+}
+
+BLPath triangles() {
+  BLPath path;
+  for (uint32_t index = 0; index < kShapes; ++index) {
+    double x = double(index % 8) * 30.0 + 4.25;
+    double y = double(index / 8) * 30.0 + 4.5;
+    path.move_to(x, y + 21.5);
+    path.line_to(x + 11.25, y);
+    path.line_to(x + 22.5, y + 21.5);
+    path.close();
+  }
+  return path;
+}
+
+BLPath polyline() {
+  BLPath path;
+  path.move_to(8.0, 128.0);
+  for (uint32_t index = 1; index <= 32; ++index) {
+    double y = (index & 1) == 0 ? 96.0 : 160.0;
+    path.line_to(8.0 + double(index) * 7.5, y);
+  }
+  return path;
+}
+
 BLPath curves() {
   BLPath path;
   path.move_to(8.0, 128.0);
@@ -87,8 +122,8 @@ bool normalized_rgba(const BLImage& image, std::vector<uint8_t>& output) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  uint32_t warmup = argument(argc, argv, "--warmup", 200);
-  uint32_t iterations = argument(argc, argv, "--iterations", 2000);
+  uint32_t warmup = argument(argc, argv, "--warmup", 500);
+  uint32_t iterations = argument(argc, argv, "--iterations", 5000);
   uint32_t samples = argument(argc, argv, "--samples", 9);
   if (iterations == 0 || samples == 0) {
     std::fprintf(stderr, "--iterations and --samples must be positive\n");
@@ -96,25 +131,46 @@ int main(int argc, char** argv) {
   }
 
   const char* scene = scene_name(argc, argv);
-  bool stroke = std::strcmp(scene, "stroke_cubics_8") == 0;
-  bool curve = stroke || std::strcmp(scene, "fill_cubics_8") == 0;
-  if (!curve && std::strcmp(scene, "fill_rectangles_64") != 0) {
+  Operation operation = Operation::kFill;
+  BLPath path;
+  if (std::strcmp(scene, "fill_rectangles_64") == 0) path = rectangles();
+  else if (std::strcmp(scene, "fill_rectangle_large") == 0) path = large_rectangle();
+  else if (std::strcmp(scene, "fill_triangles_64") == 0) path = triangles();
+  else if (std::strcmp(scene, "fill_cubics_8") == 0) path = curves();
+  else if (std::strcmp(scene, "fill_cubics_8_clip_rect") == 0) {
+    path = curves();
+    operation = Operation::kFillClipped;
+  } else if (std::strcmp(scene, "stroke_cubics_8") == 0) {
+    path = curves();
+    operation = Operation::kStroke;
+  } else if (std::strcmp(scene, "stroke_polyline_32") == 0) {
+    path = polyline();
+    operation = Operation::kStroke;
+  } else if (std::strcmp(scene, "stroke_polyline_round_32") == 0) {
+    path = polyline();
+    operation = Operation::kStrokeRound;
+  } else {
     std::fprintf(stderr, "unknown scene: %s\n", scene);
     return 2;
   }
 
   BLImage image(kWidth, kHeight, BL_FORMAT_PRGB32);
   BLContext context(image);
-  BLPath path = curve ? curves() : rectangles();
   context.set_fill_style(BLRgba32(40, 120, 220, 192));
   context.set_stroke_style(BLRgba32(40, 120, 220, 192));
   context.set_stroke_width(6.0);
-  context.set_stroke_caps(BL_STROKE_CAP_BUTT);
-  context.set_stroke_join(BL_STROKE_JOIN_MITER_BEVEL);
+  bool round = operation == Operation::kStrokeRound;
+  context.set_stroke_caps(round ? BL_STROKE_CAP_ROUND : BL_STROKE_CAP_BUTT);
+  context.set_stroke_join(round ? BL_STROKE_JOIN_ROUND : BL_STROKE_JOIN_MITER_BEVEL);
   context.set_stroke_miter_limit(4.0);
+  if (operation == Operation::kFillClipped)
+    context.clip_to_rect(BLRect(48.0, 104.0, 160.0, 48.0));
   auto render = [&]() {
     context.clear_all();
-    if (stroke) context.stroke_path(path); else context.fill_path(path);
+    if (operation == Operation::kStroke || operation == Operation::kStrokeRound)
+      context.stroke_path(path);
+    else
+      context.fill_path(path);
   };
 
   for (uint32_t index = 0; index < warmup; ++index) render();

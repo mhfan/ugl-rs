@@ -5,11 +5,11 @@ use std::{env, fs, hint::black_box, process::ExitCode, time::Instant};
 use ugl_rs::{
     analytic::{Cell, Intersection},
     canvas::{Pixmap, RenderOptions, RenderWorkspace, StrokePathOptions, StrokeWorkspace,
-        render_solid, render_stroke_solid},
+        render_solid, render_solid_clipped, render_stroke_solid},
     color::SRGBA,
     edge::Edge,
-    geometry::{Affine, Path, PathBuilder},
-    stroke::{StrokeContour, StrokeOptions},
+    geometry::{Affine, Path, PathBuilder, Rect},
+    stroke::{LineCap, LineJoin, StrokeContour, StrokeOptions},
 };
 
 const WIDTH: u32 = 256;
@@ -17,7 +17,7 @@ const HEIGHT: u32 = 256;
 const SHAPES: usize = 64;
 const EDGE_CAPACITY: usize = 4096;
 
-#[derive(Clone, Copy)] enum Operation { Fill, Stroke }
+#[derive(Clone, Copy)] enum Operation { Fill, FillClipped, Stroke { round: bool } }
 
 fn rectangles() -> Path {
     let mut path = PathBuilder::with_capacity(SHAPES * 5);
@@ -26,6 +26,34 @@ fn rectangles() -> Path {
         let y = (index / 8) as f32 * 30.0 + 4.5;
         path.move_to((x, y)).line_to((x + 22.5, y))
             .line_to((x + 22.5, y + 21.75)).line_to((x, y + 21.75));
+    }
+    path.build()
+}
+
+fn large_rectangle() -> Path {
+    let mut path = PathBuilder::with_capacity(5);
+    path.move_to((16.25, 20.5)).line_to((239.5, 20.5))
+        .line_to((239.5, 235.25)).line_to((16.25, 235.25));
+    path.build()
+}
+
+fn triangles() -> Path {
+    let mut path = PathBuilder::with_capacity(SHAPES * 4);
+    for index in 0..SHAPES {
+        let x = (index % 8) as f32 * 30.0 + 4.25;
+        let y = (index / 8) as f32 * 30.0 + 4.5;
+        path.move_to((x, y + 21.5)).line_to((x + 11.25, y))
+            .line_to((x + 22.5, y + 21.5));
+    }
+    path.build()
+}
+
+fn polyline() -> Path {
+    let mut path = PathBuilder::with_capacity(33);
+    path.move_to((8.0, 128.0));
+    for index in 1..=32 {
+        let y = if index & 1 == 0 { 96.0 } else { 160.0 };
+        path.line_to((8.0 + index as f32 * 7.5, y));
     }
     path.build()
 }
@@ -44,8 +72,18 @@ fn curves() -> Path {
 fn scene() -> Result<(&'static str, Path, Operation), String> {
     match path_argument("--scene")?.as_deref().unwrap_or("fill_rectangles_64") {
         "fill_rectangles_64" => Ok(("fill_rectangles_64", rectangles(), Operation::Fill)),
+        "fill_rectangle_large" => Ok(("fill_rectangle_large", large_rectangle(),
+            Operation::Fill)),
+        "fill_triangles_64" => Ok(("fill_triangles_64", triangles(), Operation::Fill)),
         "fill_cubics_8" => Ok(("fill_cubics_8", curves(), Operation::Fill)),
-        "stroke_cubics_8" => Ok(("stroke_cubics_8", curves(), Operation::Stroke)),
+        "fill_cubics_8_clip_rect" => Ok(("fill_cubics_8_clip_rect", curves(),
+            Operation::FillClipped)),
+        "stroke_cubics_8" => Ok(("stroke_cubics_8", curves(),
+            Operation::Stroke { round: false })),
+        "stroke_polyline_32" => Ok(("stroke_polyline_32", polyline(),
+            Operation::Stroke { round: false })),
+        "stroke_polyline_round_32" => Ok(("stroke_polyline_round_32", polyline(),
+            Operation::Stroke { round: true })),
         name => Err(format!("unknown scene: {name}")),
     }
 }
@@ -96,8 +134,8 @@ fn compare(label: &str, scene: &str, reference: &[u8], actual: &[u8]) -> Result<
 }
 
 fn run_f32() -> Result<(), String> {
-    let warmup = argument("--warmup", 200)?;
-    let iterations = argument("--iterations", 2_000)?;
+    let warmup = argument("--warmup", 500)?;
+    let iterations = argument("--iterations", 5_000)?;
     let samples = argument("--samples", 9)?;
     if iterations == 0 || samples == 0 {
         return Err("--iterations and --samples must be positive".into());
@@ -126,9 +164,22 @@ fn run_f32() -> Result<(), String> {
                         cells: &mut cells, row_offsets: &mut row_offsets,
                         edge_indices: &mut edge_indices,
                     }),
-                Operation::Stroke => render_stroke_solid(&path, Affine::identity(),
+                Operation::FillClipped => render_solid_clipped(&path, Affine::identity(),
+                    SRGBA::new(40, 120, 220, 192),
+                    Rect::from_ltrb(48.0, 104.0, 208.0, 152.0).unwrap(),
+                    RenderOptions::default(), &mut target, &mut RenderWorkspace {
+                        edges: &mut edges, intersections: &mut intersections,
+                        cells: &mut cells, row_offsets: &mut row_offsets,
+                        edge_indices: &mut edge_indices,
+                    }),
+                Operation::Stroke { round } => render_stroke_solid(&path, Affine::identity(),
                     SRGBA::new(40, 120, 220, 192), StrokePathOptions {
-                        stroke: StrokeOptions::new(6.0).expect("valid comparison stroke"),
+                        stroke: if round {
+                            StrokeOptions::new(6.0).expect("valid comparison stroke")
+                                .with_cap(LineCap::Round).with_join(LineJoin::Round)
+                        } else {
+                            StrokeOptions::new(6.0).expect("valid comparison stroke")
+                        },
                         ..Default::default()
                     }, &mut target, &mut StrokeWorkspace {
                         points: &mut stroke_points, contours: &mut stroke_contours,
@@ -170,21 +221,41 @@ fn fixed_path(scene: &str) -> Path<ugl_rs::fixed::Scalar> {
     use ugl_rs::fixed::Scalar;
     let fixed = Scalar::from_num;
     let mut path = PathBuilder::new();
-    if scene == "fill_rectangles_64" {
-        for index in 0..SHAPES {
-            let x = fixed((index % 8) as f32 * 30.0 + 4.25);
-            let y = fixed((index / 8) as f32 * 30.0 + 4.5);
+    match scene {
+        "fill_rectangles_64" => for index in 0..SHAPES {
+            let (x, y) = (fixed((index % 8) as f32 * 30.0 + 4.25),
+                fixed((index / 8) as f32 * 30.0 + 4.5));
             path.move_to((x, y)).line_to((x + fixed(22.5), y))
                 .line_to((x + fixed(22.5), y + fixed(21.75)))
                 .line_to((x, y + fixed(21.75)));
+        },
+        "fill_rectangle_large" => {
+            path.move_to((fixed(16.25), fixed(20.5)))
+                .line_to((fixed(239.5), fixed(20.5)))
+                .line_to((fixed(239.5), fixed(235.25)))
+                .line_to((fixed(16.25), fixed(235.25)));
         }
-    } else {
-        path.move_to((fixed(8.0), fixed(128.0)));
-        for index in 0..8 {
-            let x = fixed((8 + index * 30) as f32);
-            let y = if index & 1 == 0 { fixed(112.0) } else { fixed(144.0) };
-            path.cubic_to((x + fixed(10.0), y), (x + fixed(20.0), y),
-                (x + fixed(30.0), fixed(128.0)));
+        "fill_triangles_64" => for index in 0..SHAPES {
+            let (x, y) = (fixed((index % 8) as f32 * 30.0 + 4.25),
+                fixed((index / 8) as f32 * 30.0 + 4.5));
+            path.move_to((x, y + fixed(21.5))).line_to((x + fixed(11.25), y))
+                .line_to((x + fixed(22.5), y + fixed(21.5)));
+        },
+        "stroke_polyline_32" | "stroke_polyline_round_32" => {
+            path.move_to((fixed(8.0), fixed(128.0)));
+            for index in 1..=32 {
+                let y = if index & 1 == 0 { fixed(96.0) } else { fixed(160.0) };
+                path.line_to((fixed(8.0 + index as f32 * 7.5), y));
+            }
+        }
+        _ => {
+            path.move_to((fixed(8.0), fixed(128.0)));
+            for index in 0..8 {
+                let x = fixed((8 + index * 30) as f32);
+                let y = if index & 1 == 0 { fixed(112.0) } else { fixed(144.0) };
+                path.cubic_to((x + fixed(10.0), y), (x + fixed(20.0), y),
+                    (x + fixed(30.0), fixed(128.0)));
+            }
         }
     }
     path.build()
@@ -195,7 +266,7 @@ fn run_fixed() -> Result<(), String> {
     use ugl_rs::{
         fixed::{Scalar,
             canvas::{GeometryWorkspace, RenderOptions, StrokePathOptions, render_path,
-                render_stroke_path},
+                render_path_clipped, render_stroke_path},
             raster::{Line, Segment, Trapezoid, Workspace},
             stroke::Options as FixedStrokeOptions,
         },
@@ -203,8 +274,8 @@ fn run_fixed() -> Result<(), String> {
         stroke::{StrokeContour, StrokePathWorkspace},
     };
 
-    let warmup = argument("--warmup", 200)?;
-    let iterations = argument("--iterations", 2_000)?;
+    let warmup = argument("--warmup", 500)?;
+    let iterations = argument("--iterations", 5_000)?;
     let samples = argument("--samples", 9)?;
     if iterations == 0 || samples == 0 {
         return Err("--iterations and --samples must be positive".into());
@@ -237,9 +308,19 @@ fn run_fixed() -> Result<(), String> {
             match operation {
                 Operation::Fill => render_path(&path, &paint, RenderOptions::default(),
                     &mut target, &mut geometry, &mut raster),
-                Operation::Stroke => render_stroke_path(&path, &paint, StrokePathOptions {
-                    stroke: FixedStrokeOptions::new(Scalar::from_num(6))
-                        .expect("valid comparison stroke"), ..Default::default()
+                Operation::FillClipped => render_path_clipped(&path, &paint,
+                    Rect::from_ltrb(48.0, 104.0, 208.0, 152.0).unwrap(),
+                    RenderOptions::default(), &mut target, &mut geometry, &mut raster),
+                Operation::Stroke { round } => render_stroke_path(&path, &paint,
+                    StrokePathOptions {
+                    stroke: if round {
+                        FixedStrokeOptions::new(Scalar::from_num(6))
+                            .expect("valid comparison stroke")
+                            .with_cap(LineCap::Round).with_join(LineJoin::Round)
+                    } else {
+                        FixedStrokeOptions::new(Scalar::from_num(6))
+                            .expect("valid comparison stroke")
+                    }, ..Default::default()
                 }, &mut target, &mut StrokePathWorkspace {
                     points: &mut stroke_points, contours: &mut stroke_contours,
                 }, &mut geometry, &mut raster),

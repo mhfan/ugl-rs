@@ -16,7 +16,16 @@ cmake -S benches/blend2d -B "$build_dir" \
 cmake --build "$build_dir" --target blend2d_bench --config Release
 cargo build --release --example compare_blend2d
 
-for scene in fill_rectangles_64 fill_cubics_8 stroke_cubics_8; do
+for scene in \
+  fill_rectangles_64 \
+  fill_rectangle_large \
+  fill_triangles_64 \
+  fill_cubics_8 \
+  fill_cubics_8_clip_rect \
+  stroke_cubics_8 \
+  stroke_polyline_32 \
+  stroke_polyline_round_32
+do
   "$build_dir/blend2d_bench" --scene "$scene" \
     --output "$output_dir/blend2d-$scene.rgba"
   target/release/examples/compare_blend2d --scene "$scene" \
