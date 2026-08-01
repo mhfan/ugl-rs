@@ -1115,6 +1115,37 @@ fn benchmark_clip_masks(c: &mut Criterion) {
         }
         draw.finish();
 
+        let mut slender = PathBuilder::new();
+        slender.move_to((fixed(0), fixed(8))).line_to((fixed(504), fixed(512)))
+            .line_to((fixed(512), fixed(504))).line_to((fixed(8), fixed(0)));
+        let slender = slender.build();
+        let mut polygon = PathBuilder::new();
+        polygon.move_to((fixed(36), fixed(72))).line_to((fixed(278), fixed(24)))
+            .line_to((fixed(486), fixed(138))).line_to((fixed(442), fixed(374)))
+            .line_to((fixed(286), fixed(488))).line_to((fixed(92), fixed(430)))
+            .line_to((fixed(18), fixed(236)));
+        let polygon = polygon.build();
+        let mut grid = PathBuilder::new();
+        for row in 0..8 { for column in 0..8 {
+            if (row + column) & 1 != 0 { continue; }
+            let (left, top) = (column * 64 + 4, row * 64 + 4);
+            let (right, bottom) = (left + 56, top + 56);
+            grid.move_to((fixed(left), fixed(top))).line_to((fixed(right), fixed(top)))
+                .line_to((fixed(right), fixed(bottom))).line_to((fixed(left), fixed(bottom)));
+        } }
+        let grid = grid.build();
+        let mut path_build = c.benchmark_group("clip_path_build_fixed");
+        for (name, clip) in [("slender", &slender), ("polygon", &polygon),
+                             ("complex_grid", &grid)] {
+            let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
+            canvas.set_clip_path(clip).unwrap();
+            path_build.bench_function(name, |b| b.iter(|| {
+                canvas.clear_clip().set_clip_path(black_box(clip)).unwrap();
+                black_box(canvas.target());
+            }));
+        }
+        path_build.finish();
+
         let rect = ugl_rs::common::geometry::Rect::from_ltrb(
             Scalar::from_num(128.5), Scalar::from_num(128.5),
             Scalar::from_num(383.5), Scalar::from_num(383.5)).unwrap();

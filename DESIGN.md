@@ -815,11 +815,18 @@ Remaining work is nondeterministic/property fuzzing and real-device allocator/
 code-size measurements. A public pre-encoded sparse-mask entry point is not
 planned: exposing strip/run storage would leak a backend layout through the
 Canvas facade. Internal producers should instead feed retained sparse coverage
-directly when profiling shows that dense mask encoding is material.
+directly when profiling shows that dense mask encoding is material. Fixed path
+clips now do exactly that: rasterization writes an owned run encoder, recognizes
+opaque rectangles, retains compact runs, or reconstructs a local dense mask only
+when it is smaller. On the 512×512 quick benchmark this reduced clip construction
+from about 375 to 39 µs for a slender path, 588–597 to 60 µs for a polygon, and
+650 to 85 µs for a complex checker grid (roughly 7.6–9.8×). Cold construction
+of that 512×512 slender path, including scratch growth, uses 11 allocations and
+peaks at 24,316 bytes instead of allocating a 262,144-byte local mask.
 
 Retained memory, initial mask allocation, rasterization, and subsequent
-intersection now scale with the clipped region. Large-target peak-allocation
-instrumentation remains benchmark work.
+intersection now scale with the clipped region. Real-device allocator and
+code-size measurements remain benchmark work.
 
 The framebuffer boundary now distinguishes raw storage from valid color:
 solid paint and gradient-stop inputs use straight encoded `SRGBA<u8>`;

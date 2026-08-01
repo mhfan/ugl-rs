@@ -199,11 +199,12 @@ impl CoverageSink for CoverageMaskMut<'_> {
 }
 
 /// Writes device-space coverage into tightly packed storage for one target subregion.
+#[cfg(feature = "f32")]
 pub(crate) struct RegionMaskSink<'a> {
     data: &'a mut [u8], left: u32, top: u32, width: u32, height: u32,
 }
 
-impl<'a> RegionMaskSink<'a> {
+#[cfg(feature = "f32")] impl<'a> RegionMaskSink<'a> {
     pub(crate) fn new(data: &'a mut [u8],
         region: (u32, u32, u32, u32)) -> Self {
         let (left, top, right, bottom) = region;
@@ -211,7 +212,7 @@ impl<'a> RegionMaskSink<'a> {
     }
 }
 
-impl CoverageSink for RegionMaskSink<'_> {
+#[cfg(feature = "f32")] impl CoverageSink for RegionMaskSink<'_> {
     type Error = Infallible;
 
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
