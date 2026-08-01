@@ -1,5 +1,6 @@
 //! Backend-neutral coverage protocols and mask clipping.
 
+use alloc::{vec, vec::Vec};
 use core::convert::Infallible;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FillRule { NonZero, EvenOdd }
@@ -64,6 +65,194 @@ impl<'a> CoverageStrips<'a> {
             }
         }   Ok(())
     }
+}
+
+pub(crate) fn push_sparse_run(strips: &mut Vec<CoverageStrip>, runs: &mut Vec<CoverageRun>,
+    y: u32, x: u32, len: u32, coverage: u8) {
+    if coverage == 0 || len == 0 { return; }
+    let strip_y = y / 16 * 16;
+    if strips.last().is_none_or(|strip| strip.y != strip_y) {
+        strips.push(CoverageStrip {
+            y: strip_y, run_start: runs.len() as _, run_count: 0,
+        });
+    }
+    let row = (y - strip_y) as u8;
+    if let Some(last) = runs.last_mut()
+        && last.row == row && last.coverage == coverage && last.x + last.len == x {
+        last.len += len;
+        return;
+    }
+    runs.push(CoverageRun { x, len, row, coverage });
+    strips.last_mut().unwrap().run_count += 1;
+}
+
+pub(crate) struct SparseCoverageSink {
+    pub(crate) strips: Vec<CoverageStrip>, pub(crate) runs: Vec<CoverageRun>,
+}
+
+impl SparseCoverageSink {
+    pub(crate) fn new(region: (u32, u32, u32, u32), mut strips: Vec<CoverageStrip>,
+        mut runs: Vec<CoverageRun>) -> Self {
+        let (_, top, _, bottom) = region;
+        strips.clear(); runs.clear();
+        strips.reserve((bottom.div_ceil(16) - top / 16) as _);
+        runs.reserve((bottom - top).saturating_mul(3) as _);
+        Self { strips, runs }
+    }
+}
+
+impl CoverageSink for SparseCoverageSink {
+    type Error = Infallible;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        push_sparse_run(&mut self.strips, &mut self.runs, y, x, len, coverage);
+        Ok(())
+    }
+}
+
+pub(crate) struct SparseRuns<'a> {
+    strips: core::slice::Iter<'a, CoverageStrip>, runs: &'a [CoverageRun],
+    strip: Option<CoverageStrip>, index: usize,
+}
+
+impl<'a> SparseRuns<'a> {
+    pub(crate) fn new(strips: &'a [CoverageStrip], runs: &'a [CoverageRun]) -> Self {
+        Self { strips: strips.iter(), runs, strip: None, index: 0 }
+    }
+}
+
+impl Iterator for SparseRuns<'_> {
+    type Item = (u32, CoverageRun);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(strip) = self.strip {
+                let end = strip.run_start as usize + strip.run_count as usize;
+                if self.index < end {
+                    let run = self.runs[self.index]; self.index += 1;
+                    return Some((strip.y + u32::from(run.row), run));
+                }
+            }
+            let strip = *self.strips.next()?;
+            self.index = strip.run_start as usize;
+            self.strip = Some(strip);
+        }
+    }
+}
+
+pub(crate) fn intersect_sparse_masks(left_strips: &[CoverageStrip],
+    left_runs: &[CoverageRun], right_strips: &[CoverageStrip],
+    right_runs: &[CoverageRun]) -> (Vec<CoverageStrip>, Vec<CoverageRun>) {
+    let (mut strips, mut runs) = (
+        Vec::with_capacity(left_strips.len().min(right_strips.len())),
+        Vec::with_capacity(left_runs.len().min(right_runs.len())));
+    let (mut left_iter, mut right_iter) = (
+        SparseRuns::new(left_strips, left_runs), SparseRuns::new(right_strips, right_runs));
+    let (mut left, mut right) = (left_iter.next(), right_iter.next());
+    while let (Some((left_y, left_run)), Some((right_y, right_run))) = (left, right) {
+        let (left_end, right_end) = (left_run.x + left_run.len, right_run.x + right_run.len);
+        if left_y < right_y || left_y == right_y && left_end <= right_run.x {
+            left = left_iter.next(); continue;
+        }
+        if right_y < left_y || left_y == right_y && right_end <= left_run.x {
+            right = right_iter.next(); continue;
+        }
+        let (x, end) = (left_run.x.max(right_run.x), left_end.min(right_end));
+        let coverage = (u16::from(left_run.coverage) * u16::from(right_run.coverage) + 127)
+            .div_euclid(255) as u8;
+        push_sparse_run(&mut strips, &mut runs, left_y, x, end - x, coverage);
+        if left_end <= right_end { left = left_iter.next(); }
+        if right_end <= left_end { right = right_iter.next(); }
+    }
+    (strips, runs)
+}
+
+pub(crate) fn multiply_sparse_mask(data: &mut [u8],
+    region: (u32, u32, u32, u32), stride: u32,
+    strips: &[CoverageStrip], runs: &[CoverageRun]) {
+    let (left, top, right, bottom) = region;
+    for y in top..bottom {
+        let row_offset = (y - top) as usize * stride as usize;
+        let row = &mut data[row_offset..row_offset + (right - left) as usize];
+        let strip_y = y / 16 * 16;
+        let Ok(index) = strips.binary_search_by_key(&strip_y, |strip| strip.y) else {
+            row.fill(0); continue;
+        };
+        let strip = strips[index];
+        let strip_runs = &runs[strip.run_start as usize..
+            strip.run_start as usize + strip.run_count as usize];
+        let local_y = (y - strip_y) as u8;
+        let start = strip_runs.partition_point(|run| run.row < local_y);
+        let end = start + strip_runs[start..].partition_point(|run| run.row == local_y);
+        let mut cursor = left;
+        for run in &strip_runs[start..end] {
+            let (run_left, run_right) = (left.max(run.x), right.min(run.x + run.len));
+            if run_left >= run_right { continue; }
+            row[(cursor - left) as usize..(run_left - left) as usize].fill(0);
+            for value in &mut row[(run_left - left) as usize..(run_right - left) as usize] {
+                *value = (u16::from(*value) * u16::from(run.coverage) + 127)
+                    .div_euclid(255) as _;
+            }
+            cursor = run_right;
+        }
+        row[(cursor - left) as usize..].fill(0);
+    }
+}
+
+pub(crate) enum SparseStorage {
+    Empty,
+    OpaqueRect((u32, u32, u32, u32)),
+    Sparse { strips: Vec<CoverageStrip>, runs: Vec<CoverageRun> },
+    Dense { data: Vec<u8>, left: u32, top: u32,
+        right: u32, bottom: u32, stride: u32 },
+}
+
+pub(crate) fn finish_sparse_coverage(strips: Vec<CoverageStrip>, runs: Vec<CoverageRun>,
+    width: u32, height: u32, spare_strips: &mut Vec<CoverageStrip>,
+    spare_runs: &mut Vec<CoverageRun>) -> Option<SparseStorage> {
+    let Some((first_y, first_run)) = SparseRuns::new(&strips, &runs).next() else {
+        (*spare_strips, *spare_runs) = (strips, runs);
+        return Some(SparseStorage::Empty);
+    };
+    let opaque_rect = {
+        let mut expected_y = first_y;
+        let mut iter = SparseRuns::new(&strips, &runs);
+        iter.all(|(y, run)| {
+            let matches = y == expected_y && run.x == first_run.x &&
+                run.len == first_run.len && run.coverage == u8::MAX;
+            expected_y = expected_y.saturating_add(1);
+            matches
+        }).then_some((first_run.x, first_y, first_run.x + first_run.len, expected_y))
+    };
+    if let Some(bounds) = opaque_rect {
+        (*spare_strips, *spare_runs) = (strips, runs);
+        return Some(SparseStorage::OpaqueRect(bounds));
+    }
+    let (mut left, mut top, mut right, mut bottom) = (width, height, 0, 0);
+    for (y, run) in SparseRuns::new(&strips, &runs) {
+        left = left.min(run.x); top = top.min(y);
+        right = right.max(run.x + run.len); bottom = bottom.max(y + 1);
+    }
+    let dense_len = usize::try_from(right - left).ok().and_then(|row|
+        usize::try_from(bottom - top).ok().and_then(|height| row.checked_mul(height)))
+        ?;
+    let sparse_bytes = strips.len().checked_mul(core::mem::size_of::<CoverageStrip>())
+        .and_then(|bytes| runs.len().checked_mul(core::mem::size_of::<CoverageRun>())
+            .and_then(|runs| bytes.checked_add(runs)))?;
+    // Encoded bytes also proxy replay cost: fragmented coverage pays one full
+    // CoverageRun per short span. Retained capacity is deliberately not charged.
+    if sparse_bytes < dense_len {
+        return Some(SparseStorage::Sparse { strips, runs });
+    }
+    let stride = right - left;
+    let mut data = vec![0; dense_len];
+    for (y, run) in SparseRuns::new(&strips, &runs) {
+        let start = (y - top) as usize * stride as usize + (run.x - left) as usize;
+        data[start..start + run.len as usize].fill(run.coverage);
+    }
+    (*spare_strips, *spare_runs) = (strips, runs);
+    Some(SparseStorage::Dense { data, left, top, right, bottom, stride })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum CoverageMaskError {
@@ -404,5 +593,26 @@ fn equal_prefix(bytes: &[u8], value: u8) -> usize {
         let antialiased = [0, 128, 255, 0, 0, 255, 255, 0];
         assert_eq!(CoverageMask::new(&antialiased, 4, 2, 4).unwrap().kind(),
             MaskKind::Coverage((1, 0, 3, 2)));
+    }
+
+    #[test] fn sparse_storage_coalesces_classifies_and_intersects_runs() {
+        let mut sink = SparseCoverageSink::new((0, 0, 8, 2), Vec::new(), Vec::new());
+        sink.span(1, 0, 2, 255).unwrap(); sink.span(3, 0, 2, 255).unwrap();
+        sink.span(1, 1, 4, 255).unwrap();
+        assert_eq!(sink.runs, [
+            CoverageRun { x: 1, len: 4, row: 0, coverage: 255 },
+            CoverageRun { x: 1, len: 4, row: 1, coverage: 255 },
+        ]);
+        let (mut spare_strips, mut spare_runs) = (Vec::new(), Vec::new());
+        assert!(matches!(finish_sparse_coverage(sink.strips, sink.runs, 8, 2,
+            &mut spare_strips, &mut spare_runs), Some(SparseStorage::OpaqueRect((1, 0, 5, 2)))));
+
+        let (mut left_strips, mut left_runs) = (Vec::new(), Vec::new());
+        let (mut right_strips, mut right_runs) = (Vec::new(), Vec::new());
+        push_sparse_run(&mut left_strips, &mut left_runs, 0, 0, 4, 128);
+        push_sparse_run(&mut right_strips, &mut right_runs, 0, 2, 4, 128);
+        let (_, runs) = intersect_sparse_masks(
+            &left_strips, &left_runs, &right_strips, &right_runs);
+        assert_eq!(runs, [CoverageRun { x: 2, len: 2, row: 0, coverage: 64 }]);
     }
 }

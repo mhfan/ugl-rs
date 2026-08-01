@@ -1,12 +1,13 @@
 //! Stateful drawing facades over the allocation-free rendering pipelines.
 
 use alloc::{rc::Rc, vec::Vec};
-use core::convert::Infallible;
 use crate::{
     common::{color::SRGBA, dash::DashContour,
         geometry::{Affine, Edge, Path, Point, Rect},
-        raster::{CoverageMask, CoverageRun, CoverageSink, CoverageStrip,
-            CoverageStrips, FillRule, MaskKind},
+        raster::{CoverageMask, CoverageRun, CoverageStrip, CoverageStrips,
+            FillRule, MaskKind, SparseCoverageSink, SparseStorage,
+            finish_sparse_coverage, intersect_sparse_masks, multiply_sparse_mask,
+            push_sparse_run},
         render::{Clip, DrawState, GlobalAlphaPaint}, stroke::StrokeContour,
         Pixmap, PixmapError, RenderError, SolidPaint},
     float::{analytic::{Cell, Intersection},
@@ -343,125 +344,21 @@ fn mask_rect((left, top, right, bottom): (u32, u32, u32, u32)) -> Rect {
         .expect("ordered mask bounds")
 }
 
-fn push_sparse_run(strips: &mut Vec<CoverageStrip>, runs: &mut Vec<CoverageRun>,
-    y: u32, x: u32, len: u32, coverage: u8) {
-    if coverage == 0 || len == 0 { return; }
-    let strip_y = y / 16 * 16;
-    if strips.last().is_none_or(|strip| strip.y != strip_y) {
-        strips.push(CoverageStrip {
-            y: strip_y, run_start: runs.len() as _, run_count: 0,
-        });
-    }
-    let row = (y - strip_y) as u8;
-    if let Some(last) = runs.last_mut()
-        && last.row == row && last.coverage == coverage && last.x + last.len == x {
-        last.len += len;
-        return;
-    }
-    runs.push(CoverageRun { x, len, row, coverage });
-    strips.last_mut().unwrap().run_count += 1;
-}
-
-struct OwnedSparseSink { strips: Vec<CoverageStrip>, runs: Vec<CoverageRun> }
-
-impl OwnedSparseSink {
-    fn new(region: (u32, u32, u32, u32), mut strips: Vec<CoverageStrip>,
-        mut runs: Vec<CoverageRun>) -> Self {
-        let (_, top, _, bottom) = region;
-        strips.clear(); runs.clear();
-        strips.reserve((bottom.div_ceil(16) - top / 16) as _);
-        runs.reserve((bottom - top).saturating_mul(3) as _);
-        Self { strips, runs }
-    }
-}
-
-impl CoverageSink for OwnedSparseSink {
-    type Error = Infallible;
-
-    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
-        Result<(), Self::Error> {
-        push_sparse_run(&mut self.strips, &mut self.runs, y, x, len, coverage);
-        Ok(())
-    }
-}
-
-struct SparseRuns<'a> {
-    strips: core::slice::Iter<'a, CoverageStrip>, runs: &'a [CoverageRun],
-    strip: Option<CoverageStrip>, index: usize,
-}
-
-impl<'a> SparseRuns<'a> {
-    fn new(strips: &'a [CoverageStrip], runs: &'a [CoverageRun]) -> Self {
-        Self { strips: strips.iter(), runs, strip: None, index: 0 }
-    }
-}
-
-impl Iterator for SparseRuns<'_> {
-    type Item = (u32, CoverageRun);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if let Some(strip) = self.strip {
-                let end = strip.run_start as usize + strip.run_count as usize;
-                if self.index < end {
-                    let run = self.runs[self.index]; self.index += 1;
-                    return Some((strip.y + u32::from(run.row), run));
-                }
-            }
-            let strip = *self.strips.next()?;
-            self.index = strip.run_start as usize;
-            self.strip = Some(strip);
-        }
-    }
-}
-
 fn finish_sparse_clip(strips: Vec<CoverageStrip>, runs: Vec<CoverageRun>,
     width: u32, height: u32, storage: &mut CanvasStorage) ->
     Result<CanvasClip, RenderError> {
-    let Some((first_y, first_run)) = SparseRuns::new(&strips, &runs).next() else {
-        (storage.clip_strips, storage.clip_runs) = (strips, runs);
-        return Ok(CanvasClip::Empty);
-    };
-    let opaque_rect = {
-        let mut expected_y = first_y;
-        let mut iter = SparseRuns::new(&strips, &runs);
-        iter.all(|(y, run)| {
-            let matches = y == expected_y && run.x == first_run.x &&
-                run.len == first_run.len && run.coverage == u8::MAX;
-            expected_y = expected_y.saturating_add(1);
-            matches
-        }).then_some((first_run.x, first_y, first_run.x + first_run.len, expected_y))
-    };
-    if let Some(bounds) = opaque_rect {
-        (storage.clip_strips, storage.clip_runs) = (strips, runs);
-        return Ok(CanvasClip::Rect(mask_rect(bounds)));
-    }
-    let (mut left, mut top, mut right, mut bottom) = (width, height, 0, 0);
-    for (y, run) in SparseRuns::new(&strips, &runs) {
-        left = left.min(run.x); top = top.min(y);
-        right = right.max(run.x + run.len); bottom = bottom.max(y + 1);
-    }
-    let dense_len = usize::try_from(right - left).ok().and_then(|row|
-        usize::try_from(bottom - top).ok().and_then(|height| row.checked_mul(height)))
-        .ok_or(RenderError::DimensionsOverflow)?;
-    let sparse_bytes = strips.len().checked_mul(core::mem::size_of::<CoverageStrip>())
-        .and_then(|bytes| runs.len().checked_mul(core::mem::size_of::<CoverageRun>())
-            .and_then(|runs| bytes.checked_add(runs)))
-        .ok_or(RenderError::DimensionsOverflow)?;
-    if sparse_bytes < dense_len {
-        return Ok(CanvasClip::Sparse {
+    Ok(match finish_sparse_coverage(strips, runs, width, height,
+        &mut storage.clip_strips, &mut storage.clip_runs)
+        .ok_or(RenderError::DimensionsOverflow)? {
+        SparseStorage::Empty => CanvasClip::Empty,
+        SparseStorage::OpaqueRect(bounds) => CanvasClip::Rect(mask_rect(bounds)),
+        SparseStorage::Sparse { strips, runs } => CanvasClip::Sparse {
             strips: Rc::new(strips), runs: Rc::new(runs), width, height,
-        });
-    }
-    let stride = right - left;
-    let mut data = alloc::vec![0; dense_len];
-    for (y, run) in SparseRuns::new(&strips, &runs) {
-        let start = (y - top) as usize * stride as usize + (run.x - left) as usize;
-        data[start..start + run.len as usize].fill(run.coverage);
-    }
-    (storage.clip_strips, storage.clip_runs) = (strips, runs);
-    Ok(CanvasClip::Path {
-        data: data.into(), width, height, left, top, right, bottom, stride,
+        },
+        SparseStorage::Dense { data, left, top, right, bottom, stride } =>
+            CanvasClip::Path {
+                data: data.into(), width, height, left, top, right, bottom, stride,
+            },
     })
 }
 
@@ -557,66 +454,6 @@ fn multiply_rect_mask(data: &mut [u8], region: (u32, u32, u32, u32), stride: u32
     }
 }
 
-fn multiply_sparse_mask(data: &mut [u8], region: (u32, u32, u32, u32), stride: u32,
-    strips: &[CoverageStrip], runs: &[CoverageRun]) {
-    let (left, top, right, bottom) = region;
-    for y in top..bottom {
-        let row_offset = (y - top) as usize * stride as usize;
-        let row = &mut data[row_offset..row_offset + (right - left) as usize];
-        let strip_y = y / 16 * 16;
-        let Ok(index) = strips.binary_search_by_key(&strip_y, |strip| strip.y) else {
-            row.fill(0); continue;
-        };
-        let strip = strips[index];
-        let strip_runs = &runs[strip.run_start as usize..
-            strip.run_start as usize + strip.run_count as usize];
-        let local_y = (y - strip_y) as u8;
-        let start = strip_runs.partition_point(|run| run.row < local_y);
-        let end = start + strip_runs[start..].partition_point(|run| run.row == local_y);
-        let mut cursor = left;
-        for run in &strip_runs[start..end] {
-            let (run_left, run_right) = (left.max(run.x), right.min(run.x + run.len));
-            if run_left >= run_right { continue; }
-            row[(cursor - left) as usize..(run_left - left) as usize].fill(0);
-            for value in &mut row[(run_left - left) as usize..(run_right - left) as usize] {
-                *value = (u16::from(*value) * u16::from(run.coverage) + 127)
-                    .div_euclid(255) as _;
-            }
-            cursor = run_right;
-        }
-        row[(cursor - left) as usize..].fill(0);
-    }
-}
-
-fn intersect_sparse_masks(left_strips: &[CoverageStrip], left_runs: &[CoverageRun],
-    right_strips: &[CoverageStrip], right_runs: &[CoverageRun],
-    width: u32, height: u32) -> CanvasClip {
-    let (mut strips, mut runs) = (
-        Vec::with_capacity(left_strips.len().min(right_strips.len())),
-        Vec::with_capacity(left_runs.len().min(right_runs.len())));
-    let (mut left_iter, mut right_iter) = (
-        SparseRuns::new(left_strips, left_runs), SparseRuns::new(right_strips, right_runs));
-    let (mut left, mut right) = (left_iter.next(), right_iter.next());
-    while let (Some((left_y, left_run)), Some((right_y, right_run))) = (left, right) {
-        let (left_end, right_end) = (left_run.x + left_run.len, right_run.x + right_run.len);
-        if left_y < right_y || left_y == right_y && left_end <= right_run.x {
-            left = left_iter.next(); continue;
-        }
-        if right_y < left_y || left_y == right_y && right_end <= left_run.x {
-            right = right_iter.next(); continue;
-        }
-        let (x, end) = (left_run.x.max(right_run.x), left_end.min(right_end));
-        let coverage = (u16::from(left_run.coverage) * u16::from(right_run.coverage) + 127)
-            .div_euclid(255) as u8;
-        push_sparse_run(&mut strips, &mut runs, left_y, x, end - x, coverage);
-        if left_end <= right_end { left = left_iter.next(); }
-        if right_end <= left_end { right = right_iter.next(); }
-    }
-    if runs.is_empty() { CanvasClip::Empty } else { CanvasClip::Sparse {
-        strips: Rc::new(strips), runs: Rc::new(runs), width, height,
-    } }
-}
-
 fn intersect_dense_clip(current: &CanvasClip, next: &mut CanvasClip) {
     let CanvasClip::Path { data, width, height, left, top, right, bottom, stride } = next
         else { return; };
@@ -695,8 +532,12 @@ fn intersect_canvas_clip(current: &CanvasClip, next: &mut CanvasClip) {
             CanvasClip::Sparse { strips: current_strips, runs: current_runs,
                 width: current_width, height: current_height } => {
                 if (*width, *height) != (*current_width, *current_height) { return; }
-                Some(intersect_sparse_masks(current_strips, current_runs,
-                    strips, runs, *width, *height))
+                let (strips, runs) = intersect_sparse_masks(
+                    current_strips, current_runs, strips, runs);
+                Some(if runs.is_empty() { CanvasClip::Empty } else { CanvasClip::Sparse {
+                    strips: Rc::new(strips), runs: Rc::new(runs),
+                    width: *width, height: *height,
+                } })
             }
         }
     };
@@ -839,7 +680,7 @@ impl<'target> Canvas<'target> {
                 options.flatten, workspace.edges)?;
             (edge_count, edge_region(&workspace.edges[..edge_count], width, height))
         };
-        let mut sink = OwnedSparseSink::new(region,
+        let mut sink = SparseCoverageSink::new(region,
             core::mem::take(&mut self.storage.clip_strips),
             core::mem::take(&mut self.storage.clip_runs));
         if region.0 < region.2 && region.1 < region.3 {
