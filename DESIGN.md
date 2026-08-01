@@ -851,8 +851,8 @@ The first stable method vocabulary is small:
   rather than storing it in context state; their additional point/contour
   buffers are explicit in `float::context::Workspace`.
 - clipping is context state, represented as no clip, one rectangle, or one
-  borrowed coverage mask. The f32 `Canvas` additionally owns accumulated path
-  clips; both owning facades scope their available clip state together with
+  borrowed coverage mask. Both owning canvases additionally retain accumulated
+  local path masks and scope their available clip state together with
   drawing state through `save`/`restore`.
 
 Status: owning and borrowed f32/fixed fill/stroke/dash facades are implemented.
@@ -861,9 +861,9 @@ names; rectangle/mask clip state and statically dispatched custom paint are
 supported. `Canvas::set_clip_path` provides ordinary owned path clipping;
 bounded `CanvasRef` and low-level callers use `rasterize_path_clip` with a
 caller-owned `CoverageMaskMut`, then borrow it with `set_clip_mask`.
-The f32 `Canvas` implements intersecting rectangle, mask, and free-path clips;
-`fixed::Canvas` currently owns rectangle or copied mask state and manages all
-render scratch, while fixed owned path-clip accumulation remains future work.
+Both owning canvases implement intersecting rectangle, mask, and free-path clips
+without a temporary full-canvas mask. `fixed::Canvas` uses Q24.8 bounds and
+integer mask intersection throughout, so this route retains its no-FPU contract.
 The bounded `CanvasRef` deliberately retains a single borrowed clip;
 callers that require a bounded clip stack own its mask storage explicitly.
 Exact fill/stroke/dash planning is available
@@ -905,7 +905,8 @@ only where names collide.
 
 - Add API-level golden tests that render the same scenes through the facade and
   low-level functions; exact output must match.
-- Add f32/fixed differential tests for shared fill/stroke state and clipping.
+- Keep the implemented f32/fixed facade differential scenes byte-identical for
+  shared fill/stroke/dash state, rectangle/path clipping, and save/restore.
 - Keep static dispatch and inspect benchmark deltas; facade calls should inline
   to the existing pipeline with no allocation and no measurable steady-state
   overhead.

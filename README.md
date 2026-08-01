@@ -201,7 +201,8 @@ The fixed execution contract is deliberately per entry point:
 | geometry, flattening, stroke, dash, raster, strip/tile encoding | yes |
 | `fixed::sampler::*` solid/linear/radial/conic paint | yes |
 | path-mask production and native mask composition | yes |
-| `fixed::Canvas` or `fixed::CanvasRef` with native paint and rectangle/mask clip | yes |
+| `fixed::Canvas` with native paint and rectangle/mask/path clip | yes |
+| `fixed::CanvasRef` with native paint and rectangle/borrowed-mask clip | yes |
 | rectangle clipping | yes; API coordinates and antialiased coverage use Q24.8/integer arithmetic |
 | compatibility entry points accepting `float::sampler::PaintSampler` | no |
 
@@ -270,8 +271,9 @@ explicitly sized as `stride × height`.
 
 ### Arbitrary path clipping
 
-`Canvas::set_clip_path` is the ordinary free-path clipping API. It rasterizes
-and retains the antialiased mask in tightly packed non-zero bounds, intersecting
+`Canvas::set_clip_path` and `fixed::Canvas::set_clip_path` are the ordinary
+free-path clipping APIs. They rasterize
+and retain the antialiased mask in tightly packed non-zero bounds, intersecting
 only that region with the current clip; subsequent fill, stroke, and
 dashed-stroke calls apply it without exposing mask storage. Initial construction
 derives conservative bounds from the prepared edges and rasterizes directly
