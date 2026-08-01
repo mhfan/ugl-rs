@@ -2,8 +2,7 @@
 
 use core::convert::Infallible;
 use crate::{
-    canvas::{EdgeCapacity, EdgeSliceSink, PaintCompositor as CompatPaintCompositor,
-        Pixmap, RenderError, blend_sampled_pixel, map_dash_error,
+    canvas::{EdgeCapacity, EdgeSliceSink, Pixmap, RenderError, map_dash_error,
         validate_coverage_dimensions},
     color::SRGBA, dash::{DashContour, DashWorkspace}, edge::Edge,
     fixed::{DEVICE_RAW_LIMIT, Scalar, dash::{Pattern as DashPattern, dash_polyline},
@@ -18,9 +17,11 @@ use crate::{
     geometry::{Affine, Path, Point, Rect},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink,
         RectClipSink, clip_region, rect_is_integer},
-    sampler::{PaintSampler as CompatPaintSampler, SolidPaint},
+    sampler::SolidPaint,
     stroke::{StrokePathWorkspace, StrokeWorkspaceError},
 };
+#[cfg(feature = "f32")] use crate::{canvas::PaintCompositor as CompatPaintCompositor,
+    sampler::PaintSampler as CompatPaintSampler};
 
 fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
     x: u32, y: u32, len: u32, sampler: &S, coverage: u8) {
@@ -28,14 +29,12 @@ fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
         target.blend_solid_span(x, y, len, color, coverage);
         return;
     }
-    let start = y as usize * target.stride() as usize + x as usize * 4;
-    let end = start + len as usize * 4;
-    let mut pixels = target.as_bytes_mut()[start..end].chunks_exact_mut(4);
+    let mut offset = 0;
     sampler.sample_span(x, y, len, |color| {
-        let pixel = pixels.next().expect("sampler emitted too many span pixels");
-        blend_sampled_pixel(pixel, color, coverage);
+        target.blend_solid_span(x + offset, y, 1, color, coverage);
+        offset += 1;
     });
-    debug_assert!(pixels.next().is_none());
+    debug_assert_eq!(offset, len);
 }
 
 pub struct GeometryWorkspace<'a> {
@@ -151,13 +150,14 @@ pub fn dashed_stroke_requirements(path: &Path<Scalar>,
 pub fn render_solid(lines: &[Line],
     color: SRGBA<u8>, fill_rule: FillRule, target: &mut Pixmap<'_>,
     workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
-    render_compat_paint(lines, &SolidPaint::new(color), fill_rule, target, workspace)
+    render_paint(lines, &SolidPaint::new(color), fill_rule, target, workspace)
 }
 
 /// Renders prepared Q24.8 lines through the shared encoded paint compositor.
 ///
 /// Raster geometry and coverage are fixed-point; the supplied sampler retains
 /// its own numeric contract and may use floating point.
+#[cfg(feature = "f32")]
 pub fn render_compat_paint<S: CompatPaintSampler>(lines: &[Line],
     sampler: &S, fill_rule: FillRule, target: &mut Pixmap<'_>,
     workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
@@ -170,11 +170,12 @@ pub fn render_compat_paint<S: CompatPaintSampler>(lines: &[Line],
 pub fn render_solid_clipped(lines: &[Line],
     color: SRGBA<u8>, clip: Rect, fill_rule: FillRule, target: &mut Pixmap<'_>,
     workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
-    render_compat_paint_clipped(
+    render_paint_clipped(
         lines, &SolidPaint::new(color), clip, fill_rule, target, workspace)
 }
 
 /// Renders fixed coverage and sampled paint through an antialiased rectangle clip.
+#[cfg(feature = "f32")]
 pub fn render_compat_paint_clipped<S: CompatPaintSampler>(
     lines: &[Line], sampler: &S, clip: Rect, fill_rule: FillRule,
     target: &mut Pixmap<'_>, workspace: &mut Workspace<'_>) ->
@@ -196,11 +197,12 @@ pub fn render_solid_masked(lines: &[Line],
     color: SRGBA<u8>, mask: CoverageMask<'_>, fill_rule: FillRule,
     target: &mut Pixmap<'_>, workspace: &mut Workspace<'_>) ->
     Result<(), RenderError> {
-    render_compat_paint_masked(
+    render_paint_masked(
         lines, &SolidPaint::new(color), mask, fill_rule, target, workspace)
 }
 
 /// Renders fixed coverage and sampled paint multiplied by a borrowed path mask.
+#[cfg(feature = "f32")]
 pub fn render_compat_paint_masked<S: CompatPaintSampler>(
     lines: &[Line], sampler: &S, mask: CoverageMask<'_>, fill_rule: FillRule,
     target: &mut Pixmap<'_>, workspace: &mut Workspace<'_>) ->
@@ -418,6 +420,7 @@ pub fn render_solid_tiled(lines: &[Line], color: SRGBA<u8>, fill_rule: FillRule,
 }
 
 /// Renders prepared fixed lines through direct sparse tiles and sampled paint.
+#[cfg(feature = "f32")]
 pub fn render_compat_paint_tiled<S: CompatPaintSampler>(
     lines: &[Line], sampler: &S, fill_rule: FillRule, target: &mut Pixmap<'_>,
     raster_workspace: &mut Workspace<'_>,
@@ -439,6 +442,7 @@ pub fn render_paint_tiled<
 }
 
 /// Composites retained fixed strips through the shared paint compositor.
+#[cfg(feature = "f32")]
 pub fn composite_compat_paint_strips<S: CompatPaintSampler>(
     strips: CoverageStrips<'_>, sampler: &S, target: &mut Pixmap<'_>) ->
     Result<(), RenderError> {
@@ -475,6 +479,7 @@ pub fn composite_paint_strips_masked<
 }
 
 /// Composites retained fixed strips through an antialiased rectangle clip.
+#[cfg(feature = "f32")]
 pub fn composite_compat_paint_strips_clipped<S: CompatPaintSampler>(
     strips: CoverageStrips<'_>, sampler: &S, clip: Rect,
     target: &mut Pixmap<'_>) -> Result<(), RenderError> {
@@ -484,6 +489,7 @@ pub fn composite_compat_paint_strips_clipped<S: CompatPaintSampler>(
 }
 
 /// Composites retained fixed strips multiplied by a borrowed path mask.
+#[cfg(feature = "f32")]
 pub fn composite_compat_paint_strips_masked<S: CompatPaintSampler>(
     strips: CoverageStrips<'_>, sampler: &S, mask: CoverageMask<'_>,
     target: &mut Pixmap<'_>) -> Result<(), RenderError> {
@@ -498,7 +504,7 @@ pub fn composite_solid_tiles(tiled: CoverageTiles<'_>,
     color: SRGBA<u8>, target: &mut Pixmap<'_>) -> Result<(), RenderError> {
     validate_coverage_dimensions(tiled.width(), tiled.height(), target)?;
     let paint = SolidPaint::new(color);
-    let compositor = CompatPaintCompositor { target, sampler: &paint };
+    let compositor = PaintCompositor { target, sampler: &paint };
     for tile in tiled.tiles() {
         match tile.kind {
             TileKind::Full => {
@@ -519,6 +525,7 @@ pub fn composite_solid_tiles(tiled: CoverageTiles<'_>,
 }
 
 /// Composites retained fixed tiles through the shared paint compositor.
+#[cfg(feature = "f32")]
 pub fn composite_compat_paint_tiles<S: CompatPaintSampler>(
     tiled: CoverageTiles<'_>, sampler: &S, target: &mut Pixmap<'_>) ->
     Result<(), RenderError> {
@@ -559,6 +566,7 @@ pub fn composite_paint_tiles_masked<
 }
 
 /// Composites retained fixed tiles through an antialiased rectangle clip.
+#[cfg(feature = "f32")]
 pub fn composite_compat_paint_tiles_clipped<S: CompatPaintSampler>(
     tiled: CoverageTiles<'_>, sampler: &S, clip: Rect,
     target: &mut Pixmap<'_>) -> Result<(), RenderError> {
@@ -569,6 +577,7 @@ pub fn composite_compat_paint_tiles_clipped<S: CompatPaintSampler>(
 }
 
 /// Composites retained fixed tiles multiplied by a borrowed path mask.
+#[cfg(feature = "f32")]
 pub fn composite_compat_paint_tiles_masked<S: CompatPaintSampler>(
     tiled: CoverageTiles<'_>, sampler: &S, mask: CoverageMask<'_>,
     target: &mut Pixmap<'_>) -> Result<(), RenderError> {

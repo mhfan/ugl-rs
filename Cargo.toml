@@ -15,8 +15,9 @@ keywords = [ "ugl", "microgl", "vector-graphic" ]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = [ "fixed", "std" ]
-native-float = []
+default = [ "f32", "fixed", "std" ]
+f32 = [ "dep:libm" ]
+native-float = [ "f32" ]
 std = []
 
 [dependencies]
@@ -25,7 +26,7 @@ std = []
 fixed = { version = "1.29", optional = true }
 # Required by the complete no_std f32 backend. Cargo cannot conditionally enable
 # a dependency when `std` is absent; unused routines are removed when linking std builds.
-libm = "0.2"
+libm = { version = "0.2", optional = true }
 
 [dev-dependencies]
 criterion = "0.8"

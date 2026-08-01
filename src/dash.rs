@@ -1,7 +1,9 @@
 //! Allocation-free dash decomposition for flattened `f32` contours.
 
-use crate::{float::{fmod, sqrt}, geometry::{Point, Scalar}};
+use crate::geometry::{Point, Scalar};
+#[cfg(feature = "f32")] use crate::float::{fmod, sqrt};
 
+#[cfg(feature = "f32")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum DashPatternError {
     Empty, NonFiniteLength, NonPositiveLength, NonFinitePhase,
     CycleOverflow, SlotCountOverflow,
@@ -21,11 +23,11 @@ use crate::{float::{fmod, sqrt}, geometry::{Point, Scalar}};
 /// assert_eq!(DashPattern::new(&[1.0, 0.0], 0.0).unwrap_err(),
 ///     DashPatternError::NonPositiveLength);
 /// ```
-#[derive(Clone, Copy, Debug)] pub struct DashPattern<'a> {
+#[cfg(feature = "f32")] #[derive(Clone, Copy, Debug)] pub struct DashPattern<'a> {
     lengths: &'a [f32], phase: f32, cycle: f32, slots: usize,
 }
 
-impl<'a> DashPattern<'a> {
+#[cfg(feature = "f32")] impl<'a> DashPattern<'a> {
     pub fn new(lengths: &'a [f32], phase: f32) -> Result<Self, DashPatternError> {
         if lengths.is_empty() { return Err(DashPatternError::Empty); }
         if !phase.is_finite() { return Err(DashPatternError::NonFinitePhase); }
@@ -107,13 +109,15 @@ impl<'a, T> DashedPath<'a, T> {
     pub points: usize, pub contours: usize,
 }
 
-#[derive(Clone, Copy)] struct DashState { index: usize, remaining: f32 }
+#[cfg(feature = "f32")] #[derive(Clone, Copy)]
+struct DashState { index: usize, remaining: f32 }
 
 /// Decomposes one flattened contour into open on-dash polylines.
 ///
 /// Closed contours continue through their closing segment. When an on interval
 /// crosses the closure seam, its last and first pieces are merged so the seam
 /// receives a join rather than two caps.
+#[cfg(feature = "f32")]
 pub fn dash_polyline<'a>(points: &[Point], closed: bool, pattern: DashPattern<'_>,
     workspace: &'a mut DashWorkspace<'_>) -> Result<DashedPath<'a>, DashError> {
     let required = dash_requirements(points, closed, pattern)?;
@@ -127,6 +131,7 @@ pub fn dash_polyline<'a>(points: &[Point], closed: bool, pattern: DashPattern<'_
 }
 
 /// Returns the exact workspace needed by [`dash_polyline`].
+#[cfg(feature = "f32")]
 pub fn dash_requirements(points: &[Point], closed: bool, pattern: DashPattern<'_>) ->
     Result<DashRequirements, DashError> {
     if points.iter().any(|point| !point.x.is_finite() || !point.y.is_finite()) {
@@ -137,6 +142,7 @@ pub fn dash_requirements(points: &[Point], closed: bool, pattern: DashPattern<'_
     Ok(counter.requirements())
 }
 
+#[cfg(feature = "f32")]
 fn dash_polyline_to<W: DashOutput<Point>>(points: &[Point], closed: bool,
     pattern: DashPattern<'_>, writer: &mut W) -> Result<(), DashError> {
     let Some(&first) = points.first() else { return Ok(()); };
@@ -164,6 +170,7 @@ fn dash_polyline_to<W: DashOutput<Point>>(points: &[Point], closed: bool,
     Ok(())
 }
 
+#[cfg(feature = "f32")]
 fn dash_segment<W: DashOutput<Point>>(from: Point, to: Point, pattern: DashPattern<'_>,
     state: &mut DashState, writer: &mut W) -> Result<(), DashError> {
     let (dx, dy) = (to.x - from.x, to.y - from.y);

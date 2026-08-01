@@ -17,6 +17,7 @@
 
 use crate::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA},
     float::{atan2, floor, sqrt}, geometry::{Affine, Point}};
+pub use crate::paint::{GradientError, SolidPaint, SpreadMode};
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
 /// Implementations should be small values borrowed by the compositor. Calls are
@@ -141,33 +142,19 @@ impl<S: LinearPaintSampler> LinearPaintSampler for TransformedPaint<S> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SolidPaint {
-    encoded: PremulSRGBA8, linear: LinearPremulRGBA<f32>,
-}
-
-impl SolidPaint {
-    pub fn new(color: SRGBA<u8>) -> Self {
-        Self { encoded: color.premul_encoded(), linear: color.to_linear().premul() }
-    }
-    pub fn premultiplied(color: PremulSRGBA8) -> Self {
-        Self { encoded: color, linear: color.to_linear() }
-    }
-    pub fn color(&self) -> PremulSRGBA8 { self.encoded }
-    pub fn linear_color(&self) -> LinearPremulRGBA<f32> { self.linear }
-}
-
-impl From<SRGBA<u8>> for SolidPaint { fn from(color: SRGBA<u8>) -> Self { Self::new(color) } }
-
 impl PaintSampler for SolidPaint {
-    fn sample(&self, _x: f32, _y: f32) -> PremulSRGBA8 { self.encoded }
-    fn solid_color(&self) -> Option<PremulSRGBA8> { Some(self.encoded) }
+    fn sample(&self, _x: f32, _y: f32) -> PremulSRGBA8 { self.color() }
+    fn solid_color(&self) -> Option<PremulSRGBA8> { Some(self.color()) }
 }
 
 impl LinearPaintSampler for SolidPaint {
-    fn sample_linear(&self, _x: f32, _y: f32) -> LinearPremulRGBA<f32> { self.linear }
-    fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> { Some(self.linear) }
-    fn is_opaque_linear(&self) -> bool { self.linear.alpha() == 1.0 }
+    fn sample_linear(&self, _x: f32, _y: f32) -> LinearPremulRGBA<f32> {
+        self.linear_color()
+    }
+    fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> {
+        Some(self.linear_color())
+    }
+    fn is_opaque_linear(&self) -> bool { self.color().to_array()[3] == u8::MAX }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -180,12 +167,6 @@ impl GradientStop {
 
     pub fn offset(&self) -> f32 { self.offset }
     pub fn color(&self) -> LinearPremulRGBA<f32> { self.color }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum GradientError {
-    EmptyStops, NonFiniteOffset, OffsetOutOfRange, UnorderedStops,
-    RampTooSmall, RampTooLarge, NonFiniteGeometry, CoordinateOutOfRange,
-    NegativeRadius, DegenerateGeometry,
 }
 
 /// Validated, caller-owned gradient stops.
@@ -280,9 +261,6 @@ impl<'a> GradientStops<'a> {
         from.color.lerp(to.color, position)
     }
 }
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum SpreadMode { #[default] Pad, Repeat, Reflect }
 
 impl SpreadMode {
     fn map(self, t: f32) -> f32 {

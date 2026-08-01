@@ -23,7 +23,7 @@ impl<T> Edge<T> where T: Copy + PartialOrd {
     }
 }
 
-impl Edge {
+#[cfg(feature = "f32")] impl Edge {
     pub(crate) fn is_valid(&self) -> bool {
         [self.upper.x, self.upper.y, self.lower.x, self.lower.y]
             .iter().all(|value| value.is_finite()) &&

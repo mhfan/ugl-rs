@@ -17,6 +17,7 @@ impl<'a, S> GlobalAlphaPaint<'a, S> {
     pub(crate) fn new(sampler: &'a S, alpha: u8) -> Self { Self { sampler, alpha } }
 }
 
+#[cfg(feature = "f32")]
 impl<S: crate::sampler::PaintSampler> crate::sampler::PaintSampler
     for GlobalAlphaPaint<'_, S> {
     fn sample(&self, x: f32, y: f32) -> crate::color::PremulSRGBA8 {

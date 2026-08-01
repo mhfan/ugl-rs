@@ -4,7 +4,20 @@
 //! It uses stratified vertical samples and exact horizontal span overlap.
 
 use core::convert::Infallible;
-use crate::{edge::Edge, float::{ceil, floor}, geometry::Rect};
+use crate::geometry::Rect;
+#[cfg(feature = "f32")] use crate::{edge::Edge, float::{ceil, floor}};
+#[cfg(not(feature = "f32"))]
+fn floor(value: f32) -> f32 {
+    if value == 0.0 || !value.is_finite() || value.abs() >= 8_388_608.0 { return value; }
+    let integer = value as i32 as f32;
+    if integer > value { integer - 1.0 } else { integer }
+}
+#[cfg(not(feature = "f32"))]
+fn ceil(value: f32) -> f32 {
+    if value == 0.0 || !value.is_finite() || value.abs() >= 8_388_608.0 { return value; }
+    let integer = value as i32 as f32;
+    if integer < value { integer + 1.0 } else { integer }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum FillRule { NonZero, EvenOdd }
 
@@ -17,16 +30,18 @@ impl FillRule {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)] pub struct RasterOptions {
+#[cfg(feature = "f32")] #[derive(Clone, Copy, Debug, PartialEq)] pub struct RasterOptions {
     /// Number of deterministic vertical samples per pixel row.
     pub vertical_samples: u16,
 }
 
+#[cfg(feature = "f32")]
 impl Default for RasterOptions { fn default() -> Self { Self { vertical_samples: 256 } } }
 
+#[cfg(feature = "f32")]
 #[derive(Clone, Copy, Debug, Default)] pub struct Intersection { x: f32, winding: i8 }
 
-pub struct RasterWorkspace<'a> {
+#[cfg(feature = "f32")] pub struct RasterWorkspace<'a> {
     pub intersections: &'a mut [Intersection],
     pub row_coverage: &'a mut [f32],
 }
@@ -163,6 +178,7 @@ impl<'a> CoverageMask<'a> {
             data_width: width, data_height: height, non_zero_bounds })
     }
 
+    #[cfg(feature = "f32")]
     pub(crate) fn from_region(data: &'a [u8], dimensions: (u32, u32),
         region: (u32, u32, u32, u32), stride: u32) -> Result<Self, CoverageMaskError> {
         let (width, height) = dimensions;
@@ -291,11 +307,12 @@ fn equal_prefix(bytes: &[u8], value: u8) -> usize {
     length
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)] pub enum RasterError<E> {
+#[cfg(feature = "f32")] #[derive(Clone, Copy, Debug, PartialEq)] pub enum RasterError<E> {
     WorkspaceTooSmall { intersections: usize, row_coverage: usize },
     DimensionsOverflow, InvalidEdge, InvalidEdgeBins, InvalidSampleCount, Sink(E),
 }
 
+#[cfg(feature = "f32")]
 pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32, fill_rule: FillRule,
     options: RasterOptions, workspace: &mut RasterWorkspace<'_>, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {
@@ -326,8 +343,10 @@ pub fn rasterize_edges<S>(edges: &[Edge], width: u32, height: u32, fill_rule: Fi
     }   Ok(())
 }
 
+#[cfg(feature = "f32")]
 pub(crate) fn checked_width(width: u32) -> Option<usize> { usize::try_from(width).ok() }
 
+#[cfg(feature = "f32")]
 pub(crate) fn emit_coverage_runs<S>(row: &[f32], y: u32, sink: &mut S) ->
     Result<(), RasterError<S::Error>> where S: CoverageSink {
     let quantize = |coverage: f32| (coverage.clamp(0.0, 1.0) * 255.0 + 0.5) as _;
@@ -341,6 +360,7 @@ pub(crate) fn emit_coverage_runs<S>(row: &[f32], y: u32, sink: &mut S) ->
     }   Ok(())
 }
 
+#[cfg(feature = "f32")]
 fn collect_intersections(edges: &[Edge], y: f32, output: &mut [Intersection]) -> usize {
     let mut count = 0;
     for edge in edges {
@@ -351,6 +371,7 @@ fn collect_intersections(edges: &[Edge], y: f32, output: &mut [Intersection]) ->
     }       count
 }
 
+#[cfg(feature = "f32")]
 fn accumulate_spans(intersections: &[Intersection], width: usize, fill_rule: FillRule,
     sample_weight: f32, row: &mut [f32]) {
     let (mut winding, mut previous_x) = (0_i32, None);
@@ -363,6 +384,7 @@ fn accumulate_spans(intersections: &[Intersection], width: usize, fill_rule: Fil
     }
 }
 
+#[cfg(feature = "f32")]
 fn accumulate_span(from: f32, to: f32, width: usize, weight: f32, row: &mut [f32]) {
     let start = from.clamp(0.0, width as _);
     let end = to.clamp(0.0, width as _);

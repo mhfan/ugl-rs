@@ -57,7 +57,7 @@
 //! building blocks; prefer [`SRGBA`], [`LinearRGBA`], [`LinearPremulRGBA`], or
 //! [`PremulSRGBA8`] in new APIs whenever the interpretation is known.
 
-use crate::float::pow;
+#[cfg(feature = "f32")] use crate::float::pow;
 
 /** ```
     use ugl_rs::color::RGBA;
@@ -107,8 +107,10 @@ impl<T: ColorChannel> Default for LinearPremulRGBA<T> {
 pub const SRGB8_ENCODE_LUT_SIZE: usize = 4096;
 
 /// Caller-owned linear-to-sRGB8 lookup table for framebuffer presentation.
+#[cfg(feature = "f32")]
 #[derive(Clone, Copy, Debug)] pub struct Srgb8Encoder<'a> { table: &'a [u8] }
 
+#[cfg(feature = "f32")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub struct Srgb8EncoderError {
     pub minimum: usize, pub actual: usize,
 }
@@ -318,11 +320,13 @@ impl RGBA<f32> {
 // paired 0.04045/0.0031308 breakpoints, decoding uses gamma 2.4 and encoding
 // uses its reciprocal. Alpha is linear opacity and must not pass through these.
 // https://en.wikipedia.org/wiki/Gamma_correction
+#[cfg(feature = "f32")]
 fn srgb_decode(value: f32) -> f32 {
     if value <= 0.04045 { value / 12.92 }
     else { pow((value + 0.055) / 1.055, 2.4) }
 }
 
+#[cfg(feature = "f32")]
 fn srgb_encode(value: f32) -> f32 {
     if value <= 0.003_130_8 { value * 12.92 }
     else { 1.055 * pow(value, 1. / 2.4) - 0.055 }
@@ -350,6 +354,7 @@ impl SRGBA<u8> {
     }
 
     /// Decodes sRGB RGB channels to linear light. Alpha remains a linear opacity.
+    #[cfg(feature = "f32")]
     pub fn to_linear(self) -> LinearRGBA<f32> {
         const SCALE: f32 = 1.0 / u8::MAX as f32;
         LinearRGBA(RGBA::new(srgb_decode(self.0.r as f32 * SCALE),
@@ -378,6 +383,7 @@ impl PremulSRGBA8 {
     pub fn zeroed() -> Self { Self(PremulRGBA::zeroed()) }
     pub fn to_array(self) -> [u8; 4] { self.0.to_array() }
     /// Decodes encoded premultiplied bytes into linear-light premultiplied color.
+    #[cfg(feature = "f32")]
     pub fn to_linear(self) -> LinearPremulRGBA<f32> {
         SRGBA::from(self.0.unpremul()).to_linear().premul()
     }
@@ -398,6 +404,7 @@ impl LinearRGBA<f32> {
     pub fn to_array(self) -> [f32; 4] { self.0.to_array() }
 
     /// Encodes linear-light RGB as straight-alpha 8-bit sRGB.
+    #[cfg(feature = "f32")]
     pub fn to_srgba8(self) -> SRGBA<u8> {
         let quantize = |value: f32| (value.clamp(0.0, 1.0) * u8::MAX as f32 + 0.5) as u8;
         SRGBA::new(quantize(srgb_encode(self.0.r)), quantize(srgb_encode(self.0.g)),
@@ -412,15 +419,18 @@ impl LinearPremulRGBA<f32> {
     pub fn to_array(self) -> [f32; 4] { self.0.to_array() }
     pub fn alpha(&self) -> f32 { self.0.alpha() }
     pub fn unpremul(self) -> LinearRGBA<f32> { LinearRGBA(self.0.unpremul()) }
+    #[cfg(feature = "f32")]
     pub fn to_encoded_srgba8(self) -> PremulSRGBA8 {
         self.unpremul().to_srgba8().premul_encoded()
     }
 
+    #[cfg(feature = "f32")]
     pub(crate) fn scale(self, factor: f32) -> Self {
         let [r, g, b, a] = self.to_array();
         Self::from_valid(r * factor, g * factor, b * factor, a * factor)
     }
 
+    #[cfg(feature = "f32")]
     pub(crate) fn src_over(self, dest: Self) -> Self {
         let ([sr, sg, sb, sa], [dr, dg, db, da]) = (self.to_array(), dest.to_array());
         let inverse = 1.0 - sa;
@@ -429,12 +439,14 @@ impl LinearPremulRGBA<f32> {
             sa + da * inverse)
     }
 
+    #[cfg(feature = "f32")]
     pub(crate) fn lerp(self, other: Self, t: f32) -> Self {
         let (from, to) = (self.to_array(), other.to_array());
         let channel = |index| from[index] + (to[index] - from[index]) * t;
         Self::from_valid(channel(0), channel(1), channel(2), channel(3))
     }
 
+    #[cfg(feature = "f32")]
     fn from_valid(r: f32, g: f32, b: f32, a: f32) -> Self {
         debug_assert!([r, g, b, a].into_iter().all(|channel|
             channel.is_finite() && (0.0..=1.0).contains(&channel)));
@@ -443,7 +455,7 @@ impl LinearPremulRGBA<f32> {
     }
 }
 
-impl<'a> Srgb8Encoder<'a> {
+#[cfg(feature = "f32")] impl<'a> Srgb8Encoder<'a> {
     pub fn new(table: &'a mut [u8]) -> Result<Self, Srgb8EncoderError> {
         if table.len() < SRGB8_ENCODE_LUT_SIZE {
             return Err(Srgb8EncoderError {
@@ -472,11 +484,11 @@ impl<'a> Srgb8Encoder<'a> {
     }
 }
 
-impl From<SRGBA<u8>> for LinearRGBA<f32> {
+#[cfg(feature = "f32")] impl From<SRGBA<u8>> for LinearRGBA<f32> {
     fn from(color: SRGBA<u8>) -> Self { color.to_linear() }
 }
 
-impl From<LinearRGBA<f32>> for SRGBA<u8> {
+#[cfg(feature = "f32")] impl From<LinearRGBA<f32>> for SRGBA<u8> {
     fn from(color: LinearRGBA<f32>) -> Self { color.to_srgba8() }
 }
 
