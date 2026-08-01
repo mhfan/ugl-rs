@@ -325,6 +325,7 @@ frames produced:
 | large fractional rectangle, fill | 73.61 µs | 115.74 µs | 14.59 µs | 5.05× faster | 1.57× slower |
 | large rectangle, linear gradient | 130.14 µs | 221.24 µs | 31.83 µs | 4.09× faster | 1.70× slower |
 | large rectangle, radial gradient | 177.50 µs | 471.43 µs | 41.84 µs | 4.24× faster | 2.66× slower |
+| large rectangle, conic gradient (Fast) | 258.14 µs | 449.79 µs | 68.42 µs | 3.77× faster | 1.74× slower |
 | large rectangle, retained path mask | 81.07 µs | 123.87 µs | 29.98 µs¹ | 2.70× faster | 1.53× slower |
 | build circular path mask | 59.44 µs | 118.73 µs | 9.16 µs | 6.49× faster | 2.00× slower |
 | 64 fractional rectangles, fill | 83.10 µs | 230.77 µs | 33.41 µs | 2.49× faster | 2.78× slower |
@@ -340,6 +341,7 @@ frames produced:
 | large rectangle | 0.343% | 0% | 0 / 0 |
 | linear gradient rectangle | 10.800% | 0% | 0 / 0 |
 | radial gradient rectangle | 11.160% | 0.098% | 0.00024 / 1 |
+| conic gradient rectangle (Fast) | 13.873% | 0.003% | 0.000008 / 1 |
 | retained path mask | 0.505% | 0.764% | 0.00539 / 3 |
 | built path mask | 0.529% | 0.801% | 0.01152 / 4 |
 | rectangle grid | 2.246% | 0% | 0 / 0 |
@@ -375,8 +377,8 @@ compositor. Integer rectangle clips bypass per-pixel coverage multiplication
 and constrain analytic/fixed row and cell processing to the conservative
 clipped domain. This reduced the matched clipped cubic from 19.26 to 15.72 µs
 for f32 and from 31.08 to 25.22 µs for fixed without changing either checksum.
-Conic paint, mask-density complexity, memory, and cold-start/JIT cost still
-require separate matched scenes.
+Mask-density complexity, memory, and cold-start/JIT cost still require separate
+matched scenes.
 
 The matched horizontal linear gradient uses a 256-entry encoded ramp and black
 stops whose alpha changes from 32 to 224, avoiding ambiguity from different RGB

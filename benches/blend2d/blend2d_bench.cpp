@@ -16,7 +16,7 @@ constexpr uint32_t kHeight = 256;
 constexpr uint32_t kShapes = 64;
 
 enum class Operation {
-  kFill, kFillClipped, kFillGradient, kFillRadial, kFillMasked, kBuildMask,
+  kFill, kFillClipped, kFillGradient, kFillRadial, kFillConic, kFillMasked, kBuildMask,
   kStroke, kStrokeRound
 };
 
@@ -158,6 +158,10 @@ int main(int argc, char** argv) {
     path = large_rectangle();
     operation = Operation::kFillRadial;
   }
+  else if (std::strcmp(scene, "fill_rectangle_conic_gradient") == 0) {
+    path = large_rectangle();
+    operation = Operation::kFillConic;
+  }
   else if (std::strcmp(scene, "fill_rectangle_path_mask") == 0) {
     path = large_rectangle();
     operation = Operation::kFillMasked;
@@ -202,6 +206,10 @@ int main(int argc, char** argv) {
   radial.add_stop(0.0, BLRgba32(0, 0, 0, 32));
   radial.add_stop(1.0, BLRgba32(0, 0, 0, 224));
   if (operation == Operation::kFillRadial) context.set_fill_style(radial);
+  BLGradient conic(BLConicGradientValues(128.0, 128.0, 0.0));
+  conic.add_stop(0.0, BLRgba32(0, 0, 0, 32));
+  conic.add_stop(1.0, BLRgba32(0, 0, 0, 224));
+  if (operation == Operation::kFillConic) context.set_fill_style(conic);
   if (operation == Operation::kBuildMask)
     context.set_fill_style(BLRgba32(255, 255, 255, 255));
   if (operation == Operation::kFillClipped)

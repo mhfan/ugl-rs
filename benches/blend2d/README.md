@@ -9,7 +9,7 @@ Third-party source and build products are intentionally not vendored.
 
 - Scenes: `256x256`; 64 independent fractional-coordinate rectangles, one
   large fractional rectangle with solid, linear-gradient, and concentric
-  radial-gradient paint, 64
+  radial-gradient and conic-gradient paint, 64
   triangles, a large rectangle through a retained circular path mask, an
   eight-cubic closed fill, that
   fill under an integer rectangle clip, the cubic path stroked at width 6,
@@ -18,6 +18,10 @@ Third-party source and build products are intentionally not vendored.
 - The linear-gradient scene uses a 256-entry ugl-rs ramp and black stops with
   alpha 32 and 224. This keeps interpolation-space differences out of the RGB
   channels while still exercising ramp lookup and varying-alpha composition.
+- The conic scene explicitly selects ugl-rs's `Fast` angle policy, whose
+  seventh-degree polynomial matches the approximation class used by production
+  vector pipelines. `Exact` atan2/CORDIC remains the public default and is not
+  silently weakened by the comparison harness.
 - The path-mask scene excludes mask construction. ugl-rs consumes its retained
   8-bit coverage mask in one draw. Blend2D has no public free-path clip entry;
   its explicitly labeled equivalent renders the shape and applies a retained

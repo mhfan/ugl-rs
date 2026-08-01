@@ -381,6 +381,13 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   202.22 to 177.50 µs and fixed from 542.18 to 471.43 µs. Blend2D measures
   41.84 µs, leaving square-root throughput and encoded ramp/compositor batching
   as the measured paint costs.
+- The matched conic scene explicitly uses the opt-in `Fast` angle policy while
+  `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
+  approximation; fixed evaluates the same polynomial in widened integer turns
+  instead of 16 CORDIC steps. Formal medians are 258.14 µs f32, 449.79 µs fixed,
+  and 68.42 µs Blend2D. Fixed differs from f32 at 2 of 65,536 pixels, each by one
+  code value; the fixed fast path is about 77% faster than the Exact CORDIC
+  diagnostic without adding allocation or floating-point work.
 - Retained path masks scan equal coverage runs in eight-byte words before
   forwarding spans. This preserves the generic coverage-sink contract and
   fixed memory while reducing the matched circular-mask draw from 119.02 to

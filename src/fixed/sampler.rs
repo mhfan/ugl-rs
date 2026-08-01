@@ -346,8 +346,11 @@ fn ramp_index_i64(parameter: i64, denominator: i64, ramp_len: usize,
     ramp: &'a [PremulSRGBA8], angle_mode: ConicAngleMode,
 }
 
+/// Angle evaluation policy for a fixed-point conic gradient.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub enum ConicAngleMode {
+    /// Uses the 16-step CORDIC reference path.
     #[default] Exact,
+    /// Uses a seventh-degree integer polynomial with at most `3e-5` turn error.
     Fast,
 }
 
