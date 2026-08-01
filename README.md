@@ -288,545 +288,69 @@ callers that need clip intersections must combine caller-owned masks explicitly.
 
 ## Benchmarking
 
-The figures below are development regression baselines from one Darwin arm64
-host, not cross-renderer rankings. Each subsection states what is included in
-its timed loop; compare only measurements with compatible scenes and settings.
-
-### Running the benchmarks
-
-Run the scalar rasterizer comparison with:
+These figures are regression baselines from one Darwin arm64 host, not universal
+renderer rankings. Run the Rust benchmarks with:
 
 ```text
 cargo bench --bench raster --all-features
 ```
 
-Set `UGL_SPAN_STATS=1` to print the canonical scene's non-timed analytic span
-distribution. A filter which selects no benchmark avoids running Criterion:
-
-```text
-UGL_SPAN_STATS=1 cargo bench --bench raster --all-features -- '^$'
-```
-
-Run only the paint-sampler comparison with:
-
-```text
-cargo bench --bench raster --all-features -- paint_sample_rgba8888
-```
-
-### Blend2D comparison
-
-The reproducible third-party harness compares only Blend2D and ugl-rs; no
-results from unrelated renderers are mixed into this baseline. Build and run it
-with:
+The matched Blend2D harness is:
 
 ```text
 benches/blend2d/run.sh /absolute/path/to/blend2d
 ```
 
-Optional trailing `warmup`, `iterations`, and `samples` values support quick
-smoke runs and longer measurements. The complete output is retained as
-`${TMPDIR:-/tmp}/ugl-rs-blend2d-output/results.csv`.
+See [the harness documentation](benches/blend2d/README.md) for scenes, timing
+boundaries, normalization, versions, and CSV output. The baseline below used
+nine 5,000-frame samples after 500 warm-up frames on 2026-08-01: ugl-rs
+`a2f190c`, Blend2D `6dbc2cef`, AsmJit `0bd5787b`, rustc 1.97.1, and
+macOS 15.6 arm64.
 
-See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
-scene, timing boundary, sampling protocol, image normalization, and required
-version metadata. The current three-backend baseline was measured on 2026-08-01
-at ugl-rs `a2f190c`, using Blend2D
-`6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
-`0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
-rustc 1.97.1 on macOS 15.6 arm64. Nine 5,000-frame samples after 500 warm-up
-frames produced the table below. The butt/miter polyline f32/fixed rows were
-immediately repeated with the same protocol because the combined run contained
-a scheduler outlier; their repeated medians are reported.
-
-| Scene | f32 median | fixed median | Blend2D median | Blend2D vs f32 | fixed vs f32 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 1 fractional rectangle, fill | 4.02 µs | 4.82 µs | 3.39 µs | 1.19× faster | 1.20× slower |
-| 16 fractional rectangles, fill | 17.58 µs | 28.38 µs | 11.63 µs | 1.51× faster | 1.61× slower |
-| 64 fractional rectangles, fill | 59.51 µs | 106.70 µs | 33.20 µs | 1.79× faster | 1.79× slower |
-| large fractional rectangle, fill | 24.57 µs | 28.86 µs | 14.24 µs | 1.72× faster | 1.17× slower |
-| large rectangle, linear gradient | 62.60 µs | 146.72 µs | 31.57 µs | 1.98× faster | 2.34× slower |
-| large rectangle, radial gradient | 114.12 µs | 339.56 µs | 41.10 µs | 2.78× faster | 2.98× slower |
-| large rectangle, conic gradient (Fast) | 181.65 µs | 389.78 µs | 67.22 µs | 2.70× faster | 2.15× slower |
-| large rectangle, sparse retained path mask | 6.06 µs | 7.74 µs | 29.77 µs¹ | 4.91× slower | 1.28× slower |
-| large rectangle, dense retained path mask | 23.20 µs | 31.86 µs | 29.78 µs¹ | 1.28× slower | 1.37× slower |
-| build circular path mask | 20.51 µs | 46.78 µs | 9.04 µs | 2.27× faster | 2.28× slower |
-| 64 triangles, fill | 65.08 µs | 128.87 µs | 32.97 µs | 1.97× faster | 1.98× slower |
-| 8 gentle cubic arches, fill | 13.30 µs | 20.76 µs | 7.67 µs | 1.73× faster | 1.56× slower |
-| cubic fill under rectangle clip | 11.10 µs | 17.83 µs | 3.62 µs | 3.07× faster | 1.61× slower |
-| cubic arches, width-6 butt/miter stroke | 28.22 µs | 64.84 µs | 14.28 µs | 1.98× faster | 2.30× slower |
-| 32-segment polyline, butt/miter stroke | 61.10 µs | 135.19 µs | 26.08 µs | 2.34× faster | 2.21× slower |
-| 32-segment polyline, round stroke | 79.98 µs | 188.06 µs | 35.81 µs | 2.23× faster | 2.35× slower |
-
-| Scene | f32 pixels changed from Blend2D | fixed pixels changed from f32 | fixed mean/max error from f32 |
+| Representative scene | f32 | fixed | Blend2D |
 | --- | ---: | ---: | ---: |
-| large rectangle | 0.343% | 0% | 0 / 0 |
-| linear gradient rectangle | 10.800% | 0% | 0 / 0 |
-| radial gradient rectangle | 11.160% | 0.098% | 0.00024 / 1 |
-| conic gradient rectangle (Fast) | 13.873% | 0.003% | 0.000008 / 1 |
-| sparse retained path mask | 0.093% | 0.130% | 0.00075 / 2 |
-| dense retained path mask | 0.505% | 0.764% | 0.00539 / 3 |
-| built path mask | 0.529% | 0.801% | 0.01152 / 4 |
-| rectangle grid | 2.246% | 0% | 0 / 0 |
-| triangles | 2.637% | 0.195% | 0.00147 / 1 |
-| cubic fill | 0.452% | 0% | 0 / 0 |
-| clipped cubic fill | 0.301% | 0% | 0 / 0 |
-| cubic stroke | 1.321% | 0.311% | 0.00171 / 1 |
-| polyline stroke | 3.024% | 0.865% | 0.00442 / 1 |
-| round polyline stroke | 3.267% | 0.752% | 0.00398 / 1 |
-
-Cold first-frame latency uses nine independent processes per scene with zero
-warm-up and one timed draw. It retains first-use pipeline JIT in Blend2D while
-path/image/context construction and ugl-rs scratch allocation remain outside
-the timer:
-
-| Scene | f32 median | fixed median | Blend2D median |
-| --- | ---: | ---: | ---: |
-| large fractional rectangle | 47.38 µs | 144.25 µs | 365.88 µs |
-| 8 gentle cubic arches | 49.21 µs | 68.92 µs | 371.54 µs |
-| linear-gradient rectangle | 96.25 µs | 284.29 µs | 381.04 µs |
-
-These process-level samples describe latency, not steady-state throughput.
-Blend2D's first pipeline compilation makes its median roughly 4–8× the f32
-draw, while ugl-rs has no JIT warm-up. OS scheduling and code-page state make
-the cold range noisier; warmed 9×5,000 medians remain the throughput baseline.
-
-For the warmed 64-rectangle process, macOS `time -l` reported 2.89 MiB peak
-RSS for Blend2D, 1.92 MiB for the f32 runner, and 2.55 MiB for the fixed runner.
-The static Blend2D harness executable was 1.87 MiB; the Rust comparison binary
-was 0.58 MiB but contains both f32 and fixed code. These are process/harness
-diagnostics—including runtime, allocator, and JIT state—not renderer-owned
-memory or minimum deployment sizes. Bounded deployments should use the exact
-workspace planners; a future pure-fixed feature gate is required before a
-fixed-only code-size claim is meaningful.
-
-The fixed results are reported separately: f32 versus Blend2D measures desktop
-competitiveness, while fixed versus f32 measures the Q24.8 cost and output
-delta. Same-host fixed versus Blend2D numbers are not evidence about an MCU or
-a no-FPU target. Rectangle output is byte-identical between the ugl-rs
-backends; the gentle curves differ only by one code value at a small number of
-boundary pixels.
-
-Dashed stroke remains an internal f32/fixed Criterion comparison rather than a
-Blend2D row. The synchronized Blend2D revision stores dash options but its
-raster stroker does not apply them, so timing that API would silently compare
-ugl-rs dashes against an undashed Blend2D path.
-The isolated 64-point decomposition measures 2.324 µs for f32 and 6.578 µs
-for fixed; decomposition plus outline expansion measures 5.017 and 16.546 µs.
-The fixed cost buys deterministic integer length and rational interpolation,
-plus exact capacity preflight before caller-owned output is modified.
-
-The current matrix shows three stable regimes. Simple solid f32 fills are about
-1.2–2.0× Blend2D, gradients about 2.0–2.8×, and strokes about 2.0–2.3×. Fixed
-usually costs another 1.2–3.0× over f32 on this desktop CPU; that ratio measures
-widened integer arithmetic on Apple silicon, not expected MCU throughput.
-Retained sparse masks favor ugl-rs because work follows cached non-zero bounds;
-the Blend2D equivalent includes a `DST_IN` image pass and is not a native path
-clip comparison. Historical optimization measurements and rejected experiments
-live in [`DESIGN.md`](DESIGN.md) so this README keeps one authoritative table.
-
-### Expected micro{gl} position
-
-No matched micro{gl} benchmark is claimed yet. Its path API caches tessellation,
-then rasterizes the resulting triangles with integer edge functions; optional
-AA is a fast signed-distance approximation at selected boundary edges rather
-than ugl-rs's exact analytic pixel area. This gives micro{gl} a plausible
-advantage for repeatedly drawing a stable, modest tessellation and for simple
-specialized primitives. It can lose on complex or skinny tessellations because
-triangle bounding boxes revisit pixels and interior triangles add setup and
-overdraw, while ugl-rs fixed streams ordered trapezoid spans and shades covered
-runs once. Its default path examples also disable AA, which is not comparable
-with either ugl-rs production backend.
-
-The defensible prior is therefore “same broad embedded performance class,” not
-“approximately equal to fixed.” Depending on geometry and whether tessellation
-is cached, micro{gl} could range from faster than fixed to materially slower.
-The matched harness described in [`DESIGN.md`](DESIGN.md) is required before a
-numeric ratio is published.
-
-#### f32 stroke stage profile
-
-The matched gentle cubic stroke expands to 65 centerline points, one contour,
-and 130 directed outline edges. Run its internal stage profile with:
-
-```text
-cargo bench --bench raster --all-features -- stroke_stages_f32
-```
-
-A focused release diagnostic on the same host produced these central estimates:
-
-| Stage | Time |
-| --- | ---: |
-| centerline curve flatten | 1.74 µs |
-| stroke outline expansion | 1.06 µs |
-| sparse row bin construction | 1.21 µs |
-| analytic coverage integration and run emission | 20.87 µs sparse cells |
-| analytic coverage plus encoded blending | 25.33 µs |
-| complete clear + flatten + stroke + encoded composite | 28.22 µs |
-
-The independently measured stages are not strictly additive, but they locate
-the dominant cost: flatten, outline, and binning total about 4 µs, while
-coverage plus encoded blending remains about 25 µs. A prepared-stroke
-API can still remove repeated geometry work for retained content, but it cannot
-close the measured Blend2D gap by itself. Active-edge processing, slab event
-handling, area integration, and emitted-run cost therefore take priority;
-compositing and clear account for most of the remaining residual.
-
-#### Analytic pipeline status
-
-The production path bins edge starts by row, retains ordered active edges, and
-splits slabs only at edge endpoints or real crossings. Boundary cells use a
-closed-form integral of `clamp(edge_x - cell_x, 0, 1)`; guaranteed-full spans
-use two range-delta writes. Clearing and run emission are restricted to the
-touched x range, so row scratch remains one 8-byte `Cell` per target column.
-
-Ordering is updated only for newly activated edges and actual crossings. A
-midpoint check preserves the numeric contract for crossings within the event
-tolerance, while a cold split-integral path handles pairs that still reverse
-inside one slab. The sparse-cell implementation is checked against both the
-dense analytic reference and deterministic high-sample randomized paths for
-NonZero, EvenOdd, coincident, and self-intersecting geometry.
-
-Open non-degenerate strokes emit one boundary contour rather than overlapping
-segment and join polygons. This reduces the matched cubic stroke from 480 to
-130 edges and is responsible for most of its current end-to-end gain. Rows with
-an unchanged all-vertical active set reuse the preceding sparse-cell coverage,
-but still replay runs for the new y so clipping and compositing semantics remain
-unchanged.
-
-The latest Time Profiler trace attributes about 79% of the cubic stroke samples
-to analytic rasterization, 6% to solid blending, 3.5% to curve flattening,
-2.5% to outline construction, and roughly 1% to row-bin sorting. Further work
-should target coverage batching and long-span composition rather than more
-row-bin sorting special cases. Rejected experiments and historical measurements
-are summarized in [`DESIGN.md`](DESIGN.md), not duplicated here.
-
-The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
-bytes for statically linked Blend2D on this build. Those numbers describe the
-complete harness binaries, not the incremental library contribution, and must
-not be presented as a like-for-like library code-size result.
-
-### Paint sampling and gradient kernels
-
-The paint benchmark directly samples 65,536 device-space pixel centers and
-accumulates the resulting premultiplied RGBA channels. It excludes path
-processing, rasterization, clipping, destination writes, and compositing.
-The original encoded-domain baseline at commit `ad3906f`, measured on 2026-07-30 with
-`rustc 1.97.1`/LLVM 22.1.6 on Darwin arm64 using Criterion's default 3-second
-warm-up, 5-second measurement, and 100 samples, is:
-
-| Paint | Time estimate | Reported interval | Throughput |
-| --- | ---: | ---: | ---: |
-| solid | 287.33 µs | 277.61–298.01 µs | 228.09 Mpixel/s |
-| linear | 500.50 µs | 487.76–517.64 µs | 130.94 Mpixel/s |
-| two-circle radial | 1.3429 ms | 1.3189–1.3844 ms | 48.80 Mpixel/s |
-| conic | 1.1343 ms | 1.1126–1.1625 ms | 57.78 Mpixel/s |
-
-After moving gradient interpolation to linear light, the high-throughput path
-uses a caller-owned 1024-entry encoded premultiplied ramp. The same machine and
-Criterion settings measured the 2026-07-31 working tree as:
-
-| Paint | Time estimate | Reported interval | Throughput |
-| --- | ---: | ---: | ---: |
-| solid | 259.12 µs | 248.92–280.20 µs | 252.92 Mpixel/s |
-| linear | 269.32 µs | 263.44–278.85 µs | 243.33 Mpixel/s |
-| two-circle radial | 894.45 µs | 876.32–917.27 µs | 73.27 Mpixel/s |
-| conic | 582.08 µs | 567.54–602.77 µs | 112.59 Mpixel/s |
-
-`GradientStops::new` remains the exact linear-light reference path;
-`GradientStops::with_ramp` is the measured path. The ramp is prepared outside
-the timed loop. Its nearest-entry sampling keeps tested smooth-gradient output
-within one RGBA8 code value per channel of the exact path.
-
-Linear framebuffers have a separate `GradientStops::with_linear_ramp` path.
-Its caller-owned entries remain premultiplied linear `f32`, so it removes
-per-sample stop lookup without an encoded round trip. A 1024-entry ramp costs
-16 KiB, versus 4 KiB for the encoded RGBA8 ramp; `GradientStops::new` remains
-the smaller exact path for MCU/reference use. A short Criterion diagnostic on
-2026-07-31 measured the linear-gradient sampler at about 212.6 µs with the
-linear ramp versus 627.4 µs with exact stop lookup over 65,536 samples
-(approximately 3.0× faster).
-
-The linear sampler also exposes allocation-free affine span sampling.
-`LinearGradient` computes one start parameter and one per-pixel step;
-`TransformedPaint` maps both into paint space once per span. A short diagnostic
-measured 65,536 ramp samples at about 200.3 µs through the span path versus
-211.6 µs point-by-point. In the 64-rectangle analytic render benchmark, span
-stepping reduced linear-gradient rendering from about 443.1 µs to 409.2 µs
-(approximately 7.7%).
-
-Concentric radial gradients use a dedicated distance-squared recurrence and
-one square root per sample, bypassing the general two-circle quadratic solver.
-Four independent recurrence values are scheduled together so LLVM can overlap
-the square roots without changing their scalar recurrence order. In the matched
-large-gradient draw this reduced the f32 median from 123.98 to 115.82 µs with
-the same output checksum; the remaining 2.80× Blend2D gap requires wider SIMD
-sampling/composition rather than more coordinate algebra.
-A short diagnostic measured 65,536 samples at about 467.4 µs through the span
-path versus 690.4 µs point-by-point (approximately 32%). The 64-rectangle
-analytic render measured about 903.1 µs versus 1.231 ms (approximately 27%).
-The specialized path is checked against point sampling across 512-sample spans,
-transforms, center crossings, and all spread modes with a maximum linear-channel
-tolerance of `1e-4`. Non-concentric radial and conic paints retain their general
-point-sampling fallback.
-
-The native fixed sampler benchmark uses the same 65,536 pixel centers and a
-caller-owned 1024-entry encoded ramp. A short 10-sample diagnostic on
-2026-07-31 measured `fixed::sampler::LinearGradient` at about 423.3 µs
-(154.8 Mpixel/s) and concentric `fixed::sampler::RadialGradient` at about
-689.4 µs (95.1 Mpixel/s).
-The radial implementation selects a `u64` integer-square-root and `i64` ramp
-mapping fast path for ordinary device coordinates, with widened arithmetic
-retained for the full public coordinate range. Before that specialization the
-same radial diagnostic measured about 1.78 ms.
-
-The general fixed two-circle path uses the same largest-valid-root policy as the
-`f32` reference and retains up to 16 adaptive fractional square-root bits. A
-short 10-sample diagnostic measured about 2.23 ms (29.4 Mpixel/s), improved
-from about 7.03 ms after keeping ordinary discriminants and ramp division on
-proved `u64`/`i64` paths. This remains a scalar reference baseline rather than
-a final MCU performance target.
-
-The native fixed conic diagnostic measured about 2.42 ms (27.1 Mpixel/s).
-Its 16-step shift/add CORDIC stays below `6e-6` turn of angular error on the
-tested integer grid, and the encoded-ramp differential test permits at most one
-adjacent entry of error versus exact `atan2f`. This is also a scalar no-FPU
-baseline; an octant LUT or platform-specific implementation requires benchmark
-and code-size evidence before replacing it.
-
-Conic gradients keep exact `atan2f` as the default and expose
-`ConicAngleMode::Fast` as an explicit quality/performance choice. Fast mode
-uses the same Sollya-generated seventh-degree unit-angle polynomial as
-[Skia's CPU raster pipeline](https://skia.googlesource.com/skia/+/084fa9d8601a7f7895fc64efad3035098107d319/src/opts/SkRasterPipeline_opts.h#3152).
-An exhaustive 65,536-angle test measured at most `2.66e-5` turns of circular
-error. That bound can move a discontinuous seam by the same amount, so fast
-mode is never selected implicitly. A short diagnostic measured 65,536 linear
-conic samples at about 486.6 µs versus 603.7 µs for exact evaluation
-(approximately 19% faster); the 64-rectangle analytic render measured about
-691.5 µs versus 799.8 µs (approximately 14% faster).
-
-The linear sampler contract also propagates conservative opacity metadata.
-When coverage is full and every possible sample has alpha exactly one, the
-compositor writes sampled pixels directly instead of reading the destination
-and evaluating source-over. Fractional antialiasing coverage always retains
-the general compositor. In the opaque linear-gradient 64-rectangle diagnostic,
-this reduced rendering from about 397.3 µs to 215.9 µs (approximately 46%).
-This store-only span is also the first SIMD-ready kernel boundary: future
-platform backends can batch sampling and stores without coupling paint
-evaluation to destination loads.
-
-Linear-premultiplied arithmetic now uses its closed-domain invariant instead of
-revalidating and clamping all four channels after every scale, interpolation,
-and source-over operation. In short diagnostics this reduced the translucent
-solid 64-rectangle render from about 156.7 µs to 112.6 µs (approximately 28%)
-and its translucent linear-gradient counterpart from about 409.2 µs to
-198.5 µs (approximately 51%). Two arm64 NEON experiments were slower than this
-scalar kernel (about 116.6 µs for channel-vector packing and 124.5 µs for four
-interleaved pixels), so neither was retained. SIMD is deferred until spans are
-long enough to amortize layout conversion or a tile-local structure-of-arrays
-working buffer exists.
-
-The canonical scene currently emits 4,416 runs covering 33,856 pixels. Mean
-run length is 7.67 pixels: 2,944 runs are one-pixel antialiasing boundaries and
-1,472 are 16–31 pixels long (maximum 21). Although only 30.4% of runs have full
-coverage, they contain 83.4% of covered pixels. This supports specialized
-full-coverage kernels, but not converting every short boundary run to SoA.
-
-These are scalar reference costs, not optimized paint targets. In particular,
-the general radial sampler performs stable two-circle root solving per pixel;
-future specialized concentric/span-stepping paths must retain byte-equivalent
-tests and report their code-size and memory costs.
-
-### Raster and compositing baselines
-
-The baseline scene contains 64 fractional rectangles in a 256 × 256
-premultiplied RGBA8888 target. Path construction, fixed-line preparation, and
-all heap allocation happen before Criterion starts each measured iteration.
-The measured loop clears the destination and performs scan conversion plus
-source-over compositing.
-
-Current development baseline, measured on 2026-07-30:
-
-- commit: `6c8190e`;
-- platform: Darwin arm64;
-- compiler: `rustc 1.97.1`, LLVM 22.1.6;
-- Criterion parameters: 2 s warm-up, 2 s measurement, 20 samples.
-
-| Backend | Time estimate | Reported interval | Throughput |
-| --- | ---: | ---: | ---: |
-| sampled `f32` | 15.546 ms | 15.466–15.645 ms | 4.22 Mpixel/s |
-| analytic `f32` | 206.34 µs | 204.09–209.84 µs | 317.62 Mpixel/s |
-| Q24.8 fixed | 229.64 µs | 229.19–230.18 µs | 285.38 Mpixel/s |
-
-The linear-light compositor baseline was added on 2026-07-31 and measured on
-the same Darwin arm64 host with Criterion's default 3-second warm-up, 5-second
-measurement, and 100 samples:
-
-| Analytic color path | Time estimate | Reported interval | Throughput |
-| --- | ---: | ---: | ---: |
-| encoded RGBA8888 compatibility | 123.87 µs | 123.66–124.06 µs | 529.09 Mpixel/s |
-| linear `f32` working buffer | 155.88 µs | 155.16–156.71 µs | 420.44 Mpixel/s |
-| linear + 4096-entry LUT presentation | 357.79 µs | 357.08–358.63 µs | 183.17 Mpixel/s |
-| linear + adaptive dirty tracking, dense scene | 381.27 µs | 379.44–384.42 µs | 171.89 Mpixel/s |
-| linear + exact `powf` presentation | 4.2181 ms | 4.2036–4.2368 ms | 15.54 Mpixel/s |
-
-The working-buffer row includes clearing and compositing but no presentation.
-Both presentation rows encode the complete 256 × 256 target after rendering;
-the LUT is prepared before the timed loop and stays within one RGBA8 code value
-per channel of the exact transfer path in the boundary tests.
-
-For an incremental scene containing one 22.5 × 21.75 rectangle, full-frame LUT
-presentation measured 69.52 µs while adaptive 16 × 16 dirty-tile presentation
-measured 12.52 µs, a 5.55× reduction. On the dense 64-rectangle scene, tracking
-adds about 6.6%; the adaptive presenter switches to a contiguous full-frame
-encode when at least half the tile area is dirty, but span-marking still has a
-cost. Callers which know every frame is dense should use the non-tracking
-constructor and full presentation APIs.
-
-The additional fixed distribution scenes measure 45.76 µs for 16 sparse
-rectangles and 185.37 µs for 256 short-edge rectangles. Before strip binning
-and persistent active edges, the same scenes measured 65.34 µs and 621.64 µs,
-respectively. These numbers are a regression reference for this machine, not a
-cross-platform ranking.
-
-### Scratch memory and allocation
-
-The initial caller-owned scratch budgets are:
-
-| Backend | Edge/segment storage | Strip/crossing storage | Row storage |
-| --- | ---: | ---: | ---: |
-| sampled `f32` | 128 `Edge` | 128 `Intersection` | 256 `f32` |
-| analytic `f32` | 128 `Edge` | 257 `u32` row offsets + 128 `u32` edge indices + 128 `Intersection` | 256 8-byte `Cell` values |
-| Q24.8 fixed | 128 `fixed::raster::Segment` + 64 `fixed::raster::Trapezoid` | one `u32` offset per strip plus one `u32` per line/strip overlap | 256 `u64` |
-
-The compact target uses 4 bytes per pixel. `LinearPixmap` deliberately uses
-16 bytes per pixel (`LinearPremulRGBA<f32>`) and its fast presentation path
-borrows an additional 4096-byte sRGB encoding LUT. This desktop-quality working
-buffer is not the intended MCU storage path. Optional dirty tracking costs one
-bit per 16 × 16 tile: 32 bytes for a 256 × 256 target.
-
-Renderer allocation count inside the measured path is zero by API
-construction: every mutable geometry, crossing, area, and destination buffer
-is borrowed from the benchmark. Criterion's own allocations are outside that
-contract.
-
-### Stroke and active-edge scalability
-
-The end-to-end stroke groups can be reproduced with:
-
-```text
-cargo bench --bench raster --all-features -- stroke_rgba8888
-cargo bench --bench raster --all-features -- stroke_stages_f32
-```
-
-`stroke_rgba8888` clears a 256 × 256 destination and measures path flattening,
-stroke expansion, analytic rasterization, and solid source-over composition.
-`stroke_stages_f32` separates flattening, compact outline construction, row
-binning, coverage, and coverage-plus-blending. Path construction and scratch
-allocation remain outside every timed loop. Benchmark identifiers include the
-exact `points/contours/edges` capacity, preventing results for an obsolete
-outline representation from being mistaken for the current 130-edge cubic
-scene. The synchronized Blend2D table above is the authoritative whole-pipeline
-baseline.
-
-The no-FPU `stroke_expand_fixed` group measures a 64-point Q24.8 zig-zag with
-square caps and miter joins, excluding rasterization and destination writes.
-A short 10-sample diagnostic on 2026-07-31 measured Square/Miter at about
-3.23 µs (19.8 million input points/s) and Round at about 18.26 µs
-(3.51 million input points/s). Round geometry defaults to eight segments per
-half circle and uses the shared integer CORDIC; callers can trade edge capacity
-and the explicit chord-error bound with `with_round_segments`. The end-to-end
-canvas entry borrows both edge and prepared-line storage and feeds the native
-fixed paint pipeline.
-
-The `analytic_active` group isolates binned scan conversion from path expansion
-and pixel compositing. It covers stable active-set scaling, short-edge churn,
-unordered activation batches, coincident crossings, and a 32-edge crossing
-stress scene. These diagnostics guide algorithm selection; they are not
-cross-renderer rankings. Current design conclusions and rejected sorting
-experiments are recorded under “Performance decisions” in `DESIGN.md`.
-
-### Fixed retained coverage and tiles
-
-The optional retained fixed output groups only non-empty 16-row strips. Each
-strip descriptor is 12 bytes and each uniform non-zero coverage run is 12
-bytes (`u32` x/length plus `u8` row/coverage). It therefore does not impose a
-full-frame mask, and callers choose an explicit bounded run capacity.
-
-Commit `c2de47a` adds a separate retained-tile composite entry point, so a
-stable coverage mask can be reused with another color or destination without
-rasterizing its geometry again. A focused run on the same machine used
-Criterion's default 3-second warm-up, 5-second measurement, and 100 samples.
-Both paths clear and composite the RGBA8888 destination; `cached` excludes the
-one-time rasterization and tile encoding cost:
-
-| Scene | rasterize + tiled composite | cached tiled composite | Speedup |
-| --- | ---: | ---: | ---: |
-| 64 fractional rectangles | 343.00 µs | 41.220 µs | 8.3× |
-| 16 sparse rectangles | 55.516 µs | 3.7166 µs | 14.9× |
-| 256 short-edge rectangles | 238.48 µs | 22.116 µs | 10.8× |
-| 16 full-tile rectangles | 100.08 µs | 10.607 µs | 9.4× |
-
-A focused raster-only comparison after `0c625fc` used the same machine and
-20-sample/2-second Criterion settings. `stream` sends runs to a counting sink;
-`encode` writes retained strips; `encode + replay` also walks them through that
-sink. These measurements exclude color compositing:
-
-| Scene | stream | encode | encode + replay |
-| --- | ---: | ---: | ---: |
-| 64 fractional rectangles | 196.98 µs | 201.46 µs | 203.13 µs |
-| 16 sparse rectangles | 42.18 µs | 42.69 µs | 42.63 µs |
-| 256 short-edge rectangles | 172.48 µs | 176.26 µs | 173.92 µs |
-
-The retained form currently costs roughly 1–3% to produce in these scenes.
-It stays optional: MCU callers can stream directly, while desktop/batched
-callers can spend bounded memory to decouple rasterization from compositing.
-
-The tile prototype converts retained strips into tile-major data. Empty tiles
-are omitted, full tiles store no fine runs, and boundary tiles use 4-byte
-tile-local runs behind 16-byte descriptors. Conversion uses one caller-owned
-8-byte scratch piece per run/tile overlap and sorts independently inside each
-16-row strip.
-
-Focused 20-sample/2-second measurements after `27477ca` include fixed
-rasterization, strip retention, and tile conversion:
-
-| Scene | stream baseline | tile encode | tile encode + replay |
-| --- | ---: | ---: | ---: |
-| 64 fractional rectangles | 196.98 µs | 316.85 µs | 309.55 µs |
-| 16 sparse rectangles | 42.18 µs | 48.25 µs | 47.04 µs |
-| 256 short-edge rectangles | 172.48 µs | 243.54 µs | 241.66 µs |
-
-The conversion prototype is therefore not a default immediate-mode path:
-row-major-to-tile-major sorting is too expensive in dense scenes.
-
-The follow-up direct path now links fine runs by active tile column while each
-16-row raster strip is produced, then compacts only the touched columns. It
-uses one 8-byte linked piece per run/tile overlap in the current strip plus
-three `u32` arrays per tile column; no whole-frame strip buffer or fine-piece
-sort is required. A 1-second/10-sample follow-up measured:
-
-| Scene | stream baseline | direct tile encode | old strip→tile encode |
-| --- | ---: | ---: | ---: |
-| 64 fractional rectangles | 196.98 µs | 240.73 µs | 316.85 µs |
-| 16 sparse rectangles | 42.18 µs | 43.12 µs | 48.25 µs |
-| 256 short-edge rectangles | 172.48 µs | 187.73 µs | 243.54 µs |
-
-Direct emission removes most conversion overhead and sharply reduces peak
-scratch, while streaming remains the MCU/minimum-latency default. The next
-desktop experiment added a tile-aware solid compositor that consumes full
-tiles without expanding them back through `CoverageSink`. It remains
-byte-equivalent but did not beat immediate streaming:
-
-| Scene | streaming solid | direct tiled solid |
-| --- | ---: | ---: |
-| 64 fractional rectangles | 229.64 µs | 291.27 µs |
-| 16 sparse rectangles | 45.76 µs | 49.07 µs |
-| 256 short-edge rectangles | 185.37 µs | 210.28 µs |
-| 16 aligned 32×32 rectangles | 86.62 µs | 111.95 µs |
-
-Even full-tile-heavy immediate rendering does not yet amortize tile
-construction. The tiled compositor therefore remains an explicit batching or
-cached-coverage path; it is not selected automatically.
+| 1 fractional rectangle | 4.02 µs | 4.82 µs | 3.39 µs |
+| 64 fractional rectangles | 59.51 µs | 106.70 µs | 33.20 µs |
+| large linear gradient | 62.60 µs | 146.72 µs | 31.57 µs |
+| large radial gradient | 114.12 µs | 339.56 µs | 41.10 µs |
+| large conic gradient, Fast | 181.65 µs | 389.78 µs | 67.22 µs |
+| sparse retained path mask | 6.06 µs | 7.74 µs | 29.77 µs¹ |
+| build circular path mask | 20.51 µs | 46.78 µs | 9.04 µs |
+| cubic fill under rectangle clip | 11.10 µs | 17.83 µs | 3.62 µs |
+| cubic butt/miter stroke | 28.22 µs | 64.84 µs | 14.28 µs |
+| 32-segment round stroke | 79.98 µs | 188.06 µs | 35.81 µs |
+
+¹ Blend2D has no equivalent free-path Context clip; this row uses a retained
+PRGB32 `DST_IN` pass and is not a native path-clip comparison.
+
+The important conclusions are:
+
+- Simple f32 fills are about 1.2–2.0× Blend2D; gradients and strokes are commonly
+  2.0–2.8×. Coverage integration and scalar paint/composition remain the main
+  desktop gaps.
+- Fixed is generally 1.2–3.0× slower than f32 on this Apple CPU. That measures
+  widened deterministic integer arithmetic on a desktop, not expected MCU
+  throughput.
+- f32 and fixed are byte-identical for the rectangle grid, linear gradient, and
+  cubic fill. Other fixed scenes differ only near boundaries: the reported
+  representative maximum is four code values, while radial/conic and stroke
+  maxima are one.
+- Sparse retained masks are already competitive because work follows cached
+  non-zero bounds; dense paint and long spans benefit more from Blend2D's JIT
+  vector pipelines.
+
+Cold single-draw medians, measured in fresh processes, were 47–96 µs for f32,
+69–284 µs for fixed, and 366–381 µs for Blend2D across representative fill,
+curve, and gradient scenes. Blend2D pays first-use JIT compilation; ugl-rs has
+no pipeline warm-up. These latency samples should not be mixed with warmed
+throughput.
+
+No numeric micro{gl} claim is made yet. Its cached triangle tessellation may
+lead on stable simple meshes, while bounding-box overdraw and approximate AA
+make complex or quality-matched results workload-dependent. The comparison
+hypothesis, detailed stage profiles, quality tables, memory measurements,
+rejected experiments, and optimization history are maintained in
+[DESIGN.md](DESIGN.md).
 
 ## Non-goals for the core
 

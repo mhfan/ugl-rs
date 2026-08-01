@@ -2,7 +2,7 @@
 
 use alloc::{rc::Rc, vec::Vec};
 use crate::{
-    canvas::{Pixmap, RenderError},
+    render::{Pixmap, RenderError},
     color::SRGBA, edge::Edge,
     dash::DashContour, fixed::{Scalar, canvas::{DashedStrokePathOptions,
             DashedStrokeRequirements, DashedStrokeWorkspace, GeometryWorkspace,
@@ -17,7 +17,7 @@ use crate::{
             Trapezoid, Workspace as RasterWorkspace, WorkspaceKind},
         sampler::PaintSampler, stroke::Options as StrokeOptions},
     geometry::{Affine, Path, Point, Rect}, raster::{CoverageMask, FillRule},
-    sampler::SolidPaint, state::{Clip, DrawState, GlobalAlphaPaint},
+    sampler::SolidPaint, render::{Clip, DrawState, GlobalAlphaPaint},
     stroke::StrokePathWorkspace,
 };
 
@@ -335,14 +335,14 @@ pub struct Canvas<'target> {
 }
 
 impl Canvas<'static> {
-    pub fn new(width: u32, height: u32) -> Result<Self, crate::canvas::PixmapError> {
+    pub fn new(width: u32, height: u32) -> Result<Self, crate::PixmapError> {
         Ok(Self::from_target(Pixmap::new(width, height)?))
     }
 }
 
 impl<'target> Canvas<'target> {
     pub fn from_buffer(data: &'target mut [u8], width: u32, height: u32, stride: u32) ->
-        Result<Self, crate::canvas::PixmapError> {
+        Result<Self, crate::PixmapError> {
         Ok(Self::from_target(Pixmap::from_buffer(data, width, height, stride)?))
     }
 

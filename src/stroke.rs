@@ -1,87 +1,12 @@
 //! Stroke expansion options and scalar reference implementation.
 
-#[cfg(feature = "f32")] use core::f32::consts::{FRAC_PI_2, PI};
 use crate::{geometry::{Point, Scalar}, flatten::LineSink};
-#[cfg(feature = "f32")] use crate::{edge::{Edge, EdgeSink},
-    geometry::{Affine, Path}, flatten::{flatten_path, FlattenError, FlattenOptions}};
-#[cfg(feature = "f32")] use crate::float::{acos, atan2, ceil, cos, sin, sqrt};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum LineCap { #[default] Butt, Round, Square, }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum LineJoin { #[default] Miter, Round, Bevel, }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum StrokeError {
-    NonFiniteWidth, NonPositiveWidth, NonFiniteMiterLimit, MiterLimitTooSmall,
-    NonFiniteTolerance, NonPositiveTolerance, ArcSegmentLimitZero,
-}
-
-/// Validated device-space stroke parameters.
-///
-/// ```
-/// use ugl_rs::stroke::{LineCap, LineJoin, StrokeError, StrokeOptions};
-///
-/// let options = StrokeOptions::new(6.0).unwrap()
-///     .with_cap(LineCap::Round).with_join(LineJoin::Bevel)
-///     .with_miter_limit(8.0).unwrap()
-///     .with_tolerance(0.125).unwrap()
-///     .with_max_arc_segments(32).unwrap();
-/// assert_eq!((options.width(), options.half_width()), (6.0, 3.0));
-/// assert_eq!((options.cap(), options.join()), (LineCap::Round, LineJoin::Bevel));
-/// assert_eq!(StrokeOptions::new(0.0), Err(StrokeError::NonPositiveWidth));
-/// ```
-#[cfg(feature = "f32")] #[derive(Clone, Copy, Debug, PartialEq)] pub struct StrokeOptions {
-    width: f32, miter_limit: f32, cap: LineCap, join: LineJoin,
-    tolerance: f32, max_arc_segments: u16,
-}
-
-#[cfg(feature = "f32")] impl StrokeOptions {
-    pub fn new(width: f32) -> Result<Self, StrokeError> {
-        if !width.is_finite() { return Err(StrokeError::NonFiniteWidth); }
-        if  width <= 0.0 { return Err(StrokeError::NonPositiveWidth); }
-        Ok(Self { width, ..Self::default() })
-    }
-
-    pub fn with_cap(mut self, cap: LineCap) -> Self { self.cap = cap; self }
-    pub fn with_join(mut self, join: LineJoin) -> Self { self.join = join; self }
-
-    pub fn with_miter_limit(mut self, miter_limit: f32) -> Result<Self, StrokeError> {
-        if  !miter_limit.is_finite() { return Err(StrokeError::NonFiniteMiterLimit); }
-        if   miter_limit < 1.0       { return Err(StrokeError::MiterLimitTooSmall); }
-        self.miter_limit = miter_limit;   Ok(self)
-    }
-
-    pub fn with_tolerance(mut self, tolerance: f32) -> Result<Self, StrokeError> {
-        if  !tolerance.is_finite() { return Err(StrokeError::NonFiniteTolerance); }
-        if   tolerance <= 0.0      { return Err(StrokeError::NonPositiveTolerance); }
-        self.tolerance = tolerance;   Ok(self)
-    }
-
-    pub fn with_max_arc_segments(mut self, maximum: u16) -> Result<Self, StrokeError> {
-        if maximum == 0 { return Err(StrokeError::ArcSegmentLimitZero); }
-        self.max_arc_segments = maximum;   Ok(self)
-    }
-
-    pub fn width(&self) -> f32 { self.width }
-    pub fn half_width(&self) -> f32 { self.width * 0.5 }
-    pub fn miter_limit(&self) -> f32 { self.miter_limit }
-    pub fn tolerance(&self) -> f32 { self.tolerance }
-    pub fn max_arc_segments(&self) -> u16 { self.max_arc_segments }
-    pub fn cap(&self) -> LineCap { self.cap }
-    pub fn join(&self) -> LineJoin { self.join }
-}
-
-#[cfg(feature = "f32")] impl Default for StrokeOptions {
-    fn default() -> Self { Self {
-            width: 1.0, miter_limit: 4.0, cap: LineCap::Butt, join: LineJoin::Miter,
-            tolerance: 0.25, max_arc_segments: 64,
-    } }
-}
-
-#[cfg(feature = "f32")] #[derive(Clone, Copy, Debug, PartialEq)] pub enum StrokeExpandError<E> {
-    NonFinitePoint, ArcSegmentLimit { needed: usize, maximum: u16 }, Sink(E),
-}
 
 /// Compact descriptor for one flattened stroke subpath.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -121,15 +46,6 @@ impl<'a, T> FlattenedStrokePath<'a, T> {
             (&self.points[start..start + contour.len()], contour.is_closed())
         })
     }
-}
-
-/// Flattens a transformed path into caller-owned, compact stroke storage.
-#[cfg(feature = "f32")]
-pub fn flatten_stroke_path<'a>(path: &Path, transform: Affine, options: FlattenOptions,
-    workspace: &'a mut StrokePathWorkspace<'_>) ->
-    Result<FlattenedStrokePath<'a>, FlattenError<StrokeWorkspaceError>> {
-    flatten_stroke_path_with(workspace,
-        |sink| flatten_path(path, transform, options, sink))
 }
 
 pub(crate) struct StrokePathSink<'a, T = Scalar> {
@@ -201,15 +117,99 @@ impl<T: Copy> LineSink<T> for StrokePathSink<'_, T> {
     }
 }
 
-/// Expands one line into a consistently wound closed fill contour.
 #[cfg(feature = "f32")]
+mod float {
+use super::*;
+use core::f32::consts::{FRAC_PI_2, PI};
+use crate::{edge::{Edge, EdgeSink}, float::{acos, atan2, ceil, cos, sin, sqrt},
+    geometry::{Affine, Path}, flatten::{flatten_path, FlattenError, FlattenOptions}};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum StrokeError {
+    NonFiniteWidth, NonPositiveWidth, NonFiniteMiterLimit, MiterLimitTooSmall,
+    NonFiniteTolerance, NonPositiveTolerance, ArcSegmentLimitZero,
+}
+
+/// Validated device-space stroke parameters.
+///
+/// ```
+/// use ugl_rs::stroke::{LineCap, LineJoin, StrokeError, StrokeOptions};
+///
+/// let options = StrokeOptions::new(6.0).unwrap()
+///     .with_cap(LineCap::Round).with_join(LineJoin::Bevel)
+///     .with_miter_limit(8.0).unwrap()
+///     .with_tolerance(0.125).unwrap()
+///     .with_max_arc_segments(32).unwrap();
+/// assert_eq!((options.width(), options.half_width()), (6.0, 3.0));
+/// assert_eq!((options.cap(), options.join()), (LineCap::Round, LineJoin::Bevel));
+/// assert_eq!(StrokeOptions::new(0.0), Err(StrokeError::NonPositiveWidth));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq)] pub struct StrokeOptions {
+    width: f32, miter_limit: f32, cap: LineCap, join: LineJoin,
+    tolerance: f32, max_arc_segments: u16,
+}
+
+impl StrokeOptions {
+    pub fn new(width: f32) -> Result<Self, StrokeError> {
+        if !width.is_finite() { return Err(StrokeError::NonFiniteWidth); }
+        if  width <= 0.0 { return Err(StrokeError::NonPositiveWidth); }
+        Ok(Self { width, ..Self::default() })
+    }
+
+    pub fn with_cap(mut self, cap: LineCap) -> Self { self.cap = cap; self }
+    pub fn with_join(mut self, join: LineJoin) -> Self { self.join = join; self }
+
+    pub fn with_miter_limit(mut self, miter_limit: f32) -> Result<Self, StrokeError> {
+        if  !miter_limit.is_finite() { return Err(StrokeError::NonFiniteMiterLimit); }
+        if   miter_limit < 1.0       { return Err(StrokeError::MiterLimitTooSmall); }
+        self.miter_limit = miter_limit;   Ok(self)
+    }
+
+    pub fn with_tolerance(mut self, tolerance: f32) -> Result<Self, StrokeError> {
+        if  !tolerance.is_finite() { return Err(StrokeError::NonFiniteTolerance); }
+        if   tolerance <= 0.0      { return Err(StrokeError::NonPositiveTolerance); }
+        self.tolerance = tolerance;   Ok(self)
+    }
+
+    pub fn with_max_arc_segments(mut self, maximum: u16) -> Result<Self, StrokeError> {
+        if maximum == 0 { return Err(StrokeError::ArcSegmentLimitZero); }
+        self.max_arc_segments = maximum;   Ok(self)
+    }
+
+    pub fn width(&self) -> f32 { self.width }
+    pub fn half_width(&self) -> f32 { self.width * 0.5 }
+    pub fn miter_limit(&self) -> f32 { self.miter_limit }
+    pub fn tolerance(&self) -> f32 { self.tolerance }
+    pub fn max_arc_segments(&self) -> u16 { self.max_arc_segments }
+    pub fn cap(&self) -> LineCap { self.cap }
+    pub fn join(&self) -> LineJoin { self.join }
+}
+
+impl Default for StrokeOptions {
+    fn default() -> Self { Self {
+            width: 1.0, miter_limit: 4.0, cap: LineCap::Butt, join: LineJoin::Miter,
+            tolerance: 0.25, max_arc_segments: 64,
+    } }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)] pub enum StrokeExpandError<E> {
+    NonFinitePoint, ArcSegmentLimit { needed: usize, maximum: u16 }, Sink(E),
+}
+
+/// Flattens a transformed path into caller-owned, compact stroke storage.
+pub fn flatten_stroke_path<'a>(path: &Path, transform: Affine, options: FlattenOptions,
+    workspace: &'a mut StrokePathWorkspace<'_>) ->
+    Result<FlattenedStrokePath<'a>, FlattenError<StrokeWorkspaceError>> {
+    flatten_stroke_path_with(workspace,
+        |sink| flatten_path(path, transform, options, sink))
+}
+
+/// Expands one line into a consistently wound closed fill contour.
 pub fn stroke_line<S: EdgeSink>(from: Point, to: Point, options: StrokeOptions,
     sink: &mut S) -> Result<(), StrokeExpandError<S::Error>> {
     stroke_polyline(&[from, to], false, options, sink)
 }
 
 /// Expands an open or closed polyline without allocating an intermediate path.
-#[cfg(feature = "f32")]
 pub fn stroke_polyline<S: EdgeSink>(points: &[Point], closed: bool, options: StrokeOptions,
     sink: &mut S) -> Result<(), StrokeExpandError<S::Error>> {
     if points.iter().any(|point| !point_is_finite(*point)) {
@@ -264,7 +264,6 @@ pub fn stroke_polyline<S: EdgeSink>(points: &[Point], closed: bool, options: Str
 /// join polygons.  That is a useful fallback for degenerate input and round
 /// geometry, but multiplies the edge count.  A non-round open polyline has a
 /// direct boundary representation, so emit that boundary once.
-#[cfg(feature = "f32")]
 fn stroke_open_outline<S: EdgeSink>(points: &[Point], options: StrokeOptions,
     sink: &mut S) -> Result<(), StrokeExpandError<S::Error>> {
     let radius = options.half_width();
@@ -310,14 +309,12 @@ fn stroke_open_outline<S: EdgeSink>(points: &[Point], options: StrokeOptions,
     contour.close()
 }
 
-#[cfg(feature = "f32")]
 fn offset_endpoint(point: Point, unit: Point, radius: f32, side: f32,
     extension: f32) -> Point {
     (point.x - unit.y * radius * side + unit.x * extension,
      point.y + unit.x * radius * side + unit.y * extension).into()
 }
 
-#[cfg(feature = "f32")]
 fn emit_outline_join<S: EdgeSink>(contour: &mut EdgeContour<'_, S>, point: Point,
     before: Point, after: Point, side: f32, options: StrokeOptions) ->
     Result<(), StrokeExpandError<S::Error>> {
@@ -363,7 +360,6 @@ fn emit_outline_join<S: EdgeSink>(contour: &mut EdgeContour<'_, S>, point: Point
 }
 
 /// Applies the documented cap behavior to a point-only contour.
-#[cfg(feature = "f32")]
 pub fn stroke_point<S: EdgeSink>(point: Point, options: StrokeOptions,
     sink: &mut S) -> Result<(), StrokeExpandError<S::Error>> {
     if !point_is_finite(point) { return Err(StrokeExpandError::NonFinitePoint); }
@@ -388,16 +384,13 @@ pub fn stroke_point<S: EdgeSink>(point: Point, options: StrokeOptions,
     }
 }
 
-#[cfg(feature = "f32")]
 fn point_is_finite(point: Point) -> bool { point.x.is_finite() && point.y.is_finite() }
 
-#[cfg(feature = "f32")]
 fn segment_at(points: &[Point], index: usize) -> (Point, Point) {
     if index + 1 < points.len() { (points[index], points[index + 1])
     } else { (points[points.len() - 1], points[0]) }
 }
 
-#[cfg(feature = "f32")]
 fn unit_vector(from: Point, to: Point) -> Result<Option<Point>, ()> {
     let (dx, dy) = (to.x - from.x, to.y - from.y);
     let length = sqrt(dx * dx + dy * dy);
@@ -405,7 +398,6 @@ fn unit_vector(from: Point, to: Point) -> Result<Option<Point>, ()> {
     Ok((length != 0.0).then(|| (dx / length, dy / length).into()))
 }
 
-#[cfg(feature = "f32")]
 fn arc_segments(radius: f32, options: StrokeOptions) -> Result<usize, (usize, u16)> {
     let tolerance = options.tolerance().min(radius);
     let maximum_angle = 2.0 * acos((1.0 - tolerance / radius).clamp(-1.0, 1.0));
@@ -415,7 +407,6 @@ fn arc_segments(radius: f32, options: StrokeOptions) -> Result<usize, (usize, u1
     } else { Ok(needed) }
 }
 
-#[cfg(feature = "f32")]
 fn emit_segment_body<S: EdgeSink>(from: Point, to: Point, unit: Point, radius: f32,
     sink: &mut S) -> Result<(), StrokeExpandError<S::Error>> {
     let normal: Point = (-unit.y * radius, unit.x * radius).into();
@@ -425,7 +416,6 @@ fn emit_segment_body<S: EdgeSink>(from: Point, to: Point, unit: Point, radius: f
                      (to.x + normal.x,   to.y + normal.y).into()], sink)
 }
 
-#[cfg(feature = "f32")]
 fn emit_cap<S: EdgeSink>(point: Point, unit: Point, start: bool, options: StrokeOptions,
     sink: &mut S) -> Result<(), StrokeExpandError<S::Error>> {
     let (radius, direction) = (options.half_width(), if start { -1.0 } else { 1.0 });
@@ -454,7 +444,6 @@ fn emit_cap<S: EdgeSink>(point: Point, unit: Point, start: bool, options: Stroke
     }
 }
 
-#[cfg(feature = "f32")]
 fn emit_join<S: EdgeSink>(point: Point, before: Point, after: Point,
     options: StrokeOptions, sink: &mut S) -> Result<(), StrokeExpandError<S::Error>> {
     let cross = before.x * after.y - before.y * after.x;
@@ -502,7 +491,6 @@ fn emit_join<S: EdgeSink>(point: Point, before: Point, after: Point,
     }
 }
 
-#[cfg(feature = "f32")]
 fn emit_polygon<S: EdgeSink>(points: &[Point], sink: &mut S) ->
     Result<(), StrokeExpandError<S::Error>> {
     let mut contour = EdgeContour::new(sink);
@@ -510,15 +498,15 @@ fn emit_polygon<S: EdgeSink>(points: &[Point], sink: &mut S) ->
     contour.close()
 }
 
-#[cfg(feature = "f32")] struct EdgeContour<'a, S> {
+struct EdgeContour<'a, S> {
     sink: &'a mut S, first: Option<Point>, previous: Option<Point>,
 }
 
-#[cfg(feature = "f32")] impl<'a, S> EdgeContour<'a, S> {
+impl<'a, S> EdgeContour<'a, S> {
     fn new(sink: &'a mut S) -> Self { Self { sink, first: None, previous: None } }
 }
 
-#[cfg(feature = "f32")] impl<S: EdgeSink> EdgeContour<'_, S> {
+impl<S: EdgeSink> EdgeContour<'_, S> {
     fn point(&mut self, point: Point) -> Result<(), StrokeExpandError<S::Error>> {
         if let Some(previous) = self.previous {
             if let Some(edge) = Edge::from_line(previous, point) {
@@ -545,10 +533,17 @@ fn emit_polygon<S: EdgeSink>(points: &[Point], sink: &mut S) ->
     }
 }
 
-#[cfg(test)] mod tests { use super::*;
+}
+
+#[cfg(feature = "f32")]
+pub use float::{StrokeError, StrokeExpandError, StrokeOptions, flatten_stroke_path,
+    stroke_line, stroke_point, stroke_polyline};
+
+#[cfg(all(test, feature = "f32"))] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
-    use crate::geometry::PathBuilder;
+    use crate::{edge::Edge, flatten::{FlattenError, FlattenOptions},
+        geometry::{Affine, PathBuilder}};
 
     fn collect_line(from: impl Into<Point>,
                       to: impl Into<Point>, cap: LineCap) -> Vec<Edge> {

@@ -1,70 +1,6 @@
 //! Allocation-free dash decomposition for flattened `f32` contours.
 
 use crate::geometry::{Point, Scalar};
-#[cfg(feature = "f32")] use crate::float::{fmod, sqrt};
-
-#[cfg(feature = "f32")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum DashPatternError {
-    Empty, NonFiniteLength, NonPositiveLength, NonFinitePhase,
-    CycleOverflow, SlotCountOverflow,
-}
-
-/// Validated alternating on/off lengths and starting phase.
-///
-/// Odd-length arrays are repeated to preserve alternating on/off parity, and
-/// negative phases are normalized into the resulting cycle:
-///
-/// ```
-/// use ugl_rs::dash::{DashPattern, DashPatternError};
-///
-/// let pattern = DashPattern::new(&[2.0, 1.0, 3.0], -1.0).unwrap();
-/// assert_eq!((pattern.cycle(), pattern.phase()), (12.0, 11.0));
-/// assert_eq!(DashPattern::new(&[], 0.0).unwrap_err(), DashPatternError::Empty);
-/// assert_eq!(DashPattern::new(&[1.0, 0.0], 0.0).unwrap_err(),
-///     DashPatternError::NonPositiveLength);
-/// ```
-#[cfg(feature = "f32")] #[derive(Clone, Copy, Debug)] pub struct DashPattern<'a> {
-    lengths: &'a [f32], phase: f32, cycle: f32, slots: usize,
-}
-
-#[cfg(feature = "f32")] impl<'a> DashPattern<'a> {
-    pub fn new(lengths: &'a [f32], phase: f32) -> Result<Self, DashPatternError> {
-        if lengths.is_empty() { return Err(DashPatternError::Empty); }
-        if !phase.is_finite() { return Err(DashPatternError::NonFinitePhase); }
-        let mut cycle = 0.0;
-        for &length in lengths {
-            if !length.is_finite() { return Err(DashPatternError::NonFiniteLength); }
-            if length <= 0.0 { return Err(DashPatternError::NonPositiveLength); }
-            cycle += length;
-        }
-        let slots = if lengths.len() & 1 == 0 { lengths.len() } else {
-            lengths.len().checked_mul(2).ok_or(DashPatternError::SlotCountOverflow)?
-        };
-        if slots != lengths.len() { cycle *= 2.0; }
-        if !cycle.is_finite() { return Err(DashPatternError::CycleOverflow); }
-        let phase = fmod(phase, cycle);
-        Ok(Self { lengths, phase: if phase < 0.0 { phase + cycle } else { phase },
-            cycle, slots })
-    }
-
-    pub fn lengths(&self) -> &'a [f32] { self.lengths }
-    pub fn phase(&self) -> f32 { self.phase }
-    pub fn cycle(&self) -> f32 { self.cycle }
-
-    fn initial_state(self) -> DashState {
-        let (mut index, mut phase) = (0, self.phase as f64);
-        while phase >= self.length(index) as f64 {
-            phase -= self.length(index) as f64;
-            index = self.next(index);
-        }
-        DashState { index, remaining: self.length(index) - phase as f32 }
-    }
-
-    fn length(self, index: usize) -> f32 { self.lengths[index % self.lengths.len()] }
-    fn next(self, index: usize) -> usize {
-        if index + 1 == self.slots { 0 } else { index + 1 }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub struct DashContour {
     start: u32, len: u32, closed: bool,
@@ -109,7 +45,74 @@ impl<'a, T> DashedPath<'a, T> {
     pub points: usize, pub contours: usize,
 }
 
-#[cfg(feature = "f32")] #[derive(Clone, Copy)]
+#[cfg(feature = "f32")]
+mod float {
+use super::*;
+use crate::float::{fmod, sqrt};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum DashPatternError {
+    Empty, NonFiniteLength, NonPositiveLength, NonFinitePhase,
+    CycleOverflow, SlotCountOverflow,
+}
+
+/// Validated alternating on/off lengths and starting phase.
+///
+/// Odd-length arrays are repeated to preserve alternating on/off parity, and
+/// negative phases are normalized into the resulting cycle:
+///
+/// ```
+/// use ugl_rs::dash::{DashPattern, DashPatternError};
+///
+/// let pattern = DashPattern::new(&[2.0, 1.0, 3.0], -1.0).unwrap();
+/// assert_eq!((pattern.cycle(), pattern.phase()), (12.0, 11.0));
+/// assert_eq!(DashPattern::new(&[], 0.0).unwrap_err(), DashPatternError::Empty);
+/// assert_eq!(DashPattern::new(&[1.0, 0.0], 0.0).unwrap_err(),
+///     DashPatternError::NonPositiveLength);
+/// ```
+#[derive(Clone, Copy, Debug)] pub struct DashPattern<'a> {
+    lengths: &'a [f32], phase: f32, cycle: f32, slots: usize,
+}
+
+impl<'a> DashPattern<'a> {
+    pub fn new(lengths: &'a [f32], phase: f32) -> Result<Self, DashPatternError> {
+        if lengths.is_empty() { return Err(DashPatternError::Empty); }
+        if !phase.is_finite() { return Err(DashPatternError::NonFinitePhase); }
+        let mut cycle = 0.0;
+        for &length in lengths {
+            if !length.is_finite() { return Err(DashPatternError::NonFiniteLength); }
+            if length <= 0.0 { return Err(DashPatternError::NonPositiveLength); }
+            cycle += length;
+        }
+        let slots = if lengths.len() & 1 == 0 { lengths.len() } else {
+            lengths.len().checked_mul(2).ok_or(DashPatternError::SlotCountOverflow)?
+        };
+        if slots != lengths.len() { cycle *= 2.0; }
+        if !cycle.is_finite() { return Err(DashPatternError::CycleOverflow); }
+        let phase = fmod(phase, cycle);
+        Ok(Self { lengths, phase: if phase < 0.0 { phase + cycle } else { phase },
+            cycle, slots })
+    }
+
+    pub fn lengths(&self) -> &'a [f32] { self.lengths }
+    pub fn phase(&self) -> f32 { self.phase }
+    pub fn cycle(&self) -> f32 { self.cycle }
+
+    fn initial_state(self) -> DashState {
+        let (mut index, mut phase) = (0, self.phase as f64);
+        while phase >= self.length(index) as f64 {
+            phase -= self.length(index) as f64;
+            index = self.next(index);
+        }
+        DashState { index, remaining: self.length(index) - phase as f32 }
+    }
+
+    fn length(self, index: usize) -> f32 { self.lengths[index % self.lengths.len()] }
+    fn next(self, index: usize) -> usize {
+        if index + 1 == self.slots { 0 } else { index + 1 }
+    }
+}
+
+#[derive(Clone, Copy)]
 struct DashState { index: usize, remaining: f32 }
 
 /// Decomposes one flattened contour into open on-dash polylines.
@@ -117,7 +120,6 @@ struct DashState { index: usize, remaining: f32 }
 /// Closed contours continue through their closing segment. When an on interval
 /// crosses the closure seam, its last and first pieces are merged so the seam
 /// receives a join rather than two caps.
-#[cfg(feature = "f32")]
 pub fn dash_polyline<'a>(points: &[Point], closed: bool, pattern: DashPattern<'_>,
     workspace: &'a mut DashWorkspace<'_>) -> Result<DashedPath<'a>, DashError> {
     let required = dash_requirements(points, closed, pattern)?;
@@ -131,7 +133,6 @@ pub fn dash_polyline<'a>(points: &[Point], closed: bool, pattern: DashPattern<'_
 }
 
 /// Returns the exact workspace needed by [`dash_polyline`].
-#[cfg(feature = "f32")]
 pub fn dash_requirements(points: &[Point], closed: bool, pattern: DashPattern<'_>) ->
     Result<DashRequirements, DashError> {
     if points.iter().any(|point| !point.x.is_finite() || !point.y.is_finite()) {
@@ -142,7 +143,6 @@ pub fn dash_requirements(points: &[Point], closed: bool, pattern: DashPattern<'_
     Ok(counter.requirements())
 }
 
-#[cfg(feature = "f32")]
 fn dash_polyline_to<W: DashOutput<Point>>(points: &[Point], closed: bool,
     pattern: DashPattern<'_>, writer: &mut W) -> Result<(), DashError> {
     let Some(&first) = points.first() else { return Ok(()); };
@@ -170,7 +170,6 @@ fn dash_polyline_to<W: DashOutput<Point>>(points: &[Point], closed: bool,
     Ok(())
 }
 
-#[cfg(feature = "f32")]
 fn dash_segment<W: DashOutput<Point>>(from: Point, to: Point, pattern: DashPattern<'_>,
     state: &mut DashState, writer: &mut W) -> Result<(), DashError> {
     let (dx, dy) = (to.x - from.x, to.y - from.y);
@@ -203,6 +202,11 @@ fn dash_segment<W: DashOutput<Point>>(from: Point, to: Point, pattern: DashPatte
     }
     Ok(())
 }
+
+}
+
+#[cfg(feature = "f32")]
+pub use float::{DashPattern, DashPatternError, dash_polyline, dash_requirements};
 
 pub(crate) fn validate_capacity(required: DashRequirements, points: usize, contours: usize) ->
     Result<(), DashError> {
@@ -376,7 +380,7 @@ impl<T: Copy + PartialEq> DashOutput<Point<T>> for DashWriter<'_, T> {
     }
 }
 
-#[cfg(test)] mod tests { use super::*;
+#[cfg(all(test, feature = "f32"))] mod tests { use super::*;
     use alloc::{vec, vec::Vec};
 
     fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->

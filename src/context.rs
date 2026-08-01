@@ -19,7 +19,7 @@ use crate::{
     color::SRGBA, dash::{DashContour, DashPattern}, edge::Edge, flatten::FlattenOptions,
     geometry::{Affine, Path, Point, Rect},
     raster::{CoverageMask, CoverageSink, FillRule}, sampler::{PaintSampler, SolidPaint},
-    state::{Clip, DrawState, GlobalAlphaPaint},
+    render::{Clip, DrawState, GlobalAlphaPaint},
     stroke::{StrokeContour, StrokeOptions},
 };
 
@@ -411,7 +411,7 @@ impl CoverageSink for ClipMaskSink<'_> {
 
 impl Canvas<'static> {
     /// Creates a zero-initialized tightly packed RGBA8888 canvas.
-    pub fn new(width: u32, height: u32) -> Result<Self, crate::canvas::PixmapError> {
+    pub fn new(width: u32, height: u32) -> Result<Self, crate::PixmapError> {
         Ok(Self::from_target(Pixmap::new(width, height)?))
     }
 }
@@ -419,7 +419,7 @@ impl Canvas<'static> {
 impl<'target> Canvas<'target> {
     /// Creates a canvas over caller-owned RGBA8888 storage.
     pub fn from_buffer(data: &'target mut [u8], width: u32, height: u32, stride: u32) ->
-        Result<Self, crate::canvas::PixmapError> {
+        Result<Self, crate::PixmapError> {
         Ok(Self::from_target(Pixmap::from_buffer(data, width, height, stride)?))
     }
 

@@ -1,6 +1,6 @@
 //! Linear-light premultiplied framebuffer and analytic compositing path.
 //!
-//! Unlike [`crate::canvas::Pixmap`], this target retains `f32` linear-light
+//! Unlike [`crate::Pixmap`], this target retains `f32` linear-light
 //! colors through source-over compositing. Encoding and RGBA8 quantization occur
 //! only when [`LinearPixmap::encode_into`] presents into the compatibility
 //! framebuffer.

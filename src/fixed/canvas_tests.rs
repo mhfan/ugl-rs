@@ -1,19 +1,9 @@
 use super::*;
 use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection}, canvas::{
         RenderOptions as FloatRenderOptions, RenderWorkspace as FloatRenderWorkspace,
-        rasterize_path_clip as rasterize_float_path_clip,
-        render_paint as render_float_paint,
-        render_paint_clipped as render_float_paint_clipped,
-        render_paint_masked as render_float_paint_masked},
+        rasterize_path_clip as rasterize_float_path_clip},
     color::{PremulRGBA, PremulSRGBA8, SRGBA as RGBA}, edge::Edge,
-    geometry::{Affine, Path, PathBuilder}, sampler::SpreadMode};
-
-fn rectangle(left: f32, top: f32, right: f32, bottom: f32) -> Path {
-    let mut builder = PathBuilder::new();
-    builder.move_to((left, top)).line_to((right, top))
-           .line_to((right, bottom)).line_to((left, bottom));
-    builder.build()
-}
+    geometry::{Affine, PathBuilder}, sampler::SpreadMode};
 
 #[test] fn planners_return_exact_capacities_for_fill_stroke_and_dash() {
     use crate::{fixed::{Scalar, dash::Pattern}, stroke::StrokeContour};
@@ -171,62 +161,6 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(target.pixel_bytes(0, 0), Some([128; 4]));
     assert_eq!(target.pixel_bytes(1, 0), Some([128; 4]));
 
-    struct CoordinatePaint;
-    impl crate::sampler::PaintSampler for CoordinatePaint {
-        fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
-            PremulSRGBA8::new((x * 40.0) as _, (y * 40.0) as _, 0, u8::MAX).unwrap()
-        }
-    }
-    let mut painted_pixels = [0; 8];
-    render_compat_paint(&lines, &CoordinatePaint, FillRule::NonZero,
-        &mut Pixmap::from_buffer(&mut painted_pixels, 2, 1, 8).unwrap(),
-        &mut Workspace { segments: &mut segments,
-            trapezoids: &mut trapezoids, row_area: &mut row_area,
-            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-        }).unwrap();
-    assert_eq!(painted_pixels, [10, 10, 0, 128, 30, 10, 0, 128]);
-    let path = rectangle(0.5, 0.0, 1.5, 1.0);
-    let mut analytic_pixels = [0; 8];
-    render_float_paint(&path, Affine::identity(), &CoordinatePaint,
-        FloatRenderOptions::default(),
-        &mut Pixmap::from_buffer(&mut analytic_pixels, 2, 1, 8).unwrap(),
-        &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
-    assert_eq!(painted_pixels, analytic_pixels);
-
-    let mut clipped_pixels = [0; 8];
-    render_compat_paint_clipped(&lines, &CoordinatePaint,
-        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(), FillRule::NonZero,
-        &mut Pixmap::from_buffer(&mut clipped_pixels, 2, 1, 8).unwrap(),
-        &mut Workspace { segments: &mut segments,
-            trapezoids: &mut trapezoids, row_area: &mut row_area,
-            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-        }).unwrap();
-    assert_eq!(clipped_pixels, [5, 5, 0, 64, 0, 0, 0, 0]);
-    analytic_pixels.fill(0);
-    render_float_paint_clipped(&path, Affine::identity(), &CoordinatePaint,
-        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
-        FloatRenderOptions::default(),
-        &mut Pixmap::from_buffer(&mut analytic_pixels, 2, 1, 8).unwrap(),
-        &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
-    assert_eq!(clipped_pixels, analytic_pixels);
-
-    let mut masked_pixels = [0; 8];
-    render_compat_paint_masked(&lines, &CoordinatePaint,
-        CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(), FillRule::NonZero,
-        &mut Pixmap::from_buffer(&mut masked_pixels, 2, 1, 8).unwrap(),
-        &mut Workspace { segments: &mut segments,
-            trapezoids: &mut trapezoids, row_area: &mut row_area,
-            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-        }).unwrap();
-    assert_eq!(masked_pixels, [5, 5, 0, 64, 30, 10, 0, 128]);
-    analytic_pixels.fill(0);
-    render_float_paint_masked(&path, Affine::identity(), &CoordinatePaint,
-        CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
-        FloatRenderOptions::default(),
-        &mut Pixmap::from_buffer(&mut analytic_pixels, 2, 1, 8).unwrap(),
-        &mut AnalyticBuffers::<2, 2>::new().workspace()).unwrap();
-    assert_eq!(masked_pixels, analytic_pixels);
-
     let (mut coverage_strips, mut coverage_runs) =
         ([CoverageStrip::default(); 1], [CoverageRun::default(); 2]);
     let strips = rasterize_lines_to_strips(&lines, 2, 1, FillRule::NonZero,
@@ -236,21 +170,6 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         }, CoverageWorkspace {
             strips: &mut coverage_strips, runs: &mut coverage_runs,
         }).unwrap();
-    let mut retained_pixels = [0; 8];
-    composite_compat_paint_strips(strips, &CoordinatePaint,
-        &mut Pixmap::from_buffer(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
-    assert_eq!(retained_pixels, painted_pixels);
-    retained_pixels.fill(0);
-    composite_compat_paint_strips_clipped(strips, &CoordinatePaint,
-        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
-        &mut Pixmap::from_buffer(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
-    assert_eq!(retained_pixels, clipped_pixels);
-    retained_pixels.fill(0);
-    composite_compat_paint_strips_masked(strips, &CoordinatePaint,
-        CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
-        &mut Pixmap::from_buffer(&mut retained_pixels, 2, 1, 8).unwrap()).unwrap();
-    assert_eq!(retained_pixels, masked_pixels);
-
     let mut tiled_pixels = [0; 8];
     let mut tiled_target = Pixmap::from_buffer(&mut tiled_pixels, 2, 1, 8).unwrap();
     let (mut tiles, mut runs, mut pieces) =  ([CoverageTile::default(); 1],
@@ -268,20 +187,6 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     ).unwrap();
     assert_eq!(tiled_pixels, pixels);
 
-    let mut painted_tiled_pixels = [0; 8];
-    render_compat_paint_tiled(&lines, &CoordinatePaint, FillRule::NonZero,
-        &mut Pixmap::from_buffer(&mut painted_tiled_pixels, 2, 1, 8).unwrap(),
-        &mut Workspace { segments: &mut segments,
-            trapezoids: &mut trapezoids, row_area: &mut row_area,
-            strip_offsets: &mut strip_offsets, strip_indices: &mut strip_indices,
-        },
-        DirectTileWorkspace {
-            tiles: &mut tiles, runs: &mut runs, pieces: &mut pieces,
-            column_heads: &mut [0], column_tails: &mut [0], touched_columns: &mut [0],
-        },
-    ).unwrap();
-    assert_eq!(painted_tiled_pixels, painted_pixels);
-
     let tiled = rasterize_lines_to_tiles(&lines, 2, 1, FillRule::NonZero,
         &mut Workspace { segments: &mut segments,
             trapezoids: &mut trapezoids, row_area: &mut row_area,
@@ -297,17 +202,6 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     composite_solid_tiles(tiled, RGBA::white(),
         &mut Pixmap::from_buffer(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
     assert_eq!(cached_pixels, pixels);
-    cached_pixels.fill(0);
-    composite_compat_paint_tiles_clipped(tiled, &CoordinatePaint,
-        Rect::from_ltrb(0.5, 0.0, 1.0, 1.0).unwrap(),
-        &mut Pixmap::from_buffer(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
-    assert_eq!(cached_pixels, clipped_pixels);
-    cached_pixels.fill(0);
-    composite_compat_paint_tiles_masked(tiled, &CoordinatePaint,
-        CoverageMask::new(&[128, 255], 2, 1, 2).unwrap(),
-        &mut Pixmap::from_buffer(&mut cached_pixels, 2, 1, 8).unwrap()).unwrap();
-    assert_eq!(cached_pixels, masked_pixels);
-
     let ramp = [PremulSRGBA8::new(255, 0, 0, 255).unwrap(),
                 PremulSRGBA8::new(0, 0, 255, 255).unwrap()];
     let gradient = LinearGradient::new(
@@ -359,7 +253,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(mismatched_pixels, [17; 4]);
 
     let mut untouched = [17; 8];
-    assert!(render_compat_paint(&lines, &CoordinatePaint, FillRule::NonZero,
+    assert!(render_paint(&lines, &gradient, FillRule::NonZero,
         &mut Pixmap::from_buffer(&mut untouched, 2, 1, 8).unwrap(),
         &mut Workspace { segments: &mut [],
             trapezoids: &mut trapezoids, row_area: &mut row_area,

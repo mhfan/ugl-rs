@@ -104,7 +104,7 @@ impl<T: ColorChannel> Default for LinearPremulRGBA<T> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[repr(transparent)] pub struct PremulSRGBA8(PremulRGBA<u8>);
 
-pub const SRGB8_ENCODE_LUT_SIZE: usize = 4096;
+#[cfg(feature = "f32")] pub const SRGB8_ENCODE_LUT_SIZE: usize = 4096;
 
 /// Caller-owned linear-to-sRGB8 lookup table for framebuffer presentation.
 #[cfg(feature = "f32")]
@@ -514,7 +514,7 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
     fn from(color: RGBA<f32>) -> Self { color.premul() }
 }
 
-#[cfg(test)] mod tests { use super::*;
+#[cfg(all(test, feature = "f32"))] mod tests { use super::*;
     #[test] fn slice_conversion_checks_length() {
         assert!(RGBA::<u8>::try_from(&[][..]).is_err());
         assert!(RGBA::<u8>::try_from(&[1, 2][..]).is_err());
