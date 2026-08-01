@@ -2,4 +2,5 @@
 /target
 /Cargo.lock
 /micro-gl
+/blend2d
 

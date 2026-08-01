@@ -20,9 +20,12 @@ native-float = []
 std = []
 
 [dependencies]
-fixed = { version = "1.29", optional = true, default-features = false }
-libm = "0.2"
 #nalgebra-glm = "0.20"
+# `fixed` currently has an empty default feature set; serde/std integrations stay opt-in.
+fixed = { version = "1.29", optional = true }
+# Required by the complete no_std f32 backend. Cargo cannot conditionally enable
+# a dependency when `std` is absent; unused routines are removed when linking std builds.
+libm = "0.2"
 
 [dev-dependencies]
 criterion = "0.8"
@@ -32,8 +35,8 @@ name = "raster"
 harness = false
 
 [profile.dev]
-#incremental = false
 #debug = 'none'
+#incremental = false
 opt-level = 1   # Enable a small amount of optimization in debug mode
 
 [profile.dev.package."*"] # For any non-workspace member (all dependencies)
@@ -42,8 +45,8 @@ codegen-units = 1
 opt-level = 3
 
 [profile.release]
-codegen-units = 1   # Perform optimizations on all codegen units.
 strip = 'debuginfo' # keep 'symbols'
+codegen-units = 1   # Perform optimizations on all codegen units.
 panic = 'abort' # Do not perform backtrace for panic on release builds.
 #debug = 'full'  # for flamegraph
 #opt-level = 3   # default level

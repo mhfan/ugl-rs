@@ -372,12 +372,12 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   regressed both solid and gradient diagnostics. LLVM already removes the
   trivial scale from the compact general expression; that specialization stays
   rejected.
-- Analytic slabs special-case all-vertical active sets only after ordering new
-  edges by x. Vertical edges cannot cross pixel boundaries or one another, so
-  crossing-event and midpoint-order passes are unnecessary. Sloped sets retain
-  the numerically coalesced event algorithm and both ordering passes. Their
-  lifetime minimum and integer-x event are discovered in one active-edge
-  traversal; a measured stroke scene improved coverage time by about 6.2%.
+- Analytic slabs order newly activated edges before specializing all-vertical
+  sets. Vertical edges cannot cross one another, so they skip crossing and
+  midpoint-order passes. If the active set is unchanged and spans the next
+  complete row, sparse-cell coverage is reused and only its sink runs are
+  replayed at the new y. This reduced the matched 64-rectangle draw from about
+  118 µs to 93.5 µs without changing output.
 - The core remains `no_std` capable, while default desktop builds enable
   `std`. Floating-point capability is independent: `std` uses platform
   floor/ceil, Arm `eabihf` targets select a hardware-friendly no_std
@@ -401,43 +401,24 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   near 29.9 µs, and the complete draw near 34.7 µs. Blend2D measures 14.6 µs
   on the same harness. Prepared stroke remains useful for retained content,
   but analytic coverage math and batching dominate the remaining desktop gap.
-- An independent analytic-cell prototype now stops slabs only at edge starts,
-  ends, and real crossings; clips each boundary trapezoid analytically; records
-  guaranteed-full intervals with two range deltas; and combines the prefix scan
-  with run emission. Random, coincident-crossing, NonZero, and EvenOdd tests
-  agree with the primary analytic path to its 8-bit quantization tolerance.
-  The initial generic polygon clip was not production-fast. Replacing it with
-  the closed-form integral of `clamp(edge_x - cell_x, 0, 1)` reduced stable
-  16-edge rows from about 148 us to 109 us, versus 105 us for the primary path.
-  Churning short vertical edges are statistically even, while a 32-edge
-  crossing scene fell from about 1.97 ms to 283 us and the representative
-  former 480-edge stroke coverage stage from about 218 us to 97 us. End-to-end solid
-  compositing retained the gain, and the f32 Canvas now uses this path with an
-  explicit one-`Cell`-per-column workspace. That doubles row scratch from four
-  to eight bytes per target column. Per-row dirty x bounds now restrict later
-  clears and output scans to touched cells; the 64-small-rectangle case improved
-  from about 124 us to 112 us, while the complex stroke remained statistically
-  unchanged near 115 us. Time Profiler then located the dominant remaining
-  samples in tolerant active-edge insertion sorting rather than cell memory
-  access. The production path now preserves ordering across rows and slabs,
-  sorting only after activation, a real crossing, or a linear check detects a
-  numerically coalesced crossing; representative stroke coverage fell again
-  from about 97 us to 90 us without changing output. Compact single-contour
-  stroke expansion subsequently reduced that scene to 130 edges, about 22.5 us
-  of coverage, and about 34.7 us end to end; row-bin sorting is now only about
-  1% of the sampled draw. Unchanged all-vertical active sets reuse sparse-cell
-  coverage across consecutive rows while still replaying the sink for each y;
-  this reduced the 64-fractional-rectangle draw from about 118 us to 93.5 us
-  without changing its output.
-  Coalesced pairs that still reverse within a slab use a cold split-integral
-  path so `|right - left|` is integrated correctly for self-intersections;
-  ordinary spans retain the compact fast loop (about 96 us after this guard).
-  Adjacent crossing tests first reject separating or out-of-slab pairs with
-  multiplication and divide only for a real event candidate; the adversarial
-  sparse-cell crossing scene improved from about 215 us to 201 us.
-  Activation preserves and reuses the retained prefix order, inserting only
-  newly appended edges; representative stroke coverage subsequently reached
-  about 89 us without regressing the short-edge churn scene.
+- The production analytic-cell path stops slabs only at edge starts, ends, and
+  real crossings. It integrates boundary cells with the closed-form primitive
+  of `clamp(edge_x - cell_x, 0, 1)`, records full intervals with two range
+  deltas, and fuses the prefix scan with run emission. Dirty x bounds restrict
+  clearing and emission; scratch is one 8-byte `Cell` per target column.
+  Retained active edges stay ordered across rows, newly appended edges are
+  merged into that prefix, and crossing candidates are rejected by
+  multiplication before division. Numerically coalesced reversals use a cold
+  split-integral path. Dense analytic, sparse analytic, and high-sample
+  randomized references cover NonZero, EvenOdd, coincident, crossing, and
+  self-intersecting geometry.
+- Rejected analytic experiments remain explicit decisions: generic polygon
+  clipping and a whole-row difference accumulator did not amortize their work;
+  removing midpoint ordering broke self-intersections; hybrid introsort
+  regressed stable and ordinary churn; and factoring the duplicated hot
+  fill-span traversal through a closure helper regressed current end-to-end
+  rectangle and stroke diagnostics by roughly 2–3%. These hot loops stay
+  specialized until code-generation evidence changes.
 
 ## Implementation rules
 
@@ -569,7 +550,7 @@ Status: planned.
 | Paint/color | Solid, linear, radial, conic, transforms, encoded compatibility, linear-light compositing | Additional formats and broader quality comparison |
 | Stroke | Allocation-free f32/fixed dashes, caps, joins, and path stroke pipelines | Fuzzing and production reliability validation |
 | Fixed raster | Checked Q24.8 transformed path fill/stroke/dashing, rational crossings, sparse strips/tiles, clipping, and native fixed paint | Real-device and range validation |
-| Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks; initial matched Blend2D solid-fill harness | More matched Blend2D scenes, incremental code size, allocation instrumentation, justified SIMD |
+| Performance | Reproducible scalar, paint, stroke, active-edge, retained, and tile benchmarks; matched Blend2D fill/stroke harness | More paint/clip scenes, incremental code size, allocation instrumentation, justified SIMD |
 | Release | MSRV and feature CI, 32-bit and no-FPU build coverage | Stable API/SemVer policy, integration guidance, exhaustive unsafe/fuzz review |
 
 Both analytic f32 and Q24.8 fixed paths can convert arbitrary path coverage

@@ -359,8 +359,7 @@ and 130 directed outline edges. Run its internal stage profile with:
 cargo bench --bench raster --all-features -- stroke_stages_f32
 ```
 
-On the same host, a 20-sample diagnostic with 2-second warm-up and 3-second
-measurement produced these central estimates:
+A focused release diagnostic on the same host produced these central estimates:
 
 | Stage | Time |
 | --- | ---: |
@@ -379,76 +378,34 @@ close the measured Blend2D gap by itself. Active-edge processing, slab event
 handling, area integration, and emitted-run cost therefore take priority;
 compositing and clear account for most of the remaining residual.
 
-The first measured coverage optimization fused active-edge lifetime and
-integer-x event discovery into one traversal. Against a fresh 282.69 µs
-same-process baseline, Criterion measured 262.64 µs, a statistically
-significant 6.2% improvement. Removing midpoint ordering was also tested, but
-randomized and self-intersecting paths proved that ordering is part of the
-numeric event contract, so that experiment was rejected.
+#### Analytic pipeline status
 
-Release profiling then found software `libm` floor/ceil expansion inside both
-event discovery and span integration. Desktop `std` builds use native platform
-rounding; hard-float MCUs select a no_std arithmetic implementation by ABI,
-without coupling FPU policy to standard-library availability. On the same
-stroke scene, native desktop rounding first measured 212.66 µs; the current
-30-sample rerun measured 221.18 µs and Criterion detected no change from its
-saved baseline. A naive whole-row difference accumulator was initially
-rejected because it retained integer slab events and did not amortize its
-extra writes and prefix scan. The production sparse-cell path instead removes
-integer-x slab events, integrates boundary cells in closed form, and represents
-guaranteed-full intervals with two delta writes. It reduced the representative
-480-edge stroke coverage stage from about 218 µs to 97 µs and the complete
-encoded draw to about 113 µs. A 32-edge crossing stress scene fell from about
-1.97 ms to 283 µs. Its caller-owned row scratch is 8 bytes per pixel rather
-than the former 4 bytes; short-edge churn is statistically unchanged. Tracking
-the touched x range per row and limiting subsequent clear and emission scans to
-that range reduced the 64-small-rectangle scene from about 124 µs to 112 µs,
-removing its initial 5.7% regression. The representative complex stroke remains
-near 115 µs, statistically unchanged by the range bookkeeping. A subsequent
-profile showed active-edge insertion sorting, not cell memory layout, dominating
-the remaining integration time. Maintaining x order across rows and slabs, and
-sorting only after activation or a real crossing, reduced its coverage stage
-again from about 97 µs to 90 µs. A linear midpoint-order check catches crossings
-inside the floating-point event tolerance without restoring unconditional
-insertion sorting. The crossing stress case measured about 215 µs, though that
-adversarial benchmark remains noisier than ordinary scenes.
+The production path bins edge starts by row, retains ordered active edges, and
+splits slabs only at edge endpoints or real crossings. Boundary cells use a
+closed-form integral of `clamp(edge_x - cell_x, 0, 1)`; guaranteed-full spans
+use two range-delta writes. Clearing and run emission are restricted to the
+touched x range, so row scratch remains one 8-byte `Cell` per target column.
 
-Numerically coalesced crossings receive a separate analytic slow path: if a
-paired boundary reverses during one slab, its clamped cell integral is split at
-the crossing instead of clamping the final signed area. This fixes complex
-EvenOdd self-intersections while keeping the ordinary coverage stage near
-96 µs on the representative stroke benchmark.
+Ordering is updated only for newly activated edges and actual crossings. A
+midpoint check preserves the numeric contract for crossings within the event
+tolerance, while a cold split-integral path handles pairs that still reverse
+inside one slab. The sparse-cell implementation is checked against both the
+dense analytic reference and deterministic high-sample randomized paths for
+NonZero, EvenOdd, coincident, and self-intersecting geometry.
 
-Crossing search rejects separating and out-of-slab edge pairs with multiplication
-before paying for a floating-point division. The adversarial `crossing_32_cells`
-scene consequently fell from roughly 215 µs to 201 µs; the ordinary stroke
-remained around 96 µs. Sparse-cell differential coverage now exercises 128
-deterministic randomized paths against an 8192-sample reference.
+Open non-degenerate strokes emit one boundary contour rather than overlapping
+segment and join polygons. This reduces the matched cubic stroke from 480 to
+130 edges and is responsible for most of its current end-to-end gain. Rows with
+an unchanged all-vertical active set reuse the preceding sparse-cell coverage,
+but still replay runs for the new y so clipping and compositing semantics remain
+unchanged.
 
-Newly activated edges are now inserted only from the appended suffix because
-the retained active prefix is already ordered. This leaves short-edge churn
-near 41 µs while reducing representative stroke coverage to about 89 µs and
-coverage plus encoded blending to about 95 µs.
-
-The next structural change removed the largest stroke-specific multiplier.
-Previously every centerline segment body and join was emitted as an independent
-closed polygon, producing 480 overlapping edges for the matched scene. Open
-non-degenerate strokes now emit their two sides, joins, and caps as one boundary
-contour, including butt, square, round, bevel, and miter variants. The scene now
-uses 130 edges; row binning fell to about 1.16 µs, sparse-cell coverage to about
-22.52 µs, and the complete draw to 34.66 µs. The same-host Blend2D gap therefore
-fell from 7.4× immediately before this change to 2.38×. A fresh Time Profiler
-trace attributes about 79% of the remaining samples to analytic rasterization,
-6% to solid blending, 3.5% to curve flattening, 2.5% to outline construction,
-and roughly 1% to row-bin sorting. Further work should target coverage math and
-batching rather than more row-bin sorting special cases.
-
-Consecutive rows whose active set consists only of unchanged vertical edges now
-reuse the previous sparse-cell coverage and only replay its runs at the new y.
-This preserves per-row clipping and compositing while avoiding repeated clear
-and analytic integration. The 64-rectangle scene fell from 117.97 µs to
-93.53 µs with an unchanged checksum; the Blend2D gap fell from 3.50× to 2.78×,
-while the cubic stroke remained near 34.6 µs.
+The latest Time Profiler trace attributes about 79% of the cubic stroke samples
+to analytic rasterization, 6% to solid blending, 3.5% to curve flattening,
+2.5% to outline construction, and roughly 1% to row-bin sorting. Further work
+should target coverage batching and long-span composition rather than more
+row-bin sorting special cases. Rejected experiments and historical measurements
+are summarized in [`DESIGN.md`](DESIGN.md), not duplicated here.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the
@@ -640,7 +597,7 @@ The initial caller-owned scratch budgets are:
 | Backend | Edge/segment storage | Strip/crossing storage | Row storage |
 | --- | ---: | ---: | ---: |
 | sampled `f32` | 128 `Edge` | 128 `Intersection` | 256 `f32` |
-| analytic `f32` | 128 `Edge` | 257 `u32` row offsets + 128 `u32` edge indices + 128 `Intersection` | 256 `f32` |
+| analytic `f32` | 128 `Edge` | 257 `u32` row offsets + 128 `u32` edge indices + 128 `Intersection` | 256 8-byte `Cell` values |
 | Q24.8 fixed | 128 `fixed::raster::Segment` + 64 `fixed::raster::Trapezoid` | one `u32` offset per strip plus one `u32` per line/strip overlap | 256 `u64` |
 
 The compact target uses 4 bytes per pixel. `LinearPixmap` deliberately uses
@@ -656,40 +613,22 @@ contract.
 
 ### Stroke and active-edge scalability
 
-The analytic stroke baseline can be reproduced with:
+The end-to-end stroke groups can be reproduced with:
 
 ```text
-cargo bench --bench raster --all-features -- stroke
+cargo bench --bench raster --all-features -- stroke_rgba8888
+cargo bench --bench raster --all-features -- stroke_stages_f32
 ```
 
-Commit `81b198c` adds separate end-to-end and geometry-expansion groups.
 `stroke_rgba8888` clears a 256 × 256 destination and measures path flattening,
 stroke expansion, analytic rasterization, and solid source-over composition.
-`stroke_expand` measures flattening and edge emission without rasterization or
-destination writes. Path construction and all scratch allocation remain
-outside the measured loop. A short initial run on the same Darwin arm64
-machine used a 1-second warm-up, 1-second measurement, and 10 samples:
-
-| Scene | Points | Contours | Edges/intersections | Before bins | Binned end-to-end | Expansion only |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 32-segment Butt/Miter polyline | 33 | 1 | 191 | 557.59 µs | 430.67 µs | 972.14 ns |
-| 32-segment Round cap/join polyline | 33 | 1 | 326 | 722.35 µs | 494.36 µs | 3.7321 µs |
-| 8-cubic Butt/Miter path | 145 | 1 | 1102 | 4.3974 ms | 1.6534 ms | 7.9931 µs |
-
-Every scene also borrows one 256-element `f32` row-coverage buffer, 257 `u32`
-row offsets, and one `u32` edge index per visible edge. The table reports exact
-minimum geometry capacities for these inputs at the default flattening
-tolerance, and benchmark identifiers encode the same
-`points/contours/edges` counts. Round joins increase emitted edges by 70.7%
-for the polyline, while curve flattening expands eight cubics into 145 points
-and 1102 fill edges. Commit `5543d2b` switches canvas analytic rendering to
-caller-owned sparse row bins, eliminating repeated all-edge scans at every
-vertical slab. Relative to the pre-binning values, end-to-end time
-improved by 22.7% for Butt/Miter, 32.0% for Round, and 62.3% for the dense
-curve scene; expansion-only time remained effectively unchanged. Coverage
-integration and active-edge ordering now dominate the remaining curve cost.
-These short measurements are an initial regression baseline, not a
-cross-renderer performance comparison.
+`stroke_stages_f32` separates flattening, compact outline construction, row
+binning, coverage, and coverage-plus-blending. Path construction and scratch
+allocation remain outside every timed loop. Benchmark identifiers include the
+exact `points/contours/edges` capacity, preventing results for an obsolete
+outline representation from being mistaken for the current 130-edge cubic
+scene. The synchronized Blend2D table above is the authoritative whole-pipeline
+baseline.
 
 The no-FPU `stroke_expand_fixed` group measures a 64-point Q24.8 zig-zag with
 square caps and miter joins, excluding rasterization and destination writes.
@@ -702,33 +641,11 @@ canvas entry borrows both edge and prepared-line storage and feeds the native
 fixed paint pipeline.
 
 The `analytic_active` group isolates binned scan conversion from path expansion
-and pixel compositing. A 1-second/10-sample diagnostic run on 2026-07-31
-measured 493.56 µs for 128 stable full-height edges and 44.44 µs for 512
-short-lived edges, confirming that persistent active-set size dominates edge
-activation churn. Thirty-two edges meeting at one coincident crossing exposed
-`f32` event fragmentation: near-identical crossing heights originally formed
-many negligible slabs and took 3.721 s. Coalescing events within four ulps of
-the current y reduced that case to 2.407 ms while retaining sampled-reference
-coverage tests for both fill rules.
-
-The same group now tracks stable active sets of 16, 32, 64, 128, and 256
-edges. A focused scaling run measured approximately 116, 170, 290, 534, and
-896 µs respectively. Reversing all 256 initial edges cost only another 3.7%
-because later rows remain ordered; reversing every 32-edge activation batch
-raised the short-edge scene from 44.50 to 51.22 µs. A hybrid insertion/introsort
-experiment did not improve the repeated-disorder case and regressed stable,
-ordinary-churn, and crossing scenes by roughly 3.6–4.0%, so the hot path keeps
-the specialized adaptive insertion sort. Future unordered-activation work
-should sort row bins by x or merge each ordered activation batch instead of
-adding a comparator and movement budget to every slab.
-
-Vertical active sets now retain their required initial x ordering but skip
-integer-x event searches, adjacent-crossing scans, and midpoint reordering:
-their x coordinates cannot change. On the same host, `stable_256` improved
-from about 898 µs to 783 µs and `churn_512` from about 46.5 µs to 41.8 µs.
-The standard 64-rectangle linear render measured about 105.8 µs versus
-110.2 µs before this specialization; the crossing scene remained near
-2.42 ms.
+and pixel compositing. It covers stable active-set scaling, short-edge churn,
+unordered activation batches, coincident crossings, and a 32-edge crossing
+stress scene. These diagnostics guide algorithm selection; they are not
+cross-renderer rankings. Current design conclusions and rejected sorting
+experiments are recorded under “Performance decisions” in `DESIGN.md`.
 
 ### Fixed retained coverage and tiles
 
