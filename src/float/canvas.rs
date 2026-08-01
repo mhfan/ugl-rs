@@ -7,7 +7,7 @@
 use core::convert::Infallible;
 use crate::{common::{color::{PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorkspace},
     geometry::{Affine, Edge, Path, Point, Rect}, Pixmap, RenderError, SolidPaint,
-    raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
+    raster::{ClipMask, CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
     render::{BYTES_PER_PIXEL, EdgeCapacity, EdgeSliceSink, map_dash_error,
         solid_blend_terms, validate_coverage_dimensions},
     stroke::{StrokeContour, StrokePathWorkspace, StrokeWorkspaceError}},
@@ -353,11 +353,20 @@ pub fn render_stroke_paint_dashed_masked<S: PaintSampler>(path: &Path,
     transform: Affine, sampler: &S, mask: CoverageMask<'_>,
     options: DashedStrokePathOptions<'_>, target: &mut Pixmap<'_>,
     workspace: &mut DashedStrokeWorkspace<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
+    render_stroke_paint_dashed_with_mask(path, transform, sampler, mask,
+        options, target, workspace)
+}
+
+pub(crate) fn render_stroke_paint_dashed_with_mask<M: ClipMask, S: PaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, mask: M, options: DashedStrokePathOptions<'_>,
+    target: &mut Pixmap<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
+    Result<(), RenderError> {
+    let (mask_width, mask_height) = mask.dimensions();
+    validate_coverage_dimensions(mask_width, mask_height, target)?;
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
     render_stroke_dashed_to_region(path, transform, options, (width, height),
-        mask.non_zero_bounds().unwrap_or_default(),
+        mask.bounds().unwrap_or_default(),
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
@@ -398,11 +407,18 @@ pub fn render_stroke_paint_masked<S: PaintSampler>(path: &Path, transform: Affin
     sampler: &S, mask: CoverageMask<'_>, options: StrokePathOptions,
     target: &mut Pixmap<'_>, workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> {
-    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
+    render_stroke_paint_with_mask(path, transform, sampler, mask, options, target, workspace)
+}
+
+pub(crate) fn render_stroke_paint_with_mask<M: ClipMask, S: PaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, mask: M, options: StrokePathOptions,
+    target: &mut Pixmap<'_>, workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
+    let (mask_width, mask_height) = mask.dimensions();
+    validate_coverage_dimensions(mask_width, mask_height, target)?;
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
     render_stroke_to_region(path, transform, options, (width, height),
-        mask.non_zero_bounds().unwrap_or_default(),
+        mask.bounds().unwrap_or_default(),
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
@@ -460,11 +476,18 @@ pub fn render_paint_masked<S: PaintSampler>(path: &Path, transform: Affine,
     sampler: &S, mask: CoverageMask<'_>, options: RenderOptions,
     target: &mut Pixmap<'_>, workspace: &mut RenderWorkspace<'_>) ->
     Result<(), RenderError> {
-    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
+    render_paint_with_mask(path, transform, sampler, mask, options, target, workspace)
+}
+
+pub(crate) fn render_paint_with_mask<M: ClipMask, S: PaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, mask: M, options: RenderOptions,
+    target: &mut Pixmap<'_>, workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
+    let (mask_width, mask_height) = mask.dimensions();
+    validate_coverage_dimensions(mask_width, mask_height, target)?;
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
     render_path_to_region(path, transform, options, (width, height),
-        mask.non_zero_bounds().unwrap_or_default(),
+        mask.bounds().unwrap_or_default(),
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 

@@ -48,7 +48,6 @@ pub struct CoverageStrip { pub y: u32, pub run_start: u32, pub run_count: u32 }
 }
 
 impl<'a> CoverageStrips<'a> {
-    #[cfg(feature = "fixed")]
     pub(crate) fn from_parts(width: u32, height: u32,
         strips: &'a [CoverageStrip], runs: &'a [CoverageRun]) -> Self {
         Self { width, height, strips, runs }
@@ -232,50 +231,15 @@ impl CoverageSink for CoverageMaskMut<'_> {
     }
 }
 
-/// Writes device-space coverage into tightly packed storage for one target subregion.
-#[cfg(feature = "f32")]
-pub(crate) struct RegionMaskSink<'a> {
-    data: &'a mut [u8], left: u32, top: u32, width: u32, height: u32,
-}
-
-#[cfg(feature = "f32")] impl<'a> RegionMaskSink<'a> {
-    pub(crate) fn new(data: &'a mut [u8],
-        region: (u32, u32, u32, u32)) -> Self {
-        let (left, top, right, bottom) = region;
-        Self { data, left, top, width: right - left, height: bottom - top }
-    }
-}
-
-#[cfg(feature = "f32")] impl CoverageSink for RegionMaskSink<'_> {
-    type Error = Infallible;
-
-    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
-        Result<(), Self::Error> {
-        if x < self.left || y < self.top || y >= self.top + self.height {
-            return Ok(());
-        }
-        let start_x = x - self.left;
-        if start_x >= self.width { return Ok(()); }
-        let len = len.min(self.width - start_x);
-        let start = (y - self.top) as usize * self.width as usize + start_x as usize;
-        self.data[start..start + len as usize].fill(coverage);
-        Ok(())
-    }
-}
-
 pub(crate) trait ClipMask: Copy {
-    #[cfg(feature = "fixed")]
     fn dimensions(self) -> (u32, u32);
-    #[cfg(feature = "fixed")]
     fn bounds(self) -> Option<(u32, u32, u32, u32)>;
     fn clip_span<S: CoverageSink>(self, x: u32, y: u32, len: u32,
         coverage: u8, sink: &mut S) -> Result<(), S::Error>;
 }
 
 impl ClipMask for CoverageMask<'_> {
-    #[cfg(feature = "fixed")]
     fn dimensions(self) -> (u32, u32) { (self.width, self.height) }
-    #[cfg(feature = "fixed")]
     fn bounds(self) -> Option<(u32, u32, u32, u32)> { self.non_zero_bounds() }
 
     fn clip_span<S: CoverageSink>(self, x: u32, y: u32, len: u32,
@@ -311,9 +275,7 @@ impl ClipMask for CoverageMask<'_> {
 }
 
 impl ClipMask for CoverageStrips<'_> {
-    #[cfg(feature = "fixed")]
     fn dimensions(self) -> (u32, u32) { (self.width, self.height) }
-    #[cfg(feature = "fixed")]
     fn bounds(self) -> Option<(u32, u32, u32, u32)> {
         let first = self.runs.first()?;
         let (mut left, mut top, mut right, mut bottom) =
