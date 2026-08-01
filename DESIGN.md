@@ -409,9 +409,11 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   source-over composition.
 - Integer rectangle clips classify and convert their boundaries once when the
   sink is constructed instead of repeating four `floor` checks for every span.
-  Integral boundaries forward coverage unchanged; fractional boundaries retain
-  exact antialiased multiplication. The matched clipped cubic now measures
-  11.68 µs f32 and 18.64 µs fixed with unchanged checksums.
+  Direct render entry points also pass their compositor straight to the
+  region-bounded rasterizer for integral clips, removing the adapter branch;
+  fractional boundaries retain exact antialiased multiplication. The matched
+  clipped cubic now measures 10.82 µs f32 and 17.54 µs fixed with unchanged
+  checksums.
 - Nested-prefix 1/16/64-rectangle scenes separate fixed frame overhead from
   edge-count slope. Current f32 medians are 4.03/17.31/59.31 µs versus
   Blend2D's 3.97/11.53/34.13 µs. The widening fill gap belongs to repeated edge,

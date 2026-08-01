@@ -18,7 +18,7 @@ use crate::{
     geometry::{Affine, Path, Point, Rect},
     float::{ceil, floor},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink,
-        RectClipSink},
+        RectClipSink, rect_is_integer},
     sampler::{PaintSampler as CompatPaintSampler, SolidPaint},
     stroke::{StrokePathWorkspace, StrokeWorkspaceError},
 };
@@ -189,9 +189,14 @@ pub fn render_compat_paint_clipped<S: CompatPaintSampler>(
     Result<(), RenderError> {
     let (width, height) = (target.width(), target.height());
     let mut compositor = CompatPaintCompositor { target, sampler };
-    rasterize_lines_region(lines, width, height, clip_region(clip, width, height),
-        fill_rule, workspace,
-        &mut RectClipSink::new(clip, &mut compositor)).map_err(map_render_error)
+    let region = clip_region(clip, width, height);
+    if rect_is_integer(clip) {
+        rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
+            &mut compositor).map_err(map_render_error)
+    } else {
+        rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
+            &mut RectClipSink::new(clip, &mut compositor)).map_err(map_render_error)
+    }
 }
 
 /// Renders fixed coverage and solid paint multiplied by a borrowed path mask.
@@ -388,9 +393,14 @@ pub fn render_paint_clipped<
     workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width(), target.height());
     let mut compositor = PaintCompositor { target, sampler };
-    rasterize_lines_region(lines, width, height, clip_region(clip, width, height),
-        fill_rule, workspace,
-        &mut RectClipSink::new(clip, &mut compositor)).map_err(map_render_error)
+    let region = clip_region(clip, width, height);
+    if rect_is_integer(clip) {
+        rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
+            &mut compositor).map_err(map_render_error)
+    } else {
+        rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
+            &mut RectClipSink::new(clip, &mut compositor)).map_err(map_render_error)
+    }
 }
 
 /// Renders fixed geometry and no-FPU paint through a borrowed path mask.
