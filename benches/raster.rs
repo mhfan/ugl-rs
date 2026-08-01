@@ -1041,11 +1041,16 @@ fn benchmark_clip_masks(c: &mut Criterion) {
     let mut opaque_rect = empty.clone();
     let mut dense_local = empty.clone();
     let mut sparse_diagonal = empty.clone();
+    let mut sparse_overlap = empty.clone();
     for y in 32..96 { for x in 32..96 {
         opaque_rect[y * SIZE as usize + x] = u8::MAX;
         dense_local[y * SIZE as usize + x] = if (x + y) & 1 == 0 { 96 } else { 192 };
     } }
-    for y in 0..SIZE as usize { sparse_diagonal[y * SIZE as usize + y] = 128; }
+    for y in 0..SIZE as usize {
+        sparse_diagonal[y * SIZE as usize + y] = 128;
+        sparse_overlap[y * SIZE as usize + y] = 192;
+        sparse_overlap[y * SIZE as usize + (y + 7) % SIZE as usize] = 96;
+    }
     let masks = [
         ("empty", &empty[..]), ("opaque_rect", &opaque_rect),
         ("dense_local", &dense_local), ("sparse_diagonal", &sparse_diagonal),
@@ -1113,6 +1118,7 @@ fn benchmark_clip_masks(c: &mut Criterion) {
         let rect = ugl_rs::common::geometry::Rect::from_ltrb(
             Scalar::from_num(128.5), Scalar::from_num(128.5),
             Scalar::from_num(383.5), Scalar::from_num(383.5)).unwrap();
+        let overlap_mask = CoverageMask::new(&sparse_overlap, SIZE, SIZE, SIZE).unwrap();
         let mut intersection = c.benchmark_group("clip_mask_intersect_fixed");
         for (name, bytes) in [("dense_local", &dense_local[..]),
                               ("sparse_diagonal", &sparse_diagonal[..])] {
@@ -1125,6 +1131,15 @@ fn benchmark_clip_masks(c: &mut Criterion) {
                 black_box(canvas.target());
             }, BatchSize::SmallInput));
         }
+        intersection.bench_function("sparse_sparse", |b| b.iter_batched(|| {
+            let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
+            canvas.set_clip_mask(
+                CoverageMask::new(&sparse_diagonal, SIZE, SIZE, SIZE).unwrap());
+            canvas
+        }, |mut canvas| {
+            canvas.set_clip_mask(overlap_mask);
+            black_box(canvas.target());
+        }, BatchSize::SmallInput));
         intersection.finish();
     }
 }

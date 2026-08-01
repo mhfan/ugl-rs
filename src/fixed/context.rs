@@ -123,7 +123,7 @@ impl CanvasStorage {
     None, Empty, Rect(Rect<Scalar>),
     Path { data: Rc<[u8]>, width: u32, height: u32,
         left: u32, top: u32, right: u32, bottom: u32, stride: u32 },
-    Sparse { strips: Rc<[CoverageStrip]>, runs: Rc<[CoverageRun]>,
+    Sparse { strips: Rc<Vec<CoverageStrip>>, runs: Rc<Vec<CoverageRun>>,
         width: u32, height: u32 },
 }
 
@@ -232,7 +232,7 @@ fn sparse_canvas_mask(mask: CoverageMask<'_>) -> Option<CanvasClip> {
         strips.last_mut().unwrap().run_count += 1;
     });
     Some(CanvasClip::Sparse {
-        strips: strips.into(), runs: runs.into(),
+        strips: Rc::new(strips), runs: Rc::new(runs),
         width: mask.width(), height: mask.height(),
     })
 }
@@ -313,7 +313,7 @@ fn clip_sparse_rect(strips: &[CoverageStrip], runs: &[CoverageRun],
         }
     }
     if clipped_runs.is_empty() { CanvasClip::Empty } else { CanvasClip::Sparse {
-        strips: clipped_strips.into(), runs: clipped_runs.into(), width, height,
+        strips: Rc::new(clipped_strips), runs: Rc::new(clipped_runs), width, height,
     } }
 }
 
@@ -334,6 +334,65 @@ fn push_sparse_run(strips: &mut Vec<CoverageStrip>, runs: &mut Vec<CoverageRun>,
     }
     runs.push(CoverageRun { x, len, row, coverage });
     strips.last_mut().unwrap().run_count += 1;
+}
+
+struct SparseRuns<'a> {
+    strips: core::slice::Iter<'a, CoverageStrip>, runs: &'a [CoverageRun],
+    strip: Option<CoverageStrip>, index: usize,
+}
+
+impl<'a> SparseRuns<'a> {
+    fn new(strips: &'a [CoverageStrip], runs: &'a [CoverageRun]) -> Self {
+        Self { strips: strips.iter(), runs, strip: None, index: 0 }
+    }
+}
+
+impl Iterator for SparseRuns<'_> {
+    type Item = (u32, CoverageRun);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(strip) = self.strip {
+                let end = strip.run_start as usize + strip.run_count as usize;
+                if self.index < end {
+                    let run = self.runs[self.index]; self.index += 1;
+                    return Some((strip.y + u32::from(run.row), run));
+                }
+            }
+            let strip = *self.strips.next()?;
+            self.index = strip.run_start as usize;
+            self.strip = Some(strip);
+        }
+    }
+}
+
+fn intersect_sparse_masks(left_strips: &[CoverageStrip], left_runs: &[CoverageRun],
+    right_strips: &[CoverageStrip], right_runs: &[CoverageRun],
+    width: u32, height: u32) -> CanvasClip {
+    let (mut strips, mut runs) = (
+        Vec::with_capacity(left_strips.len().min(right_strips.len())),
+        Vec::with_capacity(left_runs.len().min(right_runs.len())));
+    let (mut left_iter, mut right_iter) = (
+        SparseRuns::new(left_strips, left_runs), SparseRuns::new(right_strips, right_runs));
+    let (mut left, mut right) = (left_iter.next(), right_iter.next());
+    while let (Some((left_y, left_run)), Some((right_y, right_run))) = (left, right) {
+        let (left_end, right_end) = (left_run.x + left_run.len, right_run.x + right_run.len);
+        if left_y < right_y || left_y == right_y && left_end <= right_run.x {
+            left = left_iter.next(); continue;
+        }
+        if right_y < left_y || left_y == right_y && right_end <= left_run.x {
+            right = right_iter.next(); continue;
+        }
+        let (x, end) = (left_run.x.max(right_run.x), left_end.min(right_end));
+        let coverage = (u16::from(left_run.coverage) * u16::from(right_run.coverage) + 127)
+            .div_euclid(255) as u8;
+        push_sparse_run(&mut strips, &mut runs, left_y, x, end - x, coverage);
+        if left_end <= right_end { left = left_iter.next(); }
+        if right_end <= left_end { right = right_iter.next(); }
+    }
+    if runs.is_empty() { CanvasClip::Empty } else { CanvasClip::Sparse {
+        strips: Rc::new(strips), runs: Rc::new(runs), width, height,
+    } }
 }
 
 fn multiply_sparse_mask(data: &mut [u8], region: (u32, u32, u32, u32), stride: u32,
@@ -367,7 +426,7 @@ fn multiply_sparse_mask(data: &mut [u8], region: (u32, u32, u32, u32), stride: u
     }
 }
 
-fn intersect_canvas_clip(current: &CanvasClip, next: &mut CanvasClip) {
+fn intersect_dense_clip(current: &CanvasClip, next: &mut CanvasClip) {
     let CanvasClip::Path { data, width, height, left, top, right, bottom, stride } = next
         else { return; };
     match current {
@@ -399,6 +458,35 @@ fn intersect_canvas_clip(current: &CanvasClip, next: &mut CanvasClip) {
         }
     }
     normalize_canvas_clip(next);
+}
+
+fn intersect_canvas_clip(current: &CanvasClip, next: &mut CanvasClip) {
+    if matches!(next, CanvasClip::Path { .. }) {
+        intersect_dense_clip(current, next);
+        return;
+    }
+    let replacement = {
+        let CanvasClip::Sparse { strips, runs, width, height } = next else { return; };
+        match current {
+            CanvasClip::None => None,
+            CanvasClip::Empty => Some(CanvasClip::Empty),
+            CanvasClip::Rect(rect) =>
+                Some(clip_sparse_rect(strips, runs, *width, *height, *rect)),
+            CanvasClip::Path { width: dense_width, height: dense_height, .. } => {
+                if (*width, *height) != (*dense_width, *dense_height) { return; }
+                let mut dense = current.clone();
+                intersect_dense_clip(next, &mut dense);
+                Some(dense)
+            }
+            CanvasClip::Sparse { strips: current_strips, runs: current_runs,
+                width: current_width, height: current_height } => {
+                if (*width, *height) != (*current_width, *current_height) { return; }
+                Some(intersect_sparse_masks(current_strips, current_runs,
+                    strips, runs, *width, *height))
+            }
+        }
+    };
+    if let Some(replacement) = replacement { *next = replacement; }
 }
 
 fn edge_region(edges: &[Edge<Scalar>], width: u32, height: u32) ->
@@ -718,7 +806,8 @@ impl<'target> Canvas<'target> {
                 MaskKind::Coverage(_) => {}
             }
         }
-        let mut clip = copy_canvas_mask(value);
+        let mut clip = sparse_canvas_mask(value).unwrap_or_else(|| copy_canvas_mask(value));
+        normalize_canvas_clip(&mut clip);
         intersect_canvas_clip(&self.clip, &mut clip);
         self.clip = clip; self
     }
@@ -755,6 +844,7 @@ impl<'target> Canvas<'target> {
             },
             MaskKind::Coverage(_) => copy_canvas_mask(mask),
         };
+        normalize_canvas_clip(&mut clip);
         intersect_canvas_clip(&self.clip, &mut clip);
         self.clip = clip;
         Ok(self)
@@ -982,6 +1072,76 @@ impl<'target> Canvas<'target> {
             assert_eq!(canvas.target().pixel_bytes(x, y).unwrap(),
                 [expected, 0, 0, expected]);
         } }
+    }
+
+    #[test] fn sparse_merge_join_and_restore_match_independent_masks() {
+        let (mut left, mut right) = (alloc::vec![0; 64 * 64], alloc::vec![0; 64 * 64]);
+        for y in 0..64_usize {
+            let x = y * 17 % 64;
+            left[y * 64 + x] = 64 + y as u8;
+            right[y * 64 + x] = 192 - y as u8;
+            right[y * 64 + (x + 5) % 64] = 127;
+        }
+        let mut shape = PathBuilder::new();
+        shape.move_to((Scalar::ZERO, Scalar::ZERO))
+            .line_to((Scalar::from_num(64), Scalar::ZERO))
+            .line_to((Scalar::from_num(64), Scalar::from_num(64)))
+            .line_to((Scalar::ZERO, Scalar::from_num(64)));
+        let shape = shape.build();
+        let mut canvas = Canvas::new(64, 64).unwrap();
+        canvas.set_clip_mask(CoverageMask::new(&left, 64, 64, 64).unwrap()).save()
+            .set_clip_mask(CoverageMask::new(&right, 64, 64, 64).unwrap())
+            .set_color(SRGBA::red()).fill(&shape).unwrap();
+        assert!(matches!(canvas.clip, CanvasClip::Sparse { .. }));
+        for y in 0..64 { for x in 0..64 {
+            let index = y as usize * 64 + x as usize;
+            let expected = (u16::from(left[index]) * u16::from(right[index]) + 127)
+                .div_euclid(255) as u8;
+            assert_eq!(canvas.target().pixel_bytes(x, y).unwrap(),
+                [expected, 0, 0, expected]);
+        } }
+
+        assert!(canvas.restore());
+        canvas.target_mut().as_bytes_mut().fill(0);
+        canvas.fill(&shape).unwrap();
+        for y in 0..64 { for x in 0..64 {
+            let expected = left[y as usize * 64 + x as usize];
+            assert_eq!(canvas.target().pixel_bytes(x, y).unwrap(),
+                [0, 0, 0, expected]);
+        } }
+    }
+
+    #[test] fn nested_paths_match_independent_mask_multiplication() {
+        let path = |offset: i32| {
+            let fixed = Scalar::from_num;
+            let mut builder = PathBuilder::new();
+            builder.move_to((fixed(4 + offset), fixed(5)))
+                .line_to((fixed(58), fixed(13 + offset)))
+                .line_to((fixed(37 - offset), fixed(59)))
+                .line_to((fixed(7), fixed(43 - offset)));
+            builder.build()
+        };
+        let (left, right) = (path(0), path(6));
+        let fixed = Scalar::from_num;
+        let mut full = PathBuilder::new();
+        full.move_to((fixed(0), fixed(0))).line_to((fixed(64), fixed(0)))
+            .line_to((fixed(64), fixed(64))).line_to((fixed(0), fixed(64)));
+        let full = full.build();
+        let render = |first: &Path<Scalar>, second: Option<&Path<Scalar>>| {
+            let mut canvas = Canvas::new(64, 64).unwrap();
+            canvas.set_clip_path(first).unwrap();
+            if let Some(second) = second { canvas.set_clip_path(second).unwrap(); }
+            canvas.set_color(SRGBA::red()).fill(&full).unwrap();
+            canvas.target().as_bytes().to_vec()
+        };
+        let (left_mask, right_mask, combined) = (
+            render(&left, None), render(&right, None), render(&left, Some(&right)));
+        for ((left, right), combined) in left_mask.chunks_exact(4)
+            .zip(right_mask.chunks_exact(4)).zip(combined.chunks_exact(4)) {
+            let expected = (u16::from(left[3]) * u16::from(right[3]) + 127)
+                .div_euclid(255) as u8;
+            assert_eq!(combined, &[expected, 0, 0, expected]);
+        }
     }
 
     #[test] fn canvas_ref_matches_state_clip_and_workspace_shape() {

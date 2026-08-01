@@ -793,8 +793,22 @@ is smaller, reducing diagonal construction from roughly 432 µs to 329 µs.
 These quick measurements identify trends rather than release thresholds.
 
 Dense/sparse clip multiplication and deterministic scattered-mask rectangle
-intersection are checked pixel-for-pixel. Remaining work is broader randomized
-nested path/path intersection and allocator-backed peak-byte instrumentation.
+intersection are checked pixel-for-pixel. New masks select their representation
+before intersection, so two sparse masks use an ordered merge-join with work
+proportional to their run counts. Deterministic randomized sparse/sparse,
+sparse/dense, nested path/path, and `save`/`restore` tests compare against
+independently rendered or scalar dense results.
+
+The isolated `clip_alloc` integration test installs a counting system allocator
+without slowing the normal benchmark binary. For the 512×512 diagonal it reports
+four allocations, 6,608 allocated/peak bytes for initial retention and for a
+sparse rectangle intersection. A warmed draw and warmed `save`/`restore` perform
+zero allocations. Mutating a saved dense 64×64 clip uses three allocations and
+peaks at 8,736 bytes while copy-on-write storage and its normalized sparse result
+briefly coexist. Direct borrowed-mask encoding was required here: the earlier
+dense-copy-first route peaked at 524,304 bytes despite its small final mask.
+Remaining work is randomized fuzzing over longer clip sequences and real-device
+allocator/code-size measurements.
 
 Retained memory, initial mask allocation, rasterization, and subsequent
 intersection now scale with the clipped region. Large-target peak-allocation
