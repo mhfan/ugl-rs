@@ -224,35 +224,39 @@ impl CoverageSink for RegionMaskSink<'_> {
     }
 }
 
-/// Coverage adapter that multiplies incoming spans by a borrowed mask.
-pub struct  MaskClipSink<'a, S> { mask: CoverageMask<'a>, sink: &'a mut S }
-
-impl<'a, S> MaskClipSink<'a, S> {
-    pub fn new(mask: CoverageMask<'a>, sink: &'a mut S) -> Self { Self { mask, sink } }
+pub(crate) trait ClipMask: Copy {
+    #[cfg(feature = "fixed")]
+    fn dimensions(self) -> (u32, u32);
+    #[cfg(feature = "fixed")]
+    fn bounds(self) -> Option<(u32, u32, u32, u32)>;
+    fn clip_span<S: CoverageSink>(self, x: u32, y: u32, len: u32,
+        coverage: u8, sink: &mut S) -> Result<(), S::Error>;
 }
 
-impl<S> CoverageSink for MaskClipSink<'_, S> where S: CoverageSink {
-    type Error = S::Error;
+impl ClipMask for CoverageMask<'_> {
+    #[cfg(feature = "fixed")]
+    fn dimensions(self) -> (u32, u32) { (self.width, self.height) }
+    #[cfg(feature = "fixed")]
+    fn bounds(self) -> Option<(u32, u32, u32, u32)> { self.non_zero_bounds() }
 
-    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
-        Result<(), Self::Error> {
-        match self.mask.kind {
+    fn clip_span<S: CoverageSink>(self, x: u32, y: u32, len: u32,
+        coverage: u8, sink: &mut S) -> Result<(), S::Error> {
+        match self.kind {
             MaskKind::Empty => return Ok(()),
             MaskKind::OpaqueRect((left, top, right, bottom)) => {
                 if y < top || y >= bottom { return Ok(()); }
                 let (start, end) = (x.max(left), x.saturating_add(len).min(right));
-                return if start < end {
-                    self.sink.span(start, y, end - start, coverage)
-                } else { Ok(()) };
+                return if start < end { sink.span(start, y, end - start, coverage) }
+                    else { Ok(()) };
             }
             MaskKind::Coverage(_) => {}
         }
-        let (left, top, right, bottom) = self.mask.storage_region();
+        let (left, top, right, bottom) = self.storage_region();
         if y < top || y >= bottom { return Ok(()); }
         let (start, end) = (x.max(left), x.saturating_add(len).min(right));
         if start >= end { return Ok(()); }
-        let row = (y - top) as usize * self.mask.stride as usize;
-        let mask = &self.mask.data[row + (start - left) as usize..
+        let row = (y - top) as usize * self.stride as usize;
+        let mask = &self.data[row + (start - left) as usize..
             row + (end - left) as usize];
         let mut cursor = 0;
         while cursor < mask.len() {
@@ -260,10 +264,27 @@ impl<S> CoverageSink for MaskClipSink<'_, S> where S: CoverageSink {
             let run = equal_prefix(&mask[cursor..], value);
             let clipped = (coverage as u16 * value as u16 + 127).div_euclid(255) as u8;
             if clipped != 0 {
-                self.sink.span(start + cursor as u32, y, run as _, clipped)?;
+                sink.span(start + cursor as u32, y, run as _, clipped)?;
             }
             cursor += run;
         }   Ok(())
+    }
+}
+
+/// Coverage adapter that multiplies incoming spans by a borrowed mask.
+pub(crate) struct MaskClipSink<'a, M, S> { mask: M, sink: &'a mut S }
+
+impl<'a, M, S> MaskClipSink<'a, M, S> {
+    pub(crate) fn new(mask: M, sink: &'a mut S) -> Self { Self { mask, sink } }
+}
+
+impl<M, S> CoverageSink for MaskClipSink<'_, M, S>
+    where M: ClipMask, S: CoverageSink {
+    type Error = S::Error;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        self.mask.clip_span(x, y, len, coverage, self.sink)
     }
 }
 

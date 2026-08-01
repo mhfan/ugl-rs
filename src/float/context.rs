@@ -141,6 +141,8 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
                 path, transform, &paint, rect, options, target, &mut workspace),
             Clip::Mask(mask) => render_paint_masked(
                 path, transform, &paint, mask, options, target, &mut workspace),
+            #[cfg(feature = "fixed")]
+            Clip::SparseMask(_) => unreachable!("fixed mask in float canvas"),
         }
     }
 
@@ -175,6 +177,8 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
                 path, transform, &paint, rect, options, target, &mut self.workspace.stroke),
             Clip::Mask(mask) => render_stroke_paint_masked(
                 path, transform, &paint, mask, options, target, &mut self.workspace.stroke),
+            #[cfg(feature = "fixed")]
+            Clip::SparseMask(_) => unreachable!("fixed mask in float canvas"),
         }
     }
 
@@ -216,6 +220,8 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
                 path, transform, &paint, rect, options, target, &mut dashed),
             Clip::Mask(mask) => render_stroke_paint_dashed_masked(
                 path, transform, &paint, mask, options, target, &mut dashed),
+            #[cfg(feature = "fixed")]
+            Clip::SparseMask(_) => unreachable!("fixed mask in float canvas"),
         }
     }
 }

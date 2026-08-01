@@ -34,6 +34,8 @@ pub enum SpreadMode { #[default] Pad, Repeat, Reflect }
 
 #[derive(Clone, Copy, Debug)] pub(crate) enum Clip<'a, T = f32> {
     None, Rect(Rect<T>), Mask(CoverageMask<'a>),
+    #[cfg(feature = "fixed")]
+    SparseMask(crate::fixed::raster::CoverageStrips<'a>),
 }
 
 #[derive(Clone, Copy, Debug)]

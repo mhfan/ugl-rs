@@ -761,24 +761,24 @@ positive `f32` feature enables optional `libm`; hosted builds additionally enabl
 
 ### Clip/mask bounds optimization
 
-Owned `Canvas` clips now retain only their non-zero integer bounds plus a
-tightly packed 8-bit mask. The internal coverage-mask view carries a device
+Owned `Canvas` clips retain only their non-zero integer bounds. The internal coverage-mask view carries a device
 origin, treats samples outside its storage rectangle as zero, and keeps the
 logical target dimensions for validation. Rectangle and nested path
 intersection therefore visit only the retained region; borrowed public masks
 remain zero-copy and full-canvas by default.
 
-New f32 path clips derive conservative bounds from prepared edges and rasterize
+Path clips derive conservative bounds from prepared edges and rasterize
 directly into local storage without rebuilding geometry or allocating a
-canvas-sized temporary mask. Remaining work is narrower:
+canvas-sized temporary mask. Empty masks, opaque integer rectangles, and
+general coverage are classified once. The first two become empty/rectangle
+clip state and bypass per-byte mask multiplication.
 
-- preserve zero-copy borrowed full-canvas masks while allowing bounded masks
-  through the same `CanvasRef` and low-level rendering adapters;
-- specialize empty, rectangular, and fully opaque masks so they do not become
-  dense image-sized buffers;
-- use bounded dense masks for the desktop f32 path, and evaluate sparse
-  strips/tiles for fixed/MCU masks so memory tracks non-empty coverage rather
-  than canvas area;
+The fixed owning canvas compares packed bytes with the existing 16-row
+strip/run encoding after clip construction or intersection. It retains the
+sparse form only when its exact record payload is smaller, and the mask adapter
+consumes it directly during fill, stroke, and dashed stroke. Dense storage
+remains preferable for compact or highly fragmented masks. Remaining work is:
+
 - add equivalence tests against the current full-canvas representation and
   benchmarks for small clips on large targets, nested clips, clearing,
   intersection, peak bytes, and masked draw throughput.
@@ -850,10 +850,10 @@ The first stable method vocabulary is small:
 - `stroke_dashed` and `stroke_dashed_with` accept a borrowed validated pattern
   rather than storing it in context state; their additional point/contour
   buffers are explicit in `float::context::Workspace`.
-- clipping is context state, represented as no clip, one rectangle, or one
-  borrowed coverage mask. Both owning canvases additionally retain accumulated
-  local path masks and scope their available clip state together with
-  drawing state through `save`/`restore`.
+- clipping is context state, represented as no clip, an empty clip, one
+  rectangle, or coverage. Both owning canvases retain accumulated local path
+  masks; fixed storage may use dense coverage or sparse strips. Clip state is
+  scoped with drawing state through `save`/`restore`.
 
 Status: owning and borrowed f32/fixed fill/stroke/dash facades are implemented.
 Both share generic state storage and parallel method

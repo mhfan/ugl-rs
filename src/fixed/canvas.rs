@@ -4,7 +4,8 @@ use core::convert::Infallible;
 use crate::{
     common::{color::SRGBA, dash::{DashContour, DashWorkspace},
         geometry::{Affine, Edge, Path, Point, Rect},
-        raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
+        raster::{ClipMask, CoverageMask, CoverageMaskMut, CoverageSink, FillRule,
+            MaskClipSink},
         render::{EdgeCapacity, EdgeSliceSink, Pixmap, RenderError, map_dash_error,
         validate_coverage_dimensions},
         stroke::{StrokePathWorkspace, StrokeWorkspaceError}, SolidPaint},
@@ -267,6 +268,16 @@ pub fn render_path_masked<
         mask, options.fill_rule, target, raster_workspace)
 }
 
+pub(crate) fn render_path_sparse_masked<
+    S: PaintSampler>(path: &Path<Scalar>, sampler: &S, mask: CoverageStrips<'_>,
+    options: RenderOptions, target: &mut Pixmap<'_>,
+    geometry: &mut GeometryWorkspace<'_>, raster_workspace: &mut Workspace<'_>) ->
+    Result<(), RenderError> {
+    let usage = prepare_path(path, options, geometry)?;
+    render_paint_with_mask(&geometry.lines[..usage.lines], sampler,
+        mask, options.fill_rule, target, raster_workspace)
+}
+
 /// Expands and renders a Q24.8 polyline with no floating-point operations.
 pub fn render_stroke_polyline<
     S: PaintSampler>(points: &[Point<Scalar>], closed: bool,
@@ -411,10 +422,18 @@ pub fn render_paint_masked<
     S: PaintSampler>(lines: &[Line], sampler: &S,
     mask: CoverageMask<'_>, fill_rule: FillRule, target: &mut Pixmap<'_>,
     workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
-    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
+    render_paint_with_mask(lines, sampler, mask, fill_rule, target, workspace)
+}
+
+pub(crate) fn render_paint_with_mask<M: ClipMask,
+    S: PaintSampler>(lines: &[Line], sampler: &S,
+    mask: M, fill_rule: FillRule, target: &mut Pixmap<'_>,
+    workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
+    let (mask_width, mask_height) = mask.dimensions();
+    validate_coverage_dimensions(mask_width, mask_height, target)?;
     let (width, height) = (target.width(), target.height());
     let mut compositor = PaintCompositor { target, sampler };
-    let region = mask.non_zero_bounds().unwrap_or_default();
+    let region = mask.bounds().unwrap_or_default();
     rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
         &mut MaskClipSink::new(mask, &mut compositor)).map_err(map_render_error)
 }

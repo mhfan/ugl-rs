@@ -37,8 +37,7 @@ impl Affine<Scalar> {
     /// symmetrically away from zero:
     ///
     /// ```
-    /// use ugl_rs::{common::geometry::Affine,
-    ///     fixed::{Scalar, TransformError}};
+    /// use ugl_rs::{common::geometry::Affine, fixed::{Scalar, TransformError}};
     ///
     /// let raw = Scalar::from_bits;
     /// let half = Affine::new(raw(128), raw(0), raw(0), raw(128), raw(0), raw(0));

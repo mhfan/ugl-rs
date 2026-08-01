@@ -272,10 +272,12 @@ explicitly sized as `stride × height`.
 ### Arbitrary path clipping
 
 `Canvas::set_clip_path` and `fixed::Canvas::set_clip_path` are the ordinary
-free-path clipping APIs. They rasterize
-and retain the antialiased mask in tightly packed non-zero bounds, intersecting
-only that region with the current clip; subsequent fill, stroke, and
-dashed-stroke calls apply it without exposing mask storage. Initial construction
+free-path clipping APIs. They rasterize and retain the antialiased mask within
+its non-zero bounds, intersecting only that region with the current clip.
+Empty masks collapse to an empty clip and opaque integer rectangles remain
+rectangle clips. The fixed owning canvas additionally selects sparse 16-row
+strip/run storage when it is smaller than packed coverage, and consumes those
+runs directly during drawing. Initial construction
 derives conservative bounds from the prepared edges and rasterizes directly
 into local coverage storage; it does not allocate a temporary canvas-sized mask.
 `save`/`restore` scopes nested clips.

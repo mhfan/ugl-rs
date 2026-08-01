@@ -249,7 +249,23 @@ fn render_region(edges: &[Edge<Scalar>], width: usize, height: usize,
         replayed[y as usize * 4 + x as usize] = coverage;
         Ok::<_, Infallible>(())
     }).unwrap();
-    assert_eq!(replayed, render(&edges, 4, 40, FillRule::NonZero));
+    let dense = render(&edges, 4, 40, FillRule::NonZero);
+    assert_eq!(replayed, dense);
+
+    use crate::common::raster::ClipMask;
+    let mut clipped = [0; 4 * 40];
+    for y in 0..40 {
+        retained.clip_span(1, y, 3, 127, &mut |x, y, coverage| {
+            clipped[y as usize * 4 + x as usize] = coverage;
+            Ok::<_, Infallible>(())
+        }).unwrap();
+    }
+    for y in 0..40 { for x in 0..4 {
+        let expected = if x == 0 { 0 } else {
+            (u16::from(dense[y * 4 + x]) * 127 + 127).div_euclid(255) as u8
+        };
+        assert_eq!(clipped[y * 4 + x], expected);
+    } }
 }
 
 #[test] fn retained_coverage_reports_each_caller_owned_capacity() {

@@ -430,6 +430,11 @@ pub struct CoverageStrips<'a> {
 }
 
 impl<'a> CoverageStrips<'a> {
+    pub(crate) fn from_parts(width: u32, height: u32,
+        strips: &'a [CoverageStrip], runs: &'a [CoverageRun]) -> Self {
+        Self { width, height, strips, runs }
+    }
+
     pub fn  width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
     pub fn strips(&self) -> &'a [CoverageStrip] { self.strips }
@@ -443,6 +448,47 @@ impl<'a> CoverageStrips<'a> {
                 sink.span(run.x, strip.y + run.row as u32, run.len, run.coverage)?;
             }
         }   Ok(())
+    }
+}
+
+impl crate::common::raster::ClipMask for CoverageStrips<'_> {
+    fn dimensions(self) -> (u32, u32) { (self.width, self.height) }
+
+    fn bounds(self) -> Option<(u32, u32, u32, u32)> {
+        let first = self.runs.first()?;
+        let (mut left, mut top, mut right, mut bottom) =
+            (first.x, self.height, first.x + first.len, 0);
+        for strip in self.strips {
+            let start = strip.run_start as usize;
+            for run in &self.runs[start..start + strip.run_count as usize] {
+                let y = strip.y + u32::from(run.row);
+                left = left.min(run.x); right = right.max(run.x + run.len);
+                top = top.min(y);       bottom = bottom.max(y + 1);
+            }
+        }
+        Some((left, top, right, bottom))
+    }
+
+    fn clip_span<S: CoverageSink>(self, x: u32, y: u32, len: u32,
+        coverage: u8, sink: &mut S) -> Result<(), S::Error> {
+        let strip_y = y / STRIP_HEIGHT * STRIP_HEIGHT;
+        let Ok(index) = self.strips.binary_search_by_key(&strip_y, |strip| strip.y)
+            else { return Ok(()); };
+        let strip = self.strips[index];
+        let start = strip.run_start as usize;
+        let runs = &self.runs[start..start + strip.run_count as usize];
+        let row = (y - strip_y) as u8;
+        let start = runs.partition_point(|run| run.row < row);
+        let end = start + runs[start..].partition_point(|run| run.row == row);
+        let incoming_end = x.saturating_add(len);
+        for run in &runs[start..end] {
+            let (left, right) = (x.max(run.x), incoming_end.min(run.x + run.len));
+            if left >= right { continue; }
+            let coverage = (u16::from(coverage) * u16::from(run.coverage) + 127)
+                .div_euclid(255) as u8;
+            if coverage != 0 { sink.span(left, y, right - left, coverage)?; }
+        }
+        Ok(())
     }
 }
 
