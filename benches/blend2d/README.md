@@ -27,6 +27,11 @@ Third-party source and build products are intentionally not vendored.
   8-bit coverage mask in one draw. Blend2D has no public free-path clip entry;
   its explicitly labeled equivalent renders the shape and applies a retained
   PRGB32 mask with `DST_IN`, including the extra image-composition pass.
+  ugl-rs mask validation and non-zero-bound derivation are setup and the same
+  cached `CoverageMask` value is reused by every timed frame.
+- The sparse retained-mask variant uses the same construction and draw contract
+  with a radius-24 rather than radius-100 circle, exposing whether cost follows
+  non-zero mask density or an unavoidable full-image pass.
 - `build_path_mask` separately times clear plus rasterization of the same
   circular path into an 8-bit ugl-rs mask or a white PRGB32 Blend2D image.
   RGBA normalization and file output remain outside the timed region.

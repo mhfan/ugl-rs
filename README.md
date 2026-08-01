@@ -314,7 +314,7 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
 version metadata. The current three-backend baseline was measured on 2026-08-01
-after ugl-rs `6999e33`, using Blend2D
+after ugl-rs `ffacf29`, using Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
 rustc 1.97.1 on macOS 15.6 arm64. Nine 5,000-frame samples after 500 warm-up
@@ -322,17 +322,16 @@ frames produced:
 
 | Scene | f32 median | fixed median | Blend2D median | Blend2D vs f32 | fixed vs f32 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 1 fractional rectangle, fill | 4.36 µs | 9.59 µs | 4.12 µs | 1.06× faster | 2.20× slower |
-| 16 fractional rectangles, fill | 23.46 µs | 60.54 µs | 11.29 µs | 2.08× faster | 2.58× slower |
-| large fractional rectangle, fill | 73.61 µs | 115.74 µs | 14.59 µs | 5.05× faster | 1.57× slower |
-| large rectangle, linear gradient | 130.14 µs | 221.24 µs | 31.83 µs | 4.09× faster | 1.70× slower |
-| large rectangle, radial gradient | 177.50 µs | 471.43 µs | 41.84 µs | 4.24× faster | 2.66× slower |
-| large rectangle, conic gradient (Fast) | 243.29 µs | 450.13 µs | 68.42 µs | 3.56× faster | 1.85× slower |
-| large rectangle, retained path mask | 81.07 µs | 123.87 µs | 29.98 µs¹ | 2.70× faster | 1.53× slower |
+| 1 fractional rectangle, fill | 3.94 µs | 8.40 µs | 3.55 µs | 1.11× faster | 2.13× slower |
+| 16 fractional rectangles, fill | 14.60 µs | 43.03 µs | 10.97 µs | 1.33× faster | 2.95× slower |
+| 64 fractional rectangles, fill | 48.78 µs | 173.11 µs | 33.68 µs | 1.45× faster | 3.55× slower |
+| large fractional rectangle, fill | 19.28 µs | 108.66 µs | 14.59 µs | 1.32× faster | 5.64× slower |
+| large rectangle, linear gradient | 73.66 µs | 263.57 µs | 31.83 µs | 2.31× faster | 3.58× slower |
+| large rectangle, radial gradient | 123.02 µs | 427.28 µs | 41.84 µs | 2.94× faster | 3.47× slower |
+| large rectangle, conic gradient (Fast) | 185.59 µs | 458.87 µs | 68.42 µs | 2.71× faster | 2.47× slower |
+| large rectangle, sparse retained path mask | 5.44 µs | 10.64 µs | 30.36 µs¹ | 5.58× slower | 1.95× slower |
+| large rectangle, dense retained path mask | 22.14 µs | 93.36 µs | 29.98 µs¹ | 1.35× slower | 4.22× slower |
 | build circular path mask | 59.44 µs | 118.73 µs | 9.16 µs | 6.49× faster | 2.00× slower |
-| 1 fractional rectangle, fill | 4.26 µs | 8.60 µs | 3.55 µs | 1.20× faster | 2.02× slower |
-| 16 fractional rectangles, fill | 23.23 µs | 44.88 µs | 10.97 µs | 2.12× faster | 1.93× slower |
-| 64 fractional rectangles, fill | 83.67 µs | 172.66 µs | 33.68 µs | 2.48× faster | 2.06× slower |
 | 64 triangles, fill | 118.49 µs | 261.31 µs | 33.62 µs | 3.52× faster | 2.21× slower |
 | 8 gentle cubic arches, fill | 17.85 µs | 30.97 µs | 8.21 µs | 2.17× faster | 1.73× slower |
 | cubic fill under rectangle clip | 15.72 µs | 25.22 µs | 3.53 µs | 4.45× faster | 1.60× slower |
@@ -346,7 +345,8 @@ frames produced:
 | linear gradient rectangle | 10.800% | 0% | 0 / 0 |
 | radial gradient rectangle | 11.160% | 0.098% | 0.00024 / 1 |
 | conic gradient rectangle (Fast) | 13.873% | 0.003% | 0.000008 / 1 |
-| retained path mask | 0.505% | 0.764% | 0.00539 / 3 |
+| sparse retained path mask | 0.093% | 0.130% | 0.00075 / 2 |
+| dense retained path mask | 0.505% | 0.764% | 0.00539 / 3 |
 | built path mask | 0.529% | 0.801% | 0.01152 / 4 |
 | rectangle grid | 2.246% | 0% | 0 / 0 |
 | triangles | 2.637% | 0.195% | 0.00147 / 1 |
@@ -381,36 +381,35 @@ compositor. Integer rectangle clips bypass per-pixel coverage multiplication
 and constrain analytic/fixed row and cell processing to the conservative
 clipped domain. This reduced the matched clipped cubic from 19.26 to 15.72 µs
 for f32 and from 31.08 to 25.22 µs for fixed without changing either checksum.
-Mask-density complexity, memory, and cold-start/JIT cost still require separate
-matched scenes.
+Memory and cold-start/JIT cost still require separate matched scenes.
 
 The nested-prefix 1/16/64 rectangle series separates fixed frame overhead from
-per-shape scaling. f32 grows by about 1.25 µs per additional rectangle, fixed
-by 2.6 µs, and Blend2D by 0.48 µs. The one-rectangle f32 gap is only 1.20×;
-the widening gap is therefore dominated by repeated edge/raster/span work, not
-runner or clear overhead. The f32 and fixed outputs are byte-identical at all
-three points.
-
-Stage measurements put f32 cell coverage at 55.53 of the 83.67 µs complete
-64-rectangle draw. Fixed streaming coverage initially consumed 203.61 of
-238.70 µs. A vertical-trapezoid boundary formula avoids general polygon
-clipping for axis-aligned edges, reducing fixed coverage to 144.04 µs and the
-complete draw to 172.66 µs without changing output. Generic sloped and crossing
-edges retain the exact rational/polygon path.
+per-shape scaling. Direct vertical-run emission reduced f32 from
+4.26/23.23/83.67 to 3.94/14.60/48.78 µs; its 64-shape gap is now 1.45×.
+Fixed vertical-trapezoid boundary area reduced its raster-only stage from
+203.61 to 144.04 µs and its complete 64-shape draw from 238.70 to about
+173 µs. The f32 and fixed outputs remain byte-identical. Generic sloped and
+crossing edges retain their analytic-cell or exact rational/polygon paths.
 
 The matched horizontal linear gradient uses a 256-entry encoded ramp and black
 stops whose alpha changes from 32 to 224, avoiding ambiguity from different RGB
 interpolation spaces. Batched affine span stepping plus direct full-coverage
 composition reduced f32 from 381.33 to 192.50 µs. Direct Pad-ramp traversal
-then reduced it to 130.14 µs; fixed moved from 446.92 to 221.24 µs. Both
+then reduced it to 130.14 µs; direct vertical coverage now brings the complete
+f32 draw to 73.66 µs. The current fixed result is 263.57 µs. Both
 ugl-rs backends are byte-identical; their one-code-value delta from Blend2D is
-its gradient quantization rule. The remaining 4.09× desktop gap is dominated
+its gradient quantization rule. The remaining 2.31× desktop gap is dominated
 by scalar ramp lookup and per-pixel writes rather than coverage.
 
-The retained path-mask scene excludes mask construction. Equal mask runs are
-now scanned eight bytes at a time, reducing f32 from 119.02 to 81.07 µs and
-fixed from 164.03 to 123.87 µs. ¹ Blend2D's 29.98 µs number is an explicitly
-labeled equivalent implemented by drawing the shape and applying a retained
+The retained path-mask scenes exclude mask construction. Equal mask runs are
+scanned eight bytes at a time and vertical coverage is emitted directly. f32
+now measures 5.44 µs for a radius-24 sparse mask and 22.14 µs for the existing
+radius-100 mask; fixed measures 10.64 and 93.36 µs. `CoverageMask` derives and
+caches its non-zero bounds in fixed-enabled builds, so the fixed raster visits
+only that domain. The f32 backend instead keeps its faster word-wise zero-run
+filtering; pre-scanning the complete mask regressed the sparse case. ¹ Blend2D's roughly
+30 µs result is an explicitly labeled equivalent implemented by drawing the
+shape and applying a retained
 PRGB32 mask with `DST_IN`; Blend2D exposes no free-path Context clip, so this
 includes an extra image pass and is not evidence for a native path-mask API.
 Building the same mask costs 59.44 µs for f32, 118.73 µs for fixed, and
