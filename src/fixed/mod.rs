@@ -32,6 +32,25 @@ impl ScalarConstants for Scalar {
 
 impl Affine<Scalar> {
     /// Transforms a Q24.8 point with widened multiply-add and checked conversion.
+    ///
+    /// Intermediate products are widened, and half-subpixel results round
+    /// symmetrically away from zero:
+    ///
+    /// ```
+    /// use ugl_rs::{common::geometry::Affine,
+    ///     fixed::{Scalar, TransformError}};
+    ///
+    /// let raw = Scalar::from_bits;
+    /// let half = Affine::new(raw(128), raw(0), raw(0), raw(128), raw(0), raw(0));
+    /// assert_eq!(half.try_transform_point((raw(1), raw(-1)).into()).unwrap(),
+    ///     (raw(1), raw(-1)).into());
+    ///
+    /// let maximum = Scalar::MAX;
+    /// let overflow = Affine::new(maximum, Scalar::ZERO, Scalar::ZERO,
+    ///     maximum, maximum, maximum);
+    /// assert_eq!(overflow.try_transform_point((maximum, maximum).into()),
+    ///     Err(TransformError::Overflow));
+    /// ```
     pub fn try_transform_point(&self, point: Point<Scalar>) ->
         Result<Point<Scalar>, TransformError> {
         let transform = |first: Scalar, x: Scalar, second: Scalar, y: Scalar,
@@ -63,18 +82,3 @@ pub mod canvas;
 pub mod dash;
 
 pub use context::{Canvas, CanvasRef};
-
-#[cfg(test)] mod tests { use super::*;
-    #[test] fn affine_widens_rounds_symmetrically_and_checks_output() {
-        let raw = Scalar::from_bits;
-        let half_scale = Affine::new(raw(128), raw(0), raw(0), raw(128), raw(0), raw(0));
-        assert_eq!(half_scale.try_transform_point((raw(1), raw(-1)).into()).unwrap(),
-            (raw(1), raw(-1)).into());
-
-        let maximum = Scalar::MAX;
-        let overflow = Affine::new(maximum, Scalar::ZERO, Scalar::ZERO,
-            maximum, maximum, maximum);
-        assert_eq!(overflow.try_transform_point((maximum, maximum).into()),
-            Err(TransformError::Overflow));
-    }
-}
