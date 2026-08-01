@@ -63,6 +63,20 @@ impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
 
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
         Result<(), Self::Error> {
+        let integer = |value: f32| value == floor(value);
+        if integer(self.rect.left()) && integer(self.rect.top()) &&
+            integer(self.rect.right()) && integer(self.rect.bottom()) {
+            let (left, top, right, bottom) = (
+                self.rect.left().max(0.0) as u32,
+                self.rect.top().max(0.0) as u32,
+                self.rect.right().max(0.0) as u32,
+                self.rect.bottom().max(0.0) as u32,
+            );
+            if y < top || y >= bottom { return Ok(()); }
+            let (start, end) = (x.max(left), x.saturating_add(len).min(right));
+            if start < end { self.sink.span(start, y, end - start, coverage)?; }
+            return Ok(());
+        }
         let overlap = |from: f32, to: f32, pixel: u32| {
             (to.min(pixel as f32 + 1.0) - from.max(pixel as f32)).clamp(0.0, 1.0)
         };
