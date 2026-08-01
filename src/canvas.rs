@@ -519,7 +519,8 @@ pub fn render_stroke_paint_dashed_masked<S: PaintSampler>(path: &Path,
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_dashed_to(path, transform, options, width, height,
+    render_stroke_dashed_to_region(path, transform, options, (width, height),
+        mask.non_zero_bounds().unwrap_or_default(),
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
@@ -558,7 +559,8 @@ pub fn render_stroke_paint_masked<S: PaintSampler>(path: &Path, transform: Affin
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_to(path, transform, options, width, height,
+    render_stroke_to_region(path, transform, options, (width, height),
+        mask.non_zero_bounds().unwrap_or_default(),
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 
@@ -614,7 +616,8 @@ pub fn render_paint_masked<S: PaintSampler>(path: &Path, transform: Affine,
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_path_to(path, transform, options, width, height,
+    render_path_to_region(path, transform, options, (width, height),
+        mask.non_zero_bounds().unwrap_or_default(),
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
 }
 

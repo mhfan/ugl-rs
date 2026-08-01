@@ -110,7 +110,6 @@ impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
 /// Borrowed 8-bit coverage mask with explicit row stride.
 #[derive(Clone, Copy, Debug)] pub struct CoverageMask<'a> {
     data: &'a [u8], width: u32, height: u32, stride: u32,
-    #[cfg(feature = "fixed")]
     non_zero_bounds: Option<(u32, u32, u32, u32)>,
 }
 
@@ -139,19 +138,15 @@ fn validate_mask_buffer(length: usize, width: u32, height: u32, stride: u32) ->
 }
 
 impl<'a> CoverageMask<'a> {
-    /// Validates the storage. Fixed-backend builds also derive non-zero bounds once.
+    /// Validates the storage and derives non-zero bounds once.
     ///
     /// The returned mask is cheap to copy and should be retained across draws;
     /// masked rendering reuses its cached bounds instead of rescanning pixels.
     pub fn new(data: &'a [u8], width: u32, height: u32, stride: u32) ->
         Result<Self, CoverageMaskError> {
         validate_mask_buffer(data.len(), width, height, stride)?;
-        #[cfg(feature = "fixed")]
         let non_zero_bounds = find_non_zero_bounds(data, width, height, stride);
-        Ok(Self { data, width, height, stride,
-            #[cfg(feature = "fixed")]
-            non_zero_bounds,
-        })
+        Ok(Self { data, width, height, stride, non_zero_bounds })
     }
 
     pub fn  width(&self) -> u32 { self.width }
@@ -159,13 +154,11 @@ impl<'a> CoverageMask<'a> {
     pub fn stride(&self) -> u32 { self.stride }
     pub fn as_bytes(&self) -> &[u8] { self.data }
 
-    #[cfg(feature = "fixed")]
     pub(crate) fn non_zero_bounds(&self) -> Option<(u32, u32, u32, u32)> {
         self.non_zero_bounds
     }
 }
 
-#[cfg(feature = "fixed")]
 fn find_non_zero_bounds(data: &[u8], width: u32, height: u32, stride: u32) ->
     Option<(u32, u32, u32, u32)> {
     let (mut left, mut top, mut right, mut bottom) = (width, height, 0, 0);
