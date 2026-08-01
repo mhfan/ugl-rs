@@ -395,7 +395,11 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   radius-180 sampler; geometric row partitioning keeps that diagnostic near
   441 µs while accelerating the radius-112 matched scene. Blend2D measures
   41.41 µs, leaving SIMD square-root throughput and encoded ramp/compositor
-  batching as the measured paint costs.
+  batching as the measured paint costs. A public sampler callback that encoded
+  repeated-color runs was also rejected: despite routing the constant regions
+  through the existing solid-span blender, it changed the interior compositor
+  from 274.17 to 306.49 µs. Constant-run transport therefore stays out of the
+  public paint contract until a representation can preserve current codegen.
 - The matched conic scene explicitly uses the opt-in `Fast` angle policy while
   `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
   approximation; fixed evaluates the same polynomial in widened integer turns

@@ -1584,6 +1584,9 @@ fn benchmark_clip_masks(c: &mut Criterion) {
     let radial = RadialGradient::new(
         (fixed(WIDTH / 2), fixed(HEIGHT / 2)), fixed(180),
         ramp, SpreadMode::Pad).unwrap();
+    let matched_radial = RadialGradient::new(
+        (fixed(WIDTH / 2), fixed(HEIGHT / 2)), fixed(112),
+        ramp, SpreadMode::Pad).unwrap();
     let focal = RadialGradient::two_circle(
         (fixed(96), fixed(112)), fixed(8), (fixed(128), fixed(128)), fixed(180),
         ramp, SpreadMode::Pad).unwrap();
@@ -1602,6 +1605,8 @@ fn benchmark_clip_masks(c: &mut Criterion) {
         |b| b.iter(|| black_box(sample_fixed_checksum(&radial))));
     paint_group.bench_function("radial_concentric_span",
         |b| b.iter(|| black_box(sample_fixed_span_checksum(&radial))));
+    paint_group.bench_function("radial_concentric_pad_112_span",
+        |b| b.iter(|| black_box(sample_fixed_span_checksum(&matched_radial))));
     paint_group.bench_function("radial_two_circle",
         |b| b.iter(|| black_box(sample_fixed_checksum(&focal))));
     paint_group.bench_function("conic",
