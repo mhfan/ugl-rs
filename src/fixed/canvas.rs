@@ -6,8 +6,8 @@ use crate::{
         geometry::{Affine, Edge, Path, Point, Rect},
         raster::{ClipMask, CoverageMask, CoverageMaskMut, CoverageSink, FillRule,
             MaskClipSink},
-        render::{EdgeCapacity, EdgeSliceSink, Pixmap, RenderError, map_dash_error,
-        validate_coverage_dimensions},
+        render::{BYTES_PER_PIXEL, EdgeCapacity, EdgeSliceSink, Pixmap, RenderError,
+        blend_sampled_pixel, map_dash_error, validate_coverage_dimensions},
         stroke::{StrokePathWorkspace, StrokeWorkspaceError}, SolidPaint},
     fixed::{DEVICE_RAW_LIMIT, Scalar, dash::{Pattern as DashPattern, dash_polyline},
         flatten::{Error as FlattenError, Options as FlattenOptions, build_fill_edges},
@@ -25,12 +25,30 @@ fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
         target.blend_solid_span(x, y, len, color, coverage);
         return;
     }
-    let mut offset = 0;
+    let start = y as usize * target.stride() as usize +
+                x as usize * BYTES_PER_PIXEL as usize;
+    let end = start + len as usize * BYTES_PER_PIXEL as usize;
+    let bytes = &mut target.as_bytes_mut()[start..end];
+    let mut pairs = bytes.chunks_exact_mut(8);
+    let mut pending = None;
     sampler.sample_span(x, y, len, |color| {
-        target.blend_solid_span(x + offset, y, 1, color, coverage);
-        offset += 1;
+        let Some(first) = pending.take() else { pending = Some(color); return; };
+        let pair = pairs.next().expect("sampler emitted too many span pixels");
+        if coverage == u8::MAX && pair == [0; 8] {
+            let (first, second) = (
+                u32::from_le_bytes(first.to_array()) as u64,
+                u32::from_le_bytes(color.to_array()) as u64,
+            );
+            pair.copy_from_slice(&(first | second << 32).to_le_bytes());
+        } else {
+            blend_sampled_pixel(&mut pair[..4], first, coverage);
+            blend_sampled_pixel(&mut pair[4..], color, coverage);
+        }
     });
-    debug_assert_eq!(offset, len);
+    let remainder = pairs.into_remainder();
+    if let Some(color) = pending {
+        blend_sampled_pixel(remainder, color, coverage);
+    } else { debug_assert!(remainder.is_empty()); }
 }
 
 const SUBPIXEL_SCALE: i64 = 256;

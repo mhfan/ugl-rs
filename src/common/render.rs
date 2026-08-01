@@ -211,6 +211,22 @@ pub(crate) fn blend_solid_bytes(bytes: &mut [u8],
     }
 }
 
+pub(crate) fn blend_sampled_pixel(pixel: &mut [u8], color: PremulSRGBA8,
+    coverage: u8) {
+    if coverage == u8::MAX && pixel[3] == 0 {
+        pixel.copy_from_slice(&color.to_array()); return;
+    }
+    let (source, alpha, inverse) = solid_blend_terms(color, coverage);
+    if pixel[3] == 0 {
+        pixel.copy_from_slice(&[source[0], source[1], source[2], alpha]); return;
+    }
+    let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
+    for (channel, source) in pixel[..3].iter_mut().zip(source) {
+        *channel = source.saturating_add(mul_div_255(*channel, inverse));
+    }
+    pixel[3] = alpha.saturating_add(mul_div_255(pixel[3], inverse));
+}
+
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RenderError {

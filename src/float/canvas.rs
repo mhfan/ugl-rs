@@ -5,11 +5,11 @@
 //! `render_*_sampled`.
 
 use core::convert::Infallible;
-use crate::{common::{color::{PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorkspace},
+use crate::{common::{color::SRGBA, dash::{DashContour, DashWorkspace},
     geometry::{Affine, Edge, Path, Point, Rect}, Pixmap, RenderError, SolidPaint,
     raster::{ClipMask, CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
-    render::{BYTES_PER_PIXEL, EdgeCapacity, EdgeSliceSink, map_dash_error,
-        solid_blend_terms, validate_coverage_dimensions},
+    render::{BYTES_PER_PIXEL, EdgeCapacity, EdgeSliceSink, blend_sampled_pixel,
+        map_dash_error, validate_coverage_dimensions},
     stroke::{StrokeContour, StrokePathWorkspace, StrokeWorkspaceError}},
     float::{analytic::{BinError as AnalyticBinError,
         BinWorkspace as AnalyticBinWorkspace, Cell as AnalyticCell,
@@ -23,23 +23,7 @@ use crate::{common::{color::{PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorks
         stroke::{flatten_stroke_path, stroke_polyline, StrokeExpandError, StrokeOptions}},
 };
 
-fn blend_sampled_pixel(pixel: &mut [u8], color: PremulSRGBA8,
-    coverage: u8) {
-    if coverage == u8::MAX && pixel[3] == 0 {
-        pixel.copy_from_slice(&color.to_array()); return;
-    }
-    let (source, alpha, inverse) = solid_blend_terms(color, coverage);
-    if pixel[3] == 0 {
-        pixel.copy_from_slice(&[source[0], source[1], source[2], alpha]); return;
-    }
-    let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
-    for (channel, source) in pixel[..3].iter_mut().zip(source) {
-        *channel = source.saturating_add(mul_div_255(*channel, inverse));
-    }
-    pixel[3] = alpha.saturating_add(mul_div_255(pixel[3], inverse));
-}
-
-#[cfg(test)] use crate::common::render::blend_solid_bytes;
+#[cfg(test)] use crate::common::render::{blend_solid_bytes, solid_blend_terms};
 
 impl Pixmap<'_> {
     fn blend_sampled_span<S: PaintSampler>(&mut self, x: u32, y: u32, len: u32,

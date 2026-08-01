@@ -378,7 +378,8 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   Direct Pad-ramp traversal plus vertical-run emission reduced f32 to 62.60 µs.
   Fixed span projection narrows parameter, step, denominator, and terminal value
   together before entering its i64 ramp mapper, reducing the fixed draw from
-  187.13 to 146.72 µs. Both backends remain byte-identical. Blend2D is still
+  187.13 to 120.60 µs after paired sampled-pixel composition. Both backends
+  remain byte-identical. Blend2D is still
   1.98× faster than f32, so future work should batch ramp lookup/output rather
   than further tune path coverage for this scene.
 - Concentric radial samplers advance squared distance with a second-order
@@ -386,15 +387,15 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   per pixel. Scheduling four recurrence values together, while preserving the
   scalar update order, lets the compiler overlap independent square roots. The
   output checksum is unchanged; the matched f32 median fell from 202.22 through
-  123.98 to 114.12 µs, and fixed from 542.18 to 339.56 µs. Blend2D measures
+  123.98 to 117.05 µs, and fixed from 542.18 to 348.89 µs. Blend2D measures
   41.10 µs, leaving SIMD square-root throughput and encoded ramp/compositor
   batching as the measured paint costs.
 - The matched conic scene explicitly uses the opt-in `Fast` angle policy while
   `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
   approximation; fixed evaluates the same polynomial in widened integer turns
   instead of 16 CORDIC steps. Encoded span traversal reuses coordinates and
-  direct ramp indexing. Formal medians are 181.65 µs f32, 389.78 µs fixed,
-  and 67.22 µs Blend2D. Fixed differs from f32 at 2 of 65,536 pixels, each by one
+  direct ramp indexing. Current medians are 184.94 µs f32, 375.76 µs fixed,
+  and 67.83 µs Blend2D. Fixed differs from f32 at 2 of 65,536 pixels, each by one
   code value; the fixed fast path is about 77% faster than the Exact CORDIC
   diagnostic without adding allocation or floating-point work.
 - Retained path masks scan equal coverage runs in eight-byte words before
@@ -858,7 +859,7 @@ time-weighting constant.
 
 The circular-mask stage benchmark isolates initial construction. F32 edge
 building, row binning, and coverage integration measure about 1.44, 0.74, and
-15.66 µs; fixed edge building, line preparation, and coverage measure about
+13.60 µs; fixed edge building, line preparation, and coverage measure about
 1.29, 0.14, and 37.00 µs. Coverage owns roughly 88% of the visible f32 stages
 and 96% of fixed. Single-span overlap specialization, single-pass internal
 trapezoid generation, event-driven active-edge sorting, and the same-cell
@@ -868,6 +869,14 @@ closed-form edge integral reduce fixed coverage from about 41.60 to 37.00 µs
 full-span run emission at 0.18 µs, confirming that active/event processing and
 boundary integration own nearly all remaining time. Further path-mask work
 should target those stages, not curve flattening or run emission.
+
+The sparse f32 cell emitter now jumps over zero cell ranges after applying a
+range delta instead of quantizing every full-interior pixel. Circular coverage
+falls from roughly 15.66 to 13.60 µs (about 13%), while the new 16-bow-tie
+EvenOdd stress scene improves more modestly from about 49.0 to 47.8 µs. Its
+fixed counterpart measures about 98.4 µs; 1 px zig-zag stroke coverage measures
+about 52.4 µs f32 and 121.7 µs fixed. These cases, plus the existing 256
+short-edge grid, guard against optimizing only convex paths with long interiors.
 
 Retained memory, initial mask allocation, rasterization, and subsequent
 intersection now scale with the clipped region. Real-device allocator and
