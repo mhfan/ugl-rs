@@ -481,7 +481,8 @@ pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
     let last_row = (maximum_y.div_euclid(scale) +
         (maximum_y.rem_euclid(scale) != 0) as i32).clamp(y0 as i32, y1 as i32) as u32;
 
-    let (mut current_strip, mut pending, mut active_count) = (usize::MAX, 0, 0);
+    let (mut current_strip, mut pending, mut active_count, mut order_dirty) =
+        (usize::MAX, 0, 0, true);
     for y in first_row..last_row {
         let strip = y as usize / STRIP_HEIGHT as usize;
         let strip_lines = bins.indices(strip);
@@ -489,6 +490,7 @@ pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
             current_strip = strip;
             active_count = 0;
             pending = 0;
+            order_dirty = true;
         }
         let row = &mut workspace.row_area[..width_usize];
         let (mut row_initialized, mut row_emitted_directly) = (false, false);
@@ -497,7 +499,7 @@ pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
         while top < bottom {
             active_count = retain_active_lines(
                 lines, workspace.segments, active_count, top);
-            activate_pending_lines(lines, strip_lines, &mut pending, top,
+            order_dirty |= activate_pending_lines(lines, strip_lines, &mut pending, top,
                 workspace.segments, &mut active_count);
             let vertex_boundary = next_active_slab_boundary(lines, strip_lines, pending,
                 &workspace.segments[..active_count], top, bottom);
@@ -508,7 +510,7 @@ pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
             prepare_active_segments(lines, &mut workspace.segments[..active_count],
                 top, vertex_boundary).map_err(RenderError::Raster)?;
             let (next, snap_top, snap_bottom) = next_crossing_boundary(lines,
-                &mut workspace.segments[..active_count], top, vertex_boundary)
+                &mut workspace.segments[..active_count], top, vertex_boundary, order_dirty)
                 .map_err(RenderError::Raster)?;
             if next != vertex_boundary {
                 prepare_active_segments(lines,
@@ -528,6 +530,7 @@ pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
             let trapezoid_count = collect_raster_trapezoids(
                 segments, fill_rule, workspace.trapezoids, ordered)
                 .map_err(RenderError::Raster)?;
+            order_dirty = snap_bottom;
             if top.to_bits() == extent(y) as i32 && next == bottom &&
                 emit_disjoint_trapezoids(&workspace.trapezoids[..trapezoid_count],
                     x0, x1, y, sink)? {
@@ -808,8 +811,9 @@ fn retain_active_lines(lines: &[Line], segments: &mut [Segment],
 }
 
 fn activate_pending_lines(lines: &[Line], strip_lines: &[u32], pending: &mut usize,
-    top: Scalar, segments: &mut [Segment], active_count: &mut usize) {
+    top: Scalar, segments: &mut [Segment], active_count: &mut usize) -> bool {
     let top = top.to_bits();
+    let initial_count = *active_count;
     while let Some(&line_index) = strip_lines.get(*pending) {
         let line = lines[line_index as usize];
         if line.y0 > top { break; }
@@ -820,6 +824,7 @@ fn activate_pending_lines(lines: &[Line], strip_lines: &[u32], pending: &mut usi
         }
         *pending += 1;
     }
+    *active_count != initial_count
 }
 
 fn next_active_slab_boundary(lines: &[Line], strip_lines: &[u32], pending: usize,
@@ -906,12 +911,14 @@ pub fn collect_segments(lines: &[Line], top: Scalar, bottom: Scalar,
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] struct Crossing { y: i32, x: i64 }
 
 fn next_crossing_boundary(lines: &[Line], segments: &mut [Segment],
-    top: Scalar, bottom: Scalar) ->
+    top: Scalar, bottom: Scalar, order_dirty: bool) ->
     Result<(Scalar, bool, bool), Error> {
     let (top, bottom) = validate_slab(top, bottom)?;
     let (mut boundary, mut snap_top, mut snap_bottom) = (bottom, false, false);
-    segments.sort_unstable_by(|left, right| left.top_x.cmp_x(&right.top_x)
-        .then_with(|| left.bottom_x.cmp_x(&right.bottom_x)));
+    if order_dirty {
+        segments.sort_unstable_by(|left, right| left.top_x.cmp_x(&right.top_x)
+            .then_with(|| left.bottom_x.cmp_x(&right.bottom_x)));
+    }
     for pair in segments.windows(2) {
         if !pair[0].bottom_x.cmp_x(&pair[1].bottom_x).is_gt() { continue; }
         let (left, right) = (pair[0].line_index as usize, pair[1].line_index as usize);
