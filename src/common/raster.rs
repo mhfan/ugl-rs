@@ -39,11 +39,24 @@ impl<E, F> CoverageSink for F where F: FnMut(u32, u32, u8) -> Result<(), E> {
     DimensionsOverflow,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub(crate) enum MaskKind {
+    Empty,
+    OpaqueRect((u32, u32, u32, u32)),
+    Coverage((u32, u32, u32, u32)),
+}
+
+impl MaskKind {
+    fn bounds(self) -> Option<(u32, u32, u32, u32)> { match self {
+        Self::Empty => None,
+        Self::OpaqueRect(bounds) | Self::Coverage(bounds) => Some(bounds),
+    } }
+}
+
 /// Borrowed 8-bit coverage mask with explicit row stride.
 #[derive(Clone, Copy, Debug)] pub struct CoverageMask<'a> {
     data: &'a [u8], width: u32, height: u32, stride: u32,
     origin_x: u32, origin_y: u32, data_width: u32, data_height: u32,
-    non_zero_bounds: Option<(u32, u32, u32, u32)>,
+    kind: MaskKind,
 }
 
 /// Mutable storage used to rasterize a coverage mask without allocation.
@@ -78,9 +91,9 @@ impl<'a> CoverageMask<'a> {
     pub fn new(data: &'a [u8], width: u32, height: u32, stride: u32) ->
         Result<Self, CoverageMaskError> {
         validate_mask_buffer(data.len(), width, height, stride)?;
-        let non_zero_bounds = find_non_zero_bounds(data, width, height, stride);
+        let kind = classify_mask(data, width, height, stride);
         Ok(Self { data, width, height, stride, origin_x: 0, origin_y: 0,
-            data_width: width, data_height: height, non_zero_bounds })
+            data_width: width, data_height: height, kind })
     }
 
     /// Wraps storage for a local subregion while retaining full-target coordinates.
@@ -93,11 +106,15 @@ impl<'a> CoverageMask<'a> {
         }
         let (data_width, data_height) = (right - origin_x, bottom - origin_y);
         validate_mask_buffer(data.len(), data_width, data_height, stride)?;
-        let non_zero_bounds = find_non_zero_bounds(data, data_width, data_height, stride)
-            .map(|(left, top, right, bottom)|
-                (left + origin_x, top + origin_y, right + origin_x, bottom + origin_y));
+        let offset = |(left, top, right, bottom)|
+            (left + origin_x, top + origin_y, right + origin_x, bottom + origin_y);
+        let kind = match classify_mask(data, data_width, data_height, stride) {
+            MaskKind::Empty => MaskKind::Empty,
+            MaskKind::OpaqueRect(bounds) => MaskKind::OpaqueRect(offset(bounds)),
+            MaskKind::Coverage(bounds) => MaskKind::Coverage(offset(bounds)),
+        };
         Ok(Self { data, width, height, stride, origin_x, origin_y,
-            data_width, data_height, non_zero_bounds })
+            data_width, data_height, kind })
     }
 
     pub fn  width(&self) -> u32 { self.width }
@@ -111,22 +128,34 @@ impl<'a> CoverageMask<'a> {
     }
 
     pub(crate) fn non_zero_bounds(&self) -> Option<(u32, u32, u32, u32)> {
-        self.non_zero_bounds
+        self.kind.bounds()
     }
+
+    pub(crate) fn kind(&self) -> MaskKind { self.kind }
 }
 
-fn find_non_zero_bounds(data: &[u8], width: u32, height: u32, stride: u32) ->
-    Option<(u32, u32, u32, u32)> {
+fn classify_mask(data: &[u8], width: u32, height: u32, stride: u32) -> MaskKind {
     let (mut left, mut top, mut right, mut bottom) = (width, height, 0, 0);
+    let (mut non_zero, mut all_opaque) = (0_u64, true);
     for y in 0..height {
         let start = y as usize * stride as usize;
         let row = &data[start..start + width as usize];
         let Some(first) = row.iter().position(|&coverage| coverage != 0) else { continue; };
         let last = row.iter().rposition(|&coverage| coverage != 0).unwrap() + 1;
+        for &coverage in &row[first..last] {
+            if coverage != 0 {
+                non_zero += 1;
+                all_opaque &= coverage == u8::MAX;
+            }
+        }
         left = left.min(first as _);   right = right.max(last as _);
         top = top.min(y);              bottom = y + 1;
     }
-    (left < right).then_some((left, top, right, bottom))
+    if left >= right { return MaskKind::Empty; }
+    let bounds = (left, top, right, bottom);
+    let area = u64::from(right - left) * u64::from(bottom - top);
+    if all_opaque && non_zero == area { MaskKind::OpaqueRect(bounds) }
+    else { MaskKind::Coverage(bounds) }
 }
 
 impl<'a> CoverageMaskMut<'a> {
@@ -207,6 +236,17 @@ impl<S> CoverageSink for MaskClipSink<'_, S> where S: CoverageSink {
 
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
         Result<(), Self::Error> {
+        match self.mask.kind {
+            MaskKind::Empty => return Ok(()),
+            MaskKind::OpaqueRect((left, top, right, bottom)) => {
+                if y < top || y >= bottom { return Ok(()); }
+                let (start, end) = (x.max(left), x.saturating_add(len).min(right));
+                return if start < end {
+                    self.sink.span(start, y, end - start, coverage)
+                } else { Ok(()) };
+            }
+            MaskKind::Coverage(_) => {}
+        }
         let (left, top, right, bottom) = self.mask.storage_region();
         if y < top || y >= bottom { return Ok(()); }
         let (start, end) = (x.max(left), x.saturating_add(len).min(right));
@@ -287,5 +327,21 @@ fn equal_prefix(bytes: &[u8], value: u8) -> usize {
         let mask = CoverageMask::new(&data, 3, 3, 4).unwrap();
         assert_eq!(mask.non_zero_bounds(), Some((1, 1, 3, 2)));
         assert_eq!(CoverageMask::new(&[0; 12], 3, 3, 4).unwrap().non_zero_bounds(), None);
+    }
+
+    #[test] fn coverage_mask_classifies_empty_opaque_rect_and_general_coverage() {
+        assert_eq!(CoverageMask::new(&[0; 8], 4, 2, 4).unwrap().kind(), MaskKind::Empty);
+        let rectangle = [0, 255, 255, 0, 0, 255, 255, 0];
+        let rectangle = CoverageMask::new(&rectangle, 4, 2, 4).unwrap();
+        assert_eq!(rectangle.kind(), MaskKind::OpaqueRect((1, 0, 3, 2)));
+        let mut spans = SpanRecorder::default();
+        MaskClipSink::new(rectangle, &mut spans).span(0, 1, 4, 127).unwrap();
+        assert_eq!(spans.0, [(1, 1, 2, 127)]);
+        let hole = [0, 255, 255, 0, 0, 255, 0, 0];
+        assert_eq!(CoverageMask::new(&hole, 4, 2, 4).unwrap().kind(),
+            MaskKind::Coverage((1, 0, 3, 2)));
+        let antialiased = [0, 128, 255, 0, 0, 255, 255, 0];
+        assert_eq!(CoverageMask::new(&antialiased, 4, 2, 4).unwrap().kind(),
+            MaskKind::Coverage((1, 0, 3, 2)));
     }
 }

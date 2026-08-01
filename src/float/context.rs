@@ -4,7 +4,7 @@ use alloc::{rc::Rc, vec::Vec};
 use crate::{
     common::{color::SRGBA, dash::DashContour,
         geometry::{Affine, Edge, Path, Point, Rect},
-        raster::{CoverageMask, FillRule, RegionMaskSink},
+        raster::{CoverageMask, FillRule, MaskKind, RegionMaskSink},
         render::{Clip, DrawState, GlobalAlphaPaint}, stroke::StrokeContour,
         Pixmap, PixmapError, RenderError, SolidPaint},
     float::{analytic::{Cell, Intersection},
@@ -323,6 +323,11 @@ fn intersect_rects(a: Rect, b: Rect) -> Option<Rect> {
         Rect::from_ltrb(left, top, right, bottom).expect("ordered rectangle intersection"))
 }
 
+fn mask_rect((left, top, right, bottom): (u32, u32, u32, u32)) -> Rect {
+    Rect::from_ltrb(left as _, top as _, right as _, bottom as _)
+        .expect("ordered mask bounds")
+}
+
 fn copy_canvas_mask(mask: CoverageMask<'_>) -> CanvasClip {
     let Some((left, top, right, bottom)) = mask.non_zero_bounds() else {
         return CanvasClip::Empty;
@@ -337,6 +342,24 @@ fn copy_canvas_mask(mask: CoverageMask<'_>) -> CanvasClip {
     }
     CanvasClip::Path { data: data.into(), width: mask.width(), height: mask.height(),
         left, top, right, bottom, stride }
+}
+
+fn normalize_canvas_clip(clip: &mut CanvasClip) {
+    let replacement = {
+        let CanvasClip::Path { data, width, height, left, top, right, bottom, stride } = clip
+            else { return; };
+        let mask = CoverageMask::from_region(data, (*width, *height),
+            (*left, *top, *right, *bottom), *stride)
+            .expect("owned clip storage is internally valid");
+        match mask.kind() {
+            MaskKind::Empty => Some(CanvasClip::Empty),
+            MaskKind::OpaqueRect(bounds) => Some(CanvasClip::Rect(mask_rect(bounds))),
+            MaskKind::Coverage(bounds) if bounds != (*left, *top, *right, *bottom) =>
+                Some(copy_canvas_mask(mask)),
+            MaskKind::Coverage(_) => None,
+        }
+    };
+    if let Some(replacement) = replacement { *clip = replacement; }
 }
 
 fn multiply_rect_mask(data: &mut [u8], region: (u32, u32, u32, u32), stride: u32,
@@ -360,10 +383,7 @@ fn intersect_canvas_clip(current: &CanvasClip, next: &mut CanvasClip) {
         else { return; };
     match current {
         CanvasClip::None => {}
-        CanvasClip::Empty => {
-            let data = Rc::make_mut(data);
-            data.fill(0);
-        }
+        CanvasClip::Empty => { *next = CanvasClip::Empty; return; }
         CanvasClip::Rect(rect) => multiply_rect_mask(Rc::make_mut(data),
             (*left, *top, *right, *bottom), *stride, *rect),
         CanvasClip::Path { data: mask, width: mask_width, height: mask_height,
@@ -386,6 +406,7 @@ fn intersect_canvas_clip(current: &CanvasClip, next: &mut CanvasClip) {
             }
         }
     }
+    normalize_canvas_clip(next);
 }
 
 impl Canvas<'static> {
@@ -463,21 +484,30 @@ impl<'target> Canvas<'target> {
 
     /// Intersects the current clip with `value`.
     pub fn set_clip_rect(&mut self, value: Rect) -> &mut Self {
-        self.clip = match &mut self.clip {
+        if let CanvasClip::Path { data, left, top, right, bottom, stride, .. } = &mut self.clip {
+            multiply_rect_mask(Rc::make_mut(data),
+                (*left, *top, *right, *bottom), *stride, value);
+            normalize_canvas_clip(&mut self.clip);
+            return self;
+        }
+        self.clip = match &self.clip {
             CanvasClip::None => CanvasClip::Rect(value),
             CanvasClip::Empty => CanvasClip::Empty,
             CanvasClip::Rect(current) => intersect_rects(*current, value)
                 .map_or(CanvasClip::Empty, CanvasClip::Rect),
-            CanvasClip::Path { data, left, top, right, bottom, stride, .. } => {
-                multiply_rect_mask(Rc::make_mut(data),
-                    (*left, *top, *right, *bottom), *stride, value);
-                return self;
-            }
+            CanvasClip::Path { .. } => unreachable!(),
         }; self
     }
 
     /// Intersects the current clip with a retained copy of `value`.
     pub fn set_clip_mask(&mut self, value: CoverageMask<'_>) -> &mut Self {
+        if (value.width(), value.height()) == (self.target.width(), self.target.height()) {
+            match value.kind() {
+                MaskKind::Empty => { self.clip = CanvasClip::Empty; return self; }
+                MaskKind::OpaqueRect(bounds) => return self.set_clip_rect(mask_rect(bounds)),
+                MaskKind::Coverage(_) => {}
+            }
+        }
         let mut clip = copy_canvas_mask(value);
         intersect_canvas_clip(&self.clip, &mut clip);
         self.clip = clip; self
@@ -512,15 +542,17 @@ impl<'target> Canvas<'target> {
         }
         let mask = CoverageMask::from_region(&data, (width, height), region, region_width)
             .map_err(|_| RenderError::DimensionsOverflow)?;
-        let mut clip = if let Some((mask_left, mask_top, mask_right, mask_bottom)) =
-            mask.non_zero_bounds() {
-            if (mask_left, mask_top, mask_right, mask_bottom) == region {
+        let mut clip = match mask.kind() {
+            MaskKind::Empty => CanvasClip::Empty,
+            MaskKind::OpaqueRect(bounds) => {
+                self.set_clip_rect(mask_rect(bounds));
+                return Ok(self);
+            }
+            MaskKind::Coverage(bounds) => if bounds == region {
                 CanvasClip::Path { data: data.into(), width, height, left, top,
                     right, bottom, stride: region_width }
-            } else {
-                copy_canvas_mask(mask)
-            }
-        } else { CanvasClip::Empty };
+            } else { copy_canvas_mask(mask) },
+        };
         intersect_canvas_clip(&self.clip, &mut clip);
         self.clip = clip;
         Ok(self)
@@ -665,6 +697,26 @@ impl<'target> Canvas<'target> {
         builder.build()
     }
 
+    #[test] fn owning_canvas_specializes_empty_and_opaque_rectangle_masks() {
+        let mut canvas = Canvas::new(4, 2).unwrap();
+        let opaque = [0, 255, 255, 0, 0, 255, 255, 0];
+        canvas.set_clip_mask(CoverageMask::new(&opaque, 4, 2, 4).unwrap());
+        let CanvasClip::Rect(rect) = canvas.clip else { panic!("expected rectangle clip") };
+        assert_eq!((rect.left(), rect.top(), rect.right(), rect.bottom()),
+            (1.0, 0.0, 3.0, 2.0));
+
+        canvas.set_clip_mask(CoverageMask::new(&[0; 8], 4, 2, 4).unwrap());
+        assert!(matches!(canvas.clip, CanvasClip::Empty));
+
+        canvas.clear_clip().set_clip_path(&rectangle()).unwrap();
+        assert!(matches!(canvas.clip, CanvasClip::Rect(_)));
+
+        let coverage = [0, 128, 128, 0, 0, 128, 128, 0];
+        canvas.clear_clip().set_clip_mask(CoverageMask::new(&coverage, 4, 2, 4).unwrap())
+            .set_clip_rect(Rect::from_ltrb(3.0, 0.0, 4.0, 2.0).unwrap());
+        assert!(matches!(canvas.clip, CanvasClip::Empty));
+    }
+
     #[test] fn canvas_manages_fill_stroke_and_dash_scratch_internally() {
         let mut canvas = Canvas::new(4, 4).unwrap();
         canvas.set_color(SRGBA::new(255, 0, 0, 128));
@@ -683,8 +735,8 @@ impl<'target> Canvas<'target> {
 
     #[test] fn canvas_owns_free_path_clip_storage() {
         let mut clip = PathBuilder::new();
-        clip.move_to((0.0, 0.0)).line_to((2.0, 0.0))
-            .line_to((2.0, 4.0)).line_to((0.0, 4.0));
+        clip.move_to((0.25, 0.0)).line_to((2.25, 0.0))
+            .line_to((2.25, 4.0)).line_to((0.25, 4.0));
         let mut shape = PathBuilder::new();
         shape.move_to((0.0, 0.0)).line_to((4.0, 0.0))
             .line_to((4.0, 4.0)).line_to((0.0, 4.0));
@@ -694,7 +746,7 @@ impl<'target> Canvas<'target> {
         let CanvasClip::Path { data, left, top, right, bottom, stride, .. } = &canvas.clip
             else { panic!("path clip was not retained as a mask") };
         assert_eq!((*left, *top, *right, *bottom, *stride, data.len()),
-            (0, 0, 2, 4, 2, 8));
+            (0, 0, 3, 4, 3, 12));
         canvas.fill(&shape.build()).unwrap();
         assert_ne!(canvas.target().pixel_bytes(0, 1).unwrap(), [0; 4]);
         assert_eq!(canvas.target().pixel_bytes(3, 1).unwrap(), [0; 4]);
