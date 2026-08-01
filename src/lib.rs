@@ -18,7 +18,7 @@ pub(crate) use common::render;
 pub mod shader;     // reserved for a future optional 3D layer
 
 pub mod flatten;
-#[cfg(feature = "f32")] pub use float::{analytic, canvas, canvas_linear, context};
+#[cfg(feature = "f32")] pub use float::{analytic, canvas, context, linear};
 
 pub use render::{Pixmap, PixmapError, RenderError};
 #[cfg(feature = "f32")] pub use float::Canvas;

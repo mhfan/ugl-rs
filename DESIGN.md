@@ -157,7 +157,7 @@ strip IDs, and SIMD layouts do not enter the common `Edge` representation.
 - Compositing is source-over unless explicitly selected otherwise.
 - Coverage multiplies premultiplied source color and alpha.
 - `SRGBA`, `LinearRGBA`, and their premultiplied counterparts make transfer
-  state explicit. `canvas_linear::LinearPixmap` retains premultiplied
+  state explicit. `linear::LinearPixmap` retains premultiplied
   linear-light `f32` through source-over and encodes only when presenting into
   RGBA8888. `canvas::Pixmap` remains the compact encoded-domain compatibility
   and performance path.

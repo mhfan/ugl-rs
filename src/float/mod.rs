@@ -11,7 +11,7 @@ pub(crate) use math::*;
 
 pub mod analytic;
 pub mod canvas;
-pub mod canvas_linear;
+pub mod linear;
 pub mod context;
 pub mod sampler;
 

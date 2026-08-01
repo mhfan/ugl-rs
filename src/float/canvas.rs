@@ -721,4 +721,4 @@ fn map_raster_error(error: RasterError<Infallible>) -> RenderError {
     }
 }
 
-#[cfg(test)] #[path = "canvas_tests.rs"] mod tests;
+#[cfg(test)] #[path = "tests.rs"] mod tests;

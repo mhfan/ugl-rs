@@ -233,7 +233,7 @@ Choose the narrowest layer that owns the required state:
   and supplied by the caller;
 - `canvas::render_*` for direct exact-area f32 rendering;
 - `canvas::render_*_sampled` only as the supersampled reference;
-- `canvas_linear` for a premultiplied linear-light working framebuffer;
+- `linear` for a premultiplied linear-light working framebuffer;
 - `fixed::canvas` for explicit Q24.8 streaming, retained strips, and tiles.
 
 `Canvas::new` allocates its destination, while `Canvas::from_buffer` borrows an

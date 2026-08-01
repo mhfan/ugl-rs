@@ -4,7 +4,7 @@ use ugl_rs::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersecti
     canvas::{RenderOptions, RenderWorkspace, StrokePathOptions,
         StrokeWorkspace, Pixmap, render_paint as render_canvas_paint, render_solid,
         render_stroke_solid,
-    }, canvas_linear::{LinearPixmap, render_paint as render_paint_linear,
+    }, linear::{LinearPixmap, render_paint as render_paint_linear,
         render_solid as render_solid_linear},
     edge::Edge, geometry::{Affine, PathBuilder}, raster::FillRule,
     stroke::{LineCap, LineJoin, StrokeContour}, float::stroke::StrokeOptions,

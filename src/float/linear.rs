@@ -47,7 +47,7 @@ impl LinearPixmapData<'_> {
 /// already satisfy the [`LinearPremulRGBA`] invariant.
 ///
 /// ```
-/// use ugl_rs::{canvas_linear::LinearPixmap, color::LinearPremulRGBA};
+/// use ugl_rs::{linear::LinearPixmap, color::LinearPremulRGBA};
 ///
 /// let owned = LinearPixmap::new(2, 1).unwrap();
 /// assert_eq!((owned.stride(), owned.as_pixels().len()), (2, 2));
