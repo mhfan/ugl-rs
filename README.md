@@ -421,9 +421,9 @@ The retained path-mask scenes exclude mask construction. Equal mask runs are
 scanned eight bytes at a time and vertical coverage is emitted directly. f32
 now measures 5.44 µs for a radius-24 sparse mask and 22.14 µs for the existing
 radius-100 mask; fixed measures 10.64 and 93.36 µs. `CoverageMask` derives and
-caches its non-zero bounds in fixed-enabled builds, so the fixed raster visits
-only that domain. The f32 backend instead keeps its faster word-wise zero-run
-filtering; pre-scanning the complete mask regressed the sparse case. ¹ Blend2D's roughly
+caches its non-zero bounds during retained-resource setup, so both rasterizers
+visit only that domain; the f32 sink still uses word-wise zero-run filtering
+inside it. ¹ Blend2D's roughly
 30 µs result is an explicitly labeled equivalent implemented by drawing the
 shape and applying a retained
 PRGB32 mask with `DST_IN`; Blend2D exposes no free-path Context clip, so this

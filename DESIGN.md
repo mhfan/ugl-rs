@@ -390,10 +390,9 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   code value; the fixed fast path is about 77% faster than the Exact CORDIC
   diagnostic without adding allocation or floating-point work.
 - Retained path masks scan equal coverage runs in eight-byte words before
-  forwarding spans. In fixed-enabled builds, `CoverageMask` caches non-zero
-  bounds at construction and the fixed raster constrains exact area work to
-  that region. f32 retains word-wise zero-run filtering because a full bounds
-  scan regressed sparse masks. Radius-24/radius-100
+  forwarding spans. `CoverageMask` caches non-zero bounds at retained-resource
+  construction, and both rasterizers constrain coverage work to that region;
+  the f32 sink continues word-wise filtering inside it. Radius-24/radius-100
   density scenes measure 5.44/22.14 µs for f32, 10.64/93.36 µs for fixed,
   and roughly 30 µs for Blend2D. This preserves the generic coverage-sink
   contract and fixed memory. Blend2D has
