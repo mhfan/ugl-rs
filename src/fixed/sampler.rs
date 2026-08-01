@@ -98,18 +98,17 @@ impl PaintSampler for LinearGradient<'_> {
                             point[1] * self.delta[1] as i128;
         let step = self.delta[0] as i128 * SUBPIXEL_SCALE;
         let last_parameter = parameter + step * (len - 1) as i128;
-        if ramp_index_i64_supported(self.length_squared, self.ramp.len(), self.spread) {
-            if let (Ok(mut parameter), Ok(last_parameter), Ok(step), Ok(denominator)) =
+        if ramp_index_i64_supported(self.length_squared, self.ramp.len(), self.spread)
+            && let (Ok(mut parameter), Ok(last_parameter), Ok(step), Ok(denominator)) =
                 (i64::try_from(parameter), i64::try_from(last_parameter),
                  i64::try_from(step), i64::try_from(self.length_squared)) {
-                for index in 0..len {
-                    emit(self.ramp[ramp_index_i64(parameter, denominator,
-                        self.ramp.len(), self.spread)]);
-                    if index + 1 < len { parameter += step; }
-                }
-                debug_assert_eq!(parameter, last_parameter);
-                return;
+            for index in 0..len {
+                emit(self.ramp[ramp_index_i64(parameter, denominator,
+                    self.ramp.len(), self.spread)]);
+                if index + 1 < len { parameter += step; }
             }
+            debug_assert_eq!(parameter, last_parameter);
+            return;
         }
         for _ in 0..len {
             emit(self.ramp[ramp_index(parameter, self.length_squared,
@@ -323,11 +322,10 @@ fn validate_ramp(ramp: &[PremulSRGBA8]) -> Result<(), GradientError> {
 fn ramp_index(parameter: i128, denominator: i128, ramp_len: usize,
     spread: SpreadMode) -> usize {
     debug_assert!(denominator > 0);
-    if ramp_index_i64_supported(denominator, ramp_len, spread) {
-        if let (Ok(parameter), Ok(denominator)) =
+    if ramp_index_i64_supported(denominator, ramp_len, spread)
+        && let (Ok(parameter), Ok(denominator)) =
             (i64::try_from(parameter), i64::try_from(denominator)) {
-            return ramp_index_i64(parameter, denominator, ramp_len, spread);
-        }
+        return ramp_index_i64(parameter, denominator, ramp_len, spread);
     }
     let mapped = match spread {
         SpreadMode::Pad => parameter.clamp(0, denominator),
