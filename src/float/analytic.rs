@@ -610,15 +610,23 @@ fn emit_cell_runs<S>(cells: &[Cell], x_offset: usize, y: u32,
     sink: &mut S) -> Result<(), RasterError<S::Error>> where S: CoverageSink {
     let quantize = |coverage: f32| (coverage.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
     let (mut accumulated, mut run_start, mut run_coverage) = (0.0, 0, 0);
-    for (x, cell) in cells.iter().enumerate() {
+    let mut x = 0;
+    while x < cells.len() {
+        let cell = cells[x];
         accumulated += cell.delta;
         let coverage = quantize(accumulated + cell.coverage);
-        if coverage == run_coverage { continue; }
-        if run_coverage != 0 {
-            sink.span((x_offset + run_start) as _, y, (x - run_start) as _, run_coverage)
-                .map_err(RasterError::Sink)?;
+        if coverage != run_coverage {
+            if run_coverage != 0 {
+                sink.span((x_offset + run_start) as _, y,
+                    (x - run_start) as _, run_coverage).map_err(RasterError::Sink)?;
+            }
+            run_start = x;  run_coverage = coverage;
         }
-        run_start = x;  run_coverage = coverage;
+        x += 1;
+        if cell.coverage == 0.0 && cell.delta == 0.0 {
+            while x < cells.len() &&
+                cells[x].coverage == 0.0 && cells[x].delta == 0.0 { x += 1; }
+        }
     }
     if run_coverage != 0 {
         sink.span((x_offset + run_start) as _, y,
