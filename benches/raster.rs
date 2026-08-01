@@ -848,6 +848,15 @@ fn sample_checksum(sampler: &impl PaintSampler) -> u64 {
 }       checksum
 }
 
+fn sample_span_checksum(sampler: &impl PaintSampler) -> u64 {
+    let mut checksum = 0_u64;
+    for y in 0..HEIGHT {
+        sampler.sample_span(0.5, y as f32 + 0.5, 1.0, 0.0, WIDTH,
+            |color| checksum = color.to_array().into_iter().fold(checksum,
+                |checksum, channel| checksum.wrapping_mul(257).wrapping_add(channel as _)));
+    }   checksum
+}
+
 #[cfg(feature = "fixed")]
 fn sample_fixed_checksum(sampler: &impl ugl_rs::fixed::sampler::PaintSampler) -> u64 {
     let mut checksum = 0_u64;
@@ -858,6 +867,16 @@ fn sample_fixed_checksum(sampler: &impl ugl_rs::fixed::sampler::PaintSampler) ->
                 |checksum, channel| checksum.wrapping_mul(257).wrapping_add(channel as _));
         }
 }       checksum
+}
+
+#[cfg(feature = "fixed")]
+fn sample_fixed_span_checksum(sampler: &impl ugl_rs::fixed::sampler::PaintSampler) -> u64 {
+    let mut checksum = 0_u64;
+    for y in 0..HEIGHT {
+        sampler.sample_span(0, y, WIDTH,
+            |color| checksum = color.to_array().into_iter().fold(checksum,
+                |checksum, channel| checksum.wrapping_mul(257).wrapping_add(channel as _)));
+    }   checksum
 }
 
 fn sample_linear_checksum(sampler: &impl LinearPaintSampler) -> u64 {
@@ -896,8 +915,18 @@ fn benchmark_paint(c: &mut Criterion) {
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
     group.bench_function("solid",  |b| b.iter(|| black_box(sample_checksum(&solid))));
     group.bench_function("linear", |b| b.iter(|| black_box(sample_checksum(&linear))));
+    group.bench_function("linear_span",
+        |b| b.iter(|| black_box(sample_span_checksum(&linear))));
     group.bench_function("radial", |b| b.iter(|| black_box(sample_checksum(&radial))));
+    let concentric = RadialGradient::new(
+        (128.0, 128.0), 112.0, stops, SpreadMode::Pad).unwrap();
+    group.bench_function("radial_concentric_point",
+        |b| b.iter(|| black_box(sample_checksum(&concentric))));
+    group.bench_function("radial_concentric_span",
+        |b| b.iter(|| black_box(sample_span_checksum(&concentric))));
     group.bench_function("conic",  |b| b.iter(|| black_box(sample_checksum(&conic))));
+    group.bench_function("conic_span",
+        |b| b.iter(|| black_box(sample_span_checksum(&conic))));
     group.finish();
 
     let exact_stops = GradientStops::new(&stop_values).unwrap();
@@ -1072,12 +1101,18 @@ fn benchmark_paint(c: &mut Criterion) {
     paint_group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
     paint_group.bench_function("linear",
         |b| b.iter(|| black_box(sample_fixed_checksum(&linear))));
+    paint_group.bench_function("linear_span",
+        |b| b.iter(|| black_box(sample_fixed_span_checksum(&linear))));
     paint_group.bench_function("radial_concentric",
         |b| b.iter(|| black_box(sample_fixed_checksum(&radial))));
+    paint_group.bench_function("radial_concentric_span",
+        |b| b.iter(|| black_box(sample_fixed_span_checksum(&radial))));
     paint_group.bench_function("radial_two_circle",
         |b| b.iter(|| black_box(sample_fixed_checksum(&focal))));
     paint_group.bench_function("conic",
         |b| b.iter(|| black_box(sample_fixed_checksum(&conic))));
+    paint_group.bench_function("conic_span",
+        |b| b.iter(|| black_box(sample_fixed_span_checksum(&conic))));
     paint_group.finish();
 
     let mut group = c.benchmark_group("raster_rgba8888");

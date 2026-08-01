@@ -372,33 +372,33 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   multiplication. Together these changes reduced the matched large-gradient
   draw from 381.33 to 192.50 µs for f32 and 446.92 to 221.24 µs for fixed.
   Direct Pad-ramp traversal plus vertical-run emission reduced f32 to 64.41 µs,
-  while both backends remain byte-identical. Blend2D is still 2.31× faster, so
+  while both backends remain byte-identical. Blend2D is still 2.02× faster, so
   future work should batch ramp lookup/output rather than further tune path
   coverage for this scene.
 - Concentric radial samplers advance squared distance with a second-order
   difference across each span instead of rebuilding coordinates and products
   per pixel. The output checksum is unchanged; the matched f32 median fell from
-  202.22 to 123.02 µs and fixed from 542.18 to 427.28 µs. Blend2D measures
-  41.84 µs, leaving square-root throughput and encoded ramp/compositor batching
+  202.22 to 123.98 µs and fixed from 542.18 to 347.39 µs. Blend2D measures
+  41.44 µs, leaving square-root throughput and encoded ramp/compositor batching
   as the measured paint costs.
 - The matched conic scene explicitly uses the opt-in `Fast` angle policy while
   `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
   approximation; fixed evaluates the same polynomial in widened integer turns
   instead of 16 CORDIC steps. Encoded span traversal reuses coordinates and
-  direct ramp indexing. Formal medians are 185.59 µs f32, 458.87 µs fixed,
-  and 68.42 µs Blend2D. Fixed differs from f32 at 2 of 65,536 pixels, each by one
+  direct ramp indexing. Formal medians are 184.70 µs f32, 386.78 µs fixed,
+  and 68.38 µs Blend2D. Fixed differs from f32 at 2 of 65,536 pixels, each by one
   code value; the fixed fast path is about 77% faster than the Exact CORDIC
   diagnostic without adding allocation or floating-point work.
 - Retained path masks scan equal coverage runs in eight-byte words before
   forwarding spans. `CoverageMask` caches non-zero bounds at retained-resource
   construction, and both rasterizers constrain coverage work to that region;
   the f32 sink continues word-wise filtering inside it. Radius-24/radius-100
-  density scenes measure 6.20/23.59 µs for f32, 8.11/33.14 µs for fixed,
+  density scenes measure 6.20/23.59 µs for f32, 7.52/32.85 µs for fixed,
   and roughly 30 µs for Blend2D. This preserves the generic coverage-sink
   contract and fixed memory. Blend2D has
   no public free-path clip; its 29.98 µs comparison is a retained PRGB32 `DST_IN`
   emulation and must remain labeled as such.
-- Building the circular mask separately measures 21.58 µs for f32, 60.66 µs
+- Building the circular mask separately measures 21.58 µs for f32, 56.64 µs
   for fixed, and 9.55 µs for Blend2D. RGBA normalization is excluded. Direct
   disjoint-row emission closed much of the former gap; the remainder belongs
   to curve flattening and coverage rasterization, not retained-mask lookup or
@@ -411,7 +411,7 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   active sets. Fixed initially measured 9.43/60.31/238.70 µs. Coverage attribution
   showed 203.61 µs in its raster stage; direct vertical-trapezoid boundary area
   reduced that to 144.04 µs; guarded direct trapezoid emission brings the
-  current 1/16/64 draws to 7.07/35.15/129.65 µs. Sloped edges retain polygon
+  current 1/16/64 draws to 4.55/30.05/113.63 µs. Sloped edges retain polygon
   clipping and exact rational
   crossings, while axis-aligned rectangles no longer pay that general cost.
 - The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
