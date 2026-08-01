@@ -469,21 +469,23 @@ impl<'a> ConicGradient<'a> {
 }
 
 fn unit_angle_approx(x: i64, y: i64) -> u32 {
-    const QUARTER: i128 = 1 << 30;
-    const HALF: i128 = 1 << 31;
+    const QUARTER: i64 = 1 << 30;
+    const HALF: i64 = 1 << 31;
     const SCALE: u128 = 1 << 32;
     let (x_abs, y_abs) = (x.unsigned_abs(), y.unsigned_abs());
     let maximum = x_abs.max(y_abs);
     if maximum == 0 { return 0; }
-    let slope = (x_abs.min(y_abs) as u128 * SCALE / maximum as u128) as i128;
-    let squared = (slope * slope) >> 32;
-    let polynomial = 683_420_221_i128 + ((squared * (-222_711_105_i128 +
-        ((squared * (106_347_771_i128 +
-        ((squared * -30_299_868_i128) >> 32))) >> 32))) >> 32);
+    let slope = (x_abs.min(y_abs) as u128 * SCALE / maximum as u128) as i64;
+    // Q32 slope/squared are at most 2^32. Every Horner product stays below
+    // 2^60 and the final slope product below 2^62, so i64 is exact here.
+    let squared = ((slope as i128 * slope as i128) >> 32) as i64;
+    let polynomial = 683_420_221_i64 + ((squared * (-222_711_105_i64 +
+        ((squared * (106_347_771_i64 +
+        ((squared * -30_299_868_i64) >> 32))) >> 32))) >> 32);
     let mut turn = (slope * polynomial) >> 32;
     if x_abs < y_abs { turn = QUARTER - turn; }
     if x < 0 { turn = HALF - turn; }
-    if y < 0 { turn = (1_i128 << 32) - turn; }
+    if y < 0 { turn = (1_i64 << 32) - turn; }
     turn as _
 }
 
@@ -790,6 +792,11 @@ impl PaintSampler for ConicGradient<'_> {
         assert!(maximum_error <= 6e-6, "maximum turn error={maximum_error}");
         assert!(maximum_fast_error <= 3e-5,
             "maximum fast turn error={maximum_fast_error}");
+        for (x, y) in [(1_i64 << 30, 1_i64 << 29),
+                       (-(1_i64 << 30), (1_i64 << 30) - 1),
+                       ((1_i64 << 30) - 1, -(1_i64 << 30))] {
+            let _ = unit_angle_approx(x, y);
+        }
 
         let stop_values = red_blue_stops();
         let mut storage = [PremulSRGBA8::zeroed(); 257];

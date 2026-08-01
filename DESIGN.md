@@ -404,10 +404,11 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
   approximation; fixed evaluates the same polynomial in widened integer turns
   instead of 16 CORDIC steps. Encoded span traversal reuses coordinates and
-  direct ramp indexing. Current medians are 184.94 µs f32, 375.76 µs fixed,
-  and 67.83 µs Blend2D. Fixed differs from f32 at 2 of 65,536 pixels, each by one
-  code value; the fixed fast path is about 77% faster than the Exact CORDIC
-  diagnostic without adding allocation or floating-point work.
+  direct ramp indexing. Keeping the Q32 normalization division widened while
+  narrowing the provably bounded Horner products from i128 to i64 reduces the
+  formal fixed median from 379.91 to 252.27 µs; f32 measures 184.07 µs and
+  Blend2D 67.71 µs. Fixed differs from f32 at 2 of 65,536 pixels, each by one
+  code value; the optimization adds neither allocation nor floating-point work.
 - Retained path masks scan equal coverage runs in eight-byte words before
   forwarding spans. `CoverageMask` caches non-zero bounds at retained-resource
   construction, and both rasterizers constrain coverage work to that region;
@@ -885,6 +886,12 @@ benchmarked and rejected because it duplicated the general integration work
 without improving the circular-mask result. Further path-mask work should
 target active/event processing and boundary integration, not curve flattening,
 binning, or run emission.
+
+A structure-of-arrays active-edge workspace is not currently justified for the
+dominant convex-mask case: nearly every slab has only its left and right edge,
+while SoA would add parallel caller-owned buffers and reconstruction work to
+all fixed renders. It remains a candidate for measured high-active-count paths,
+not a default replacement for the compact `Segment` workspace.
 
 Full-row trapezoids with a non-empty interior integrate only the left edge for
 their left boundary pixels and only the right edge for their right boundary

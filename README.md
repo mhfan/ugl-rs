@@ -324,7 +324,7 @@ the publication settings: 500 warm-ups, 5,000 timed frames, and nine samples on
 | 64 fractional rectangles | 60.02 µs | 99.76 µs | 33.58 µs |
 | large linear gradient | 63.53 µs | 121.65 µs | 31.81 µs |
 | large radial gradient | 115.47 µs | 274.17 µs | 41.41 µs |
-| large conic gradient, Fast | 184.07 µs | 379.91 µs | 67.71 µs |
+| large conic gradient, Fast | 184.07 µs | 252.27 µs | 67.71 µs |
 | sparse retained path mask | 5.68 µs | 6.44 µs | 30.03 µs¹ |
 | build circular path mask | 18.58 µs | 41.39 µs | 9.21 µs |
 | cubic fill under rectangle clip | 10.65 µs | 16.55 µs | 3.55 µs |
