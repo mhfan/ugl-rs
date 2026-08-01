@@ -377,14 +377,23 @@ pub fn emit_area_runs<S>(row_area: &[u64], y: u32, sink: &mut S) ->
 
 fn emit_area_runs_offset<S>(row_area: &[u64], x_origin: u32, y: u32,
     sink: &mut S) -> Result<(), S::Error> where S: CoverageSink {
-    let mut x = 0;
-    while x < row_area.len() {
-        let coverage = quantize_area_coverage(row_area[x]);
-        if  coverage == 0 { x += 1; continue; }
-        let start = x;      x += 1;
-        while x < row_area.len() && quantize_area_coverage(row_area[x]) == coverage { x += 1; }
-        sink.span(x_origin + start as u32, y, (x - start) as _, coverage)?;
-    }   Ok(())
+    let Some((&first, rest)) = row_area.split_first() else { return Ok(()); };
+    let (mut run_start, mut run_coverage) = (0, quantize_area_coverage(first));
+    for (offset, &area) in rest.iter().enumerate() {
+        let (x, coverage) = (offset + 1, quantize_area_coverage(area));
+        if coverage == run_coverage { continue; }
+        if run_coverage != 0 {
+            sink.span(x_origin + run_start as u32, y,
+                (x - run_start) as _, run_coverage)?;
+        }
+        run_start = x;
+        run_coverage = coverage;
+    }
+    if run_coverage != 0 {
+        sink.span(x_origin + run_start as u32, y,
+            (row_area.len() - run_start) as _, run_coverage)?;
+    }
+    Ok(())
 }
 
 pub struct Workspace<'a> {
