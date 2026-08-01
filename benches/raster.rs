@@ -1294,7 +1294,8 @@ fn benchmark_clip_masks(c: &mut Criterion) {
             flatten_path},
         raster::{CoverageRun, CoverageStrip, CoverageWorkspace,
             Line, Workspace, Segment, Trapezoid, STRIP_HEIGHT,
-            prepare_lines, rasterize_lines, rasterize_lines_to_strips},
+            build_strip_bins, emit_area_runs, prepare_lines, rasterize_lines,
+            rasterize_lines_to_strips},
         sampler::{Angle, ConicAngleMode, ConicGradient, LinearGradient, RadialGradient},
         stroke::{Options as StrokeOptions, flatten_path as flatten_stroke_path,
             stroke_polyline},
@@ -1490,6 +1491,10 @@ fn benchmark_clip_masks(c: &mut Criterion) {
     mask_stages.bench_function("line_prepare/circular_mask", |b| b.iter(|| {
         black_box(prepare_lines(&circle_edges, &mut circle_lines).unwrap());
     }));
+    mask_stages.bench_function("strip_binning/circular_mask", |b| b.iter(|| {
+        black_box(build_strip_bins(&circle_lines[..circle_line_count], HEIGHT,
+            &mut circle_offsets, &mut circle_indices).unwrap());
+    }));
     mask_stages.bench_function("coverage/circular_mask", |b| b.iter(|| {
         let mut sink = RunCounter::default();
         rasterize_lines(&circle_lines[..circle_line_count], WIDTH, HEIGHT,
@@ -1498,6 +1503,14 @@ fn benchmark_clip_masks(c: &mut Criterion) {
                 row_area: &mut circle_area, strip_offsets: &mut circle_offsets,
                 strip_indices: &mut circle_indices,
             }, &mut sink).unwrap();
+        black_box((sink.runs, sink.pixels));
+    }));
+    let mut emission_row = vec![u64::MAX; WIDTH as usize];
+    emission_row[0] = 16_384;
+    emission_row[WIDTH as usize - 1] = 32_768;
+    mask_stages.bench_function("run_emission/full_span", |b| b.iter(|| {
+        let mut sink = RunCounter::default();
+        emit_area_runs(&emission_row, 0, &mut sink).unwrap();
         black_box((sink.runs, sink.pixels));
     }));
     mask_stages.finish();

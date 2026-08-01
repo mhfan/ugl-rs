@@ -263,6 +263,12 @@ fn integrate_clamped_edge_twice(start: i64, end: i64, height: u32) -> u64 {
     // the target pixel origin. The primitive is below 2^39 and multiplying by
     // a one-row height (<= 256) remains safely inside i64.
     let scale = SUBPIXEL_SCALE as i64;
+    let (low, high) = if start < end { (start, end) } else { (end, start) };
+    if high <= 0 { return 0; }
+    if low >= scale { return (2 * scale * height as i64) as _; }
+    if low >= 0 && high <= scale {
+        return ((start + end) * height as i64) as _;
+    }
     let primitive = |value: i64| {
         if value <= 0 { 0 }
         else if value < scale { value * value }
@@ -733,7 +739,11 @@ impl CoverageSink for CoverageEncoder<'_> {
     }
 }
 
-#[derive(Debug)] struct StripBins<'a> { offsets: &'a [u32], indices: &'a [u32] }
+/// Prepared strip index used by profiling and future retained-path reuse.
+#[derive(Clone, Copy, Debug)]
+pub struct StripBins<'a> {
+    offsets: &'a [u32], indices: &'a [u32],
+}
 
 impl StripBins<'_> {
     fn indices(&self, strip: usize) -> &[u32] {
@@ -756,7 +766,7 @@ fn line_strip_range(line: Line, height: u32) ->
     Ok(Some(first..last))
 }
 
-fn build_strip_bins<'a>(lines: &[Line], height: u32, offsets: &'a mut [u32],
+pub fn build_strip_bins<'a>(lines: &[Line], height: u32, offsets: &'a mut [u32],
     indices: &'a mut [u32]) -> Result<StripBins<'a>, Error> {
     let required = strip_requirements(lines, height)?;
     for (kind, available, required) in [

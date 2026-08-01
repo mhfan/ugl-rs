@@ -859,12 +859,15 @@ time-weighting constant.
 The circular-mask stage benchmark isolates initial construction. F32 edge
 building, row binning, and coverage integration measure about 1.44, 0.74, and
 15.66 µs; fixed edge building, line preparation, and coverage measure about
-1.29, 0.14, and 38.20 µs. Coverage owns roughly 88% of the visible f32 stages
+1.29, 0.14, and 37.00 µs. Coverage owns roughly 88% of the visible f32 stages
 and 96% of fixed. Single-span overlap specialization, single-pass internal
-trapezoid generation, and event-driven active-edge sorting reduce fixed
-coverage from about 41.60 to 38.20 µs (about 8%); the corresponding f32
-single-span specialization improves about 1%. Further path-mask work should
-target coverage integration, not curve flattening or edge setup.
+trapezoid generation, event-driven active-edge sorting, and the same-cell
+closed-form edge integral reduce fixed coverage from about 41.60 to 37.00 µs
+(about 11%); the corresponding f32 single-span specialization improves about
+1%. A further split measures fixed strip binning at about 1.02 µs and synthetic
+full-span run emission at 0.18 µs, confirming that active/event processing and
+boundary integration own nearly all remaining time. Further path-mask work
+should target those stages, not curve flattening or run emission.
 
 Retained memory, initial mask allocation, rasterization, and subsequent
 intersection now scale with the clipped region. Real-device allocator and
