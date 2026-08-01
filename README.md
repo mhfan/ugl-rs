@@ -314,7 +314,7 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
 version metadata. The current three-backend baseline was measured on 2026-08-01
-after ugl-rs `5a1ddb3`, using Blend2D
+after ugl-rs `0a7f773`, using Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
 rustc 1.97.1 on macOS 15.6 arm64. Nine 5,000-frame samples after 500 warm-up
@@ -387,6 +387,11 @@ delta. Same-host fixed versus Blend2D numbers are not evidence about an MCU or
 a no-FPU target. Rectangle output is byte-identical between the ugl-rs
 backends; the gentle curves differ only by one code value at a small number of
 boundary pixels.
+
+Dashed stroke remains an internal f32/fixed Criterion comparison rather than a
+Blend2D row. The synchronized Blend2D revision stores dash options but its
+raster stroker does not apply them, so timing that API would silently compare
+ugl-rs dashes against an undashed Blend2D path.
 
 The harness explicitly aligns butt caps, miter-bevel joins, and miter limit 4,
 since Blend2D's default miter-clip join does not match ugl-rs. More strongly

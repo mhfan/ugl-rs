@@ -40,6 +40,12 @@ Third-party source and build products are intentionally not vendored.
   y=24..232 case
   is retained conceptually as a fixed-backend reliability case: its expanded
   outline currently returns `CrossingEdges` and is not a valid timing input.
+- Dashed stroke is deliberately excluded from the cross-renderer table. The
+  locked Blend2D revision accepts and retains `dash_array`/`dash_offset` state,
+  but its raster stroker does not consume those fields; a configured dashed
+  path therefore renders as an undashed stroke. ugl-rs f32/fixed dash costs
+  remain covered by the `stroke_dash` Criterion groups instead of being
+  compared with semantically different output.
 - The matched fixed width-6 round-polyline scene uses four segments per half
   circle, selected with `--fixed-round-segments 4` (the runner default). This
   matches the f32 0.25 px chord tolerance more closely than the conservative

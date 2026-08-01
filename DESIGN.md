@@ -489,6 +489,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   because one segment count cannot represent a pixel-error tolerance across all
   widths. Four segments reduce coverage from about 236 to 175 µs and also
   improve fixed-vs-f32 error from 1.184% / max 37 to 0.752% / max 1.
+- Dash decomposition is benchmarked internally for both backends but excluded
+  from the Blend2D matrix. The locked Blend2D revision retains dash state yet
+  does not consume it in the raster stroker, so its apparent dashed timing is
+  actually an undashed path and cannot support a valid comparison claim.
 - The production analytic-cell path stops slabs only at edge starts, ends, and
   real crossings. It integrates boundary cells with the closed-form primitive
   of `clamp(edge_x - cell_x, 0, 1)`, records full intervals with two range
