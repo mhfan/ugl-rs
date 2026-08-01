@@ -559,6 +559,26 @@ impl PaintSampler for ConicGradient<'_> {
     fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
         self.stops.sample(SpreadMode::Repeat.map(self.turn(x, y) - self.start_turn))
     }
+
+    fn sample_span(&self, mut x: f32, mut y: f32, dx: f32, dy: f32, len: u32,
+        mut emit: impl FnMut(PremulSRGBA8)) {
+        if let Some(ramp) = self.stops.encoded_ramp {
+            let scale = (ramp.len() - 1) as f32;
+            for _ in 0..len {
+                let turn = SpreadMode::Repeat.map(self.turn(x, y) - self.start_turn);
+                emit(ramp[(turn * scale + 0.5) as usize]);
+                x += dx;
+                y += dy;
+            }
+            return;
+        }
+        for _ in 0..len {
+            emit(self.stops.sample(
+                SpreadMode::Repeat.map(self.turn(x, y) - self.start_turn)));
+            x += dx;
+            y += dy;
+        }
+    }
 }
 
 impl LinearPaintSampler for ConicGradient<'_> {
@@ -844,6 +864,11 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
                 Affine::new(1.5, 0.25, -0.5, 2.0, 3.0, -4.0)).unwrap();
             assert_span(&transformed, (-3.25, 2.75).into(), (0.5, -0.125).into());
         }
+        let conic = ConicGradient::new((-1.0, 2.0), 0.37, stops).unwrap();
+        assert_encoded_span(&conic, (-4.5, -2.0).into(), (0.5, 0.0).into());
+        let conic = ConicGradient::with_angle_mode(
+            (-1.0, 2.0), 0.37, stops, ConicAngleMode::Fast).unwrap();
+        assert_encoded_span(&conic, (-4.5, -2.0).into(), (0.5, 0.0).into());
     }
 
     #[test] fn exact_gradient_samplers_encode_only_at_the_compatibility_boundary() {

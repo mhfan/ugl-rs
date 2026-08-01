@@ -170,6 +170,7 @@ impl<'a> RadialGradient<'a> {
     fn concentric_ramp_index(&self, x: u32, y: u32) -> Option<usize> {
         const HALF_PIXEL_RAW: i64 = 1 << 7;
         const SUBPIXEL_SCALE: u64 = 1 << 8;
+        const FULL_TURN: u64 = 1_u64 << 32;
         let (x, y) = (x as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64,
                       y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64);
         if x > DEVICE_RAW_LIMIT as u64 || y > DEVICE_RAW_LIMIT as u64 {
@@ -378,7 +379,6 @@ impl<'a> ConicGradient<'a> {
     fn ramp_index(&self, x: u32, y: u32) -> Option<usize> {
         const HALF_PIXEL_RAW: i64 = 1 << 7;
         const SUBPIXEL_SCALE: u64 = 1 << 8;
-        const FULL_TURN: u64 = 1_u64 << 32;
         let (x, y) = (x as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64,
                       y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64);
         if x > DEVICE_RAW_LIMIT as u64 || y > DEVICE_RAW_LIMIT as u64 {
@@ -404,11 +404,11 @@ fn unit_angle_approx(x: i64, y: i64) -> u32 {
     let maximum = x_abs.max(y_abs);
     if maximum == 0 { return 0; }
     let slope = (x_abs.min(y_abs) as u128 * SCALE / maximum as u128) as i128;
-    let squared = slope * slope >> 32;
-    let polynomial = 683_420_221_i128 + (squared * (-222_711_105_i128 +
-        (squared * (106_347_771_i128 +
-        (squared * -30_299_868_i128 >> 32)) >> 32)) >> 32);
-    let mut turn = slope * polynomial >> 32;
+    let squared = (slope * slope) >> 32;
+    let polynomial = 683_420_221_i128 + ((squared * (-222_711_105_i128 +
+        ((squared * (106_347_771_i128 +
+        ((squared * -30_299_868_i128) >> 32))) >> 32))) >> 32);
+    let mut turn = (slope * polynomial) >> 32;
     if x_abs < y_abs { turn = QUARTER - turn; }
     if x < 0 { turn = HALF - turn; }
     if y < 0 { turn = (1_i128 << 32) - turn; }
@@ -631,13 +631,13 @@ impl PaintSampler for ConicGradient<'_> {
                 let actual = cordic_turn(x, y) as f32 / 4_294_967_296.0;
                 let turn = atan2(y as _, x as _) / TAU;
                 let expected = turn - floor(turn);
-            let difference = (actual - expected).abs();
-            maximum_error = maximum_error.max(difference.min(1.0 - difference));
-            let fast = unit_angle_approx(x, y) as f32 / 4_294_967_296.0;
-            let difference = (fast - expected).abs();
-            maximum_fast_error =
-                maximum_fast_error.max(difference.min(1.0 - difference));
-        }
+                let difference = (actual - expected).abs();
+                maximum_error = maximum_error.max(difference.min(1.0 - difference));
+                let fast = unit_angle_approx(x, y) as f32 / 4_294_967_296.0;
+                let difference = (fast - expected).abs();
+                maximum_fast_error =
+                    maximum_fast_error.max(difference.min(1.0 - difference));
+            }
         }
         assert!(maximum_error <= 6e-6, "maximum turn error={maximum_error}");
         assert!(maximum_fast_error <= 3e-5,
@@ -659,6 +659,11 @@ impl PaintSampler for ConicGradient<'_> {
             let reference =
                 ReferenceConicGradient::new((16.0, 16.0), start_angle, stops).unwrap();
             for y in 0..32 {
+                let mut span = [PremulSRGBA8::default(); 32];
+                let mut count = 0;
+                fast.sample_span(0, y, span.len() as _,
+                    |color| { span[count] = color; count += 1; });
+                assert_eq!(count, span.len());
                 for x in 0..32 {
                     let (actual, expected) = (conic.sample(x, y),
                         reference.sample(x as f32 + 0.5, y as f32 + 0.5));
@@ -668,6 +673,7 @@ impl PaintSampler for ConicGradient<'_> {
                         "point=({x}, {y}), actual={actual}, expected={expected}");
                     let fast = ramp.iter().position(|color|
                         *color == fast.sample(x, y)).unwrap();
+                    assert_eq!(span[x as usize], ramp[fast]);
                     assert!(fast.abs_diff(expected) <= 1,
                         "fast point=({x}, {y}), actual={fast}, expected={expected}");
                 }
