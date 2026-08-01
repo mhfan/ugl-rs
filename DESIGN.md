@@ -777,11 +777,24 @@ The fixed owning canvas compares packed bytes with the existing 16-row
 strip/run encoding after clip construction or intersection. It retains the
 sparse form only when its exact record payload is smaller, and the mask adapter
 consumes it directly during fill, stroke, and dashed stroke. Dense storage
-remains preferable for compact or highly fragmented masks. Remaining work is:
+remains preferable for compact or highly fragmented masks. Sparse/rectangle
+intersection walks and rewrites only retained runs, including fractional Q24.8
+boundary coverage, instead of allocating a temporary dense mask.
 
-- add equivalence tests against the current full-canvas representation and
-  benchmarks for small clips on large targets, nested clips, clearing,
-  intersection, peak bytes, and masked draw throughput.
+A 512×512 diagnostic benchmark (`cargo bench --bench raster --all-features --
+clip_mask --quick`) measures both initial classification/retention and cached
+drawing. A one-pixel diagonal occupies 512 runs plus 32 strip headers: 6,528
+payload bytes versus 262,144 dense bytes. Cached full-canvas fill measured about
+148 µs for the f32 dense mask and 59 µs for fixed sparse storage; local dense
+coverage measured about 39–40 µs on both. Empty and opaque-rectangle clips
+measured about 9–13 µs. Counting non-zero samples during classification lets
+fixed skip an extra sparse preflight scan when even the worst-case run encoding
+is smaller, reducing diagonal construction from roughly 432 µs to 329 µs.
+These quick measurements identify trends rather than release thresholds.
+
+Dense/sparse clip multiplication and deterministic scattered-mask rectangle
+intersection are checked pixel-for-pixel. Remaining work is broader randomized
+nested path/path intersection and allocator-backed peak-byte instrumentation.
 
 Retained memory, initial mask allocation, rasterization, and subsequent
 intersection now scale with the clipped region. Large-target peak-allocation

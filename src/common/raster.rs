@@ -56,7 +56,7 @@ impl MaskKind {
 #[derive(Clone, Copy, Debug)] pub struct CoverageMask<'a> {
     data: &'a [u8], width: u32, height: u32, stride: u32,
     origin_x: u32, origin_y: u32, data_width: u32, data_height: u32,
-    kind: MaskKind,
+    kind: MaskKind, non_zero_count: u64,
 }
 
 /// Mutable storage used to rasterize a coverage mask without allocation.
@@ -91,9 +91,9 @@ impl<'a> CoverageMask<'a> {
     pub fn new(data: &'a [u8], width: u32, height: u32, stride: u32) ->
         Result<Self, CoverageMaskError> {
         validate_mask_buffer(data.len(), width, height, stride)?;
-        let kind = classify_mask(data, width, height, stride);
+        let (kind, non_zero_count) = classify_mask(data, width, height, stride);
         Ok(Self { data, width, height, stride, origin_x: 0, origin_y: 0,
-            data_width: width, data_height: height, kind })
+            data_width: width, data_height: height, kind, non_zero_count })
     }
 
     /// Wraps storage for a local subregion while retaining full-target coordinates.
@@ -108,13 +108,14 @@ impl<'a> CoverageMask<'a> {
         validate_mask_buffer(data.len(), data_width, data_height, stride)?;
         let offset = |(left, top, right, bottom)|
             (left + origin_x, top + origin_y, right + origin_x, bottom + origin_y);
-        let kind = match classify_mask(data, data_width, data_height, stride) {
+        let (kind, non_zero_count) = classify_mask(data, data_width, data_height, stride);
+        let kind = match kind {
             MaskKind::Empty => MaskKind::Empty,
             MaskKind::OpaqueRect(bounds) => MaskKind::OpaqueRect(offset(bounds)),
             MaskKind::Coverage(bounds) => MaskKind::Coverage(offset(bounds)),
         };
         Ok(Self { data, width, height, stride, origin_x, origin_y,
-            data_width, data_height, kind })
+            data_width, data_height, kind, non_zero_count })
     }
 
     pub fn  width(&self) -> u32 { self.width }
@@ -132,9 +133,11 @@ impl<'a> CoverageMask<'a> {
     }
 
     pub(crate) fn kind(&self) -> MaskKind { self.kind }
+    /// Number of non-zero coverage samples within retained storage.
+    pub fn non_zero_count(&self) -> u64 { self.non_zero_count }
 }
 
-fn classify_mask(data: &[u8], width: u32, height: u32, stride: u32) -> MaskKind {
+fn classify_mask(data: &[u8], width: u32, height: u32, stride: u32) -> (MaskKind, u64) {
     let (mut left, mut top, mut right, mut bottom) = (width, height, 0, 0);
     let (mut non_zero, mut all_opaque) = (0_u64, true);
     for y in 0..height {
@@ -151,11 +154,12 @@ fn classify_mask(data: &[u8], width: u32, height: u32, stride: u32) -> MaskKind 
         left = left.min(first as _);   right = right.max(last as _);
         top = top.min(y);              bottom = y + 1;
     }
-    if left >= right { return MaskKind::Empty; }
+    if left >= right { return (MaskKind::Empty, 0); }
     let bounds = (left, top, right, bottom);
     let area = u64::from(right - left) * u64::from(bottom - top);
-    if all_opaque && non_zero == area { MaskKind::OpaqueRect(bounds) }
-    else { MaskKind::Coverage(bounds) }
+    let kind = if all_opaque && non_zero == area { MaskKind::OpaqueRect(bounds) }
+        else { MaskKind::Coverage(bounds) };
+    (kind, non_zero)
 }
 
 impl<'a> CoverageMaskMut<'a> {

@@ -1,9 +1,11 @@
 
 use std::hint::black_box;
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput,
+    criterion_group, criterion_main};
 use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RGBA},
         dash::{DashContour, DashWorkspace},
-        geometry::{Affine, Edge, Path, PathBuilder, Point}, raster::{CoverageSink, FillRule},
+        geometry::{Affine, Edge, Path, PathBuilder, Point},
+        raster::{CoverageMask, CoverageSink, FillRule},
         stroke::{LineCap, LineJoin, StrokeContour, StrokePathWorkspace}, Pixmap, SolidPaint,
         SpreadMode},
     float::{analytic::{BinWorkspace as AnalyticBinWorkspace,
@@ -1033,6 +1035,100 @@ fn benchmark_paint(c: &mut Criterion) {
         |b| b.iter(|| black_box(sample_linear_checksum(&exact))));
 }
 
+fn benchmark_clip_masks(c: &mut Criterion) {
+    const SIZE: u32 = 512;
+    let empty = vec![0; SIZE as usize * SIZE as usize];
+    let mut opaque_rect = empty.clone();
+    let mut dense_local = empty.clone();
+    let mut sparse_diagonal = empty.clone();
+    for y in 32..96 { for x in 32..96 {
+        opaque_rect[y * SIZE as usize + x] = u8::MAX;
+        dense_local[y * SIZE as usize + x] = if (x + y) & 1 == 0 { 96 } else { 192 };
+    } }
+    for y in 0..SIZE as usize { sparse_diagonal[y * SIZE as usize + y] = 128; }
+    let masks = [
+        ("empty", &empty[..]), ("opaque_rect", &opaque_rect),
+        ("dense_local", &dense_local), ("sparse_diagonal", &sparse_diagonal),
+    ];
+
+    let mut build = c.benchmark_group("clip_mask_build");
+    build.throughput(Throughput::Bytes(SIZE as u64 * SIZE as u64));
+    for (name, bytes) in masks {
+        let mut canvas = ugl_rs::float::Canvas::new(SIZE, SIZE).unwrap();
+        build.bench_function(BenchmarkId::new("f32", name), |b| b.iter(|| {
+            let mask = CoverageMask::new(black_box(bytes), SIZE, SIZE, SIZE).unwrap();
+            canvas.clear_clip().set_clip_mask(mask);
+            black_box(canvas.target());
+        }));
+        #[cfg(feature = "fixed")] {
+            let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
+            build.bench_function(BenchmarkId::new("fixed", name), |b| b.iter(|| {
+                let mask = CoverageMask::new(black_box(bytes), SIZE, SIZE, SIZE).unwrap();
+                canvas.clear_clip().set_clip_mask(mask);
+                black_box(canvas.target());
+            }));
+        }
+    }
+    build.finish();
+
+    let mut path = PathBuilder::new();
+    path.move_to((0.0, 0.0)).line_to((SIZE as _, 0.0))
+        .line_to((SIZE as _, SIZE as _)).line_to((0.0, SIZE as _));
+    let path = path.build();
+    let mut draw = c.benchmark_group("clip_mask_draw_f32");
+    draw.throughput(Throughput::Elements(SIZE as u64 * SIZE as u64));
+    for (name, bytes) in masks {
+        let mut canvas = ugl_rs::float::Canvas::new(SIZE, SIZE).unwrap();
+        canvas.set_clip_mask(CoverageMask::new(bytes, SIZE, SIZE, SIZE).unwrap())
+            .set_color(SRGBA::new(40, 120, 220, 192));
+        draw.bench_function(name, |b| b.iter(|| {
+            canvas.target_mut().as_bytes_mut().fill(0);
+            canvas.fill(&path).unwrap();
+            black_box(canvas.target());
+        }));
+    }
+    draw.finish();
+
+    #[cfg(feature = "fixed")] {
+        use ugl_rs::fixed::Scalar;
+        let fixed = Scalar::from_num;
+        let mut path = PathBuilder::new();
+        path.move_to((fixed(0), fixed(0))).line_to((fixed(SIZE), fixed(0)))
+            .line_to((fixed(SIZE), fixed(SIZE))).line_to((fixed(0), fixed(SIZE)));
+        let path = path.build();
+        let mut draw = c.benchmark_group("clip_mask_draw_fixed");
+        draw.throughput(Throughput::Elements(SIZE as u64 * SIZE as u64));
+        for (name, bytes) in masks {
+            let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
+            canvas.set_clip_mask(CoverageMask::new(bytes, SIZE, SIZE, SIZE).unwrap())
+                .set_color(SRGBA::new(40, 120, 220, 192));
+            draw.bench_function(name, |b| b.iter(|| {
+                canvas.target_mut().as_bytes_mut().fill(0);
+                canvas.fill(&path).unwrap();
+                black_box(canvas.target());
+            }));
+        }
+        draw.finish();
+
+        let rect = ugl_rs::common::geometry::Rect::from_ltrb(
+            Scalar::from_num(128.5), Scalar::from_num(128.5),
+            Scalar::from_num(383.5), Scalar::from_num(383.5)).unwrap();
+        let mut intersection = c.benchmark_group("clip_mask_intersect_fixed");
+        for (name, bytes) in [("dense_local", &dense_local[..]),
+                              ("sparse_diagonal", &sparse_diagonal[..])] {
+            intersection.bench_function(name, |b| b.iter_batched(|| {
+                let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
+                canvas.set_clip_mask(CoverageMask::new(bytes, SIZE, SIZE, SIZE).unwrap());
+                canvas
+            }, |mut canvas| {
+                canvas.set_clip_rect(rect);
+                black_box(canvas.target());
+            }, BatchSize::SmallInput));
+        }
+        intersection.finish();
+    }
+}
+
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {
     use ugl_rs::{fixed::{
         canvas::{composite_solid_tiles, render_solid, render_solid_tiled},
@@ -1499,6 +1595,7 @@ fn  benchmarks(c: &mut Criterion) {
     benchmark_stroke(c);
     benchmark_stroke_coverage(c);
     benchmark_paint(c);
+    benchmark_clip_masks(c);
 }
 
 criterion_group!(raster, benchmarks);
