@@ -416,3 +416,174 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
         }   Ok(())
     }
 }
+
+#[cfg(test)] mod tests { use super::*;
+    use alloc::vec::Vec;
+    use core::convert::Infallible;
+    use crate::common::geometry::{Edge, Point};
+
+    fn collect_line(from: impl Into<Point>,
+                      to: impl Into<Point>, cap: LineCap) -> Vec<Edge> {
+        let mut edges = Vec::new();
+        stroke_line(from.into(), to.into(), StrokeOptions::new(2.0).unwrap().with_cap(cap),
+            &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
+        edges
+    }
+
+    #[test] fn stroke_options_reject_invalid_geometric_states() {
+        assert_eq!(StrokeOptions::new(0.0), Err(StrokeError::NonPositiveWidth));
+        assert_eq!(StrokeOptions::new(f32::INFINITY), Err(StrokeError::NonFiniteWidth));
+        assert_eq!(StrokeOptions::new(2.0).unwrap().with_miter_limit(0.5),
+                   Err(StrokeError::MiterLimitTooSmall));
+        assert_eq!(StrokeOptions::new(2.0).unwrap().with_miter_limit(f32::NAN),
+                   Err(StrokeError::NonFiniteMiterLimit));
+        assert_eq!(StrokeOptions::new(2.0).unwrap().with_tolerance(0.0),
+                   Err(StrokeError::NonPositiveTolerance));
+        assert_eq!(StrokeOptions::new(2.0).unwrap().with_max_arc_segments(0),
+                   Err(StrokeError::ArcSegmentLimitZero));
+    }
+
+    #[test] fn line_caps_expand_to_expected_bounds_without_allocation() {
+        let bounds = |edges: &[Edge]| edges.iter().flat_map(|edge|
+            [edge.upper.x, edge.lower.x]).fold((f32::INFINITY, f32::NEG_INFINITY),
+                |(minimum, maximum), x| (minimum.min(x), maximum.max(x)));
+        assert_eq!(bounds(&collect_line((2.0, 3.0),
+            (6.0, 3.0), LineCap::Butt)),   (2.0, 6.0));
+        assert_eq!(bounds(&collect_line((2.0, 3.0),
+            (6.0, 3.0), LineCap::Square)), (1.0, 7.0));
+        let (minimum, maximum) =
+            bounds(&collect_line((2.0, 3.0), (6.0, 3.0), LineCap::Round));
+        assert!(minimum > 1.0 && minimum - 1.0 <= StrokeOptions::default().tolerance());
+        assert!(maximum < 7.0 && 7.0 - maximum <= StrokeOptions::default().tolerance());
+    }
+
+    #[test] fn point_only_contours_follow_cap_semantics_and_arc_limits() {
+        let mut edges = Vec::new();
+        stroke_point((4.0, 5.0).into(), StrokeOptions::new(2.0).unwrap(),
+            &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
+        assert!(edges.is_empty());
+        stroke_point((4.0, 5.0).into(),
+            StrokeOptions::new(2.0).unwrap().with_cap(LineCap::Square),
+            &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
+        assert_eq!(edges.len(), 2);
+
+        let options = StrokeOptions::new(100.0).unwrap().with_cap(LineCap::Round)
+            .with_tolerance(1e-4).unwrap().with_max_arc_segments(2).unwrap();
+        assert!(matches!(stroke_point((0.0, 0.0).into(), options,
+            &mut |_: Edge| Ok::<_, Infallible>(())),
+            Err(StrokeExpandError::ArcSegmentLimit { maximum: 2, .. })));
+    }
+
+    #[test] fn invalid_geometry_and_sink_errors_are_explicit() {
+        assert_eq!(stroke_line((f32::NAN, 0.0).into(), (1.0, 0.0).into(),
+            StrokeOptions::default(), &mut |_| Ok::<_, &'static str>(())),
+            Err(StrokeExpandError::NonFinitePoint));
+        assert_eq!(stroke_line((0.0, 0.0).into(), (1.0, 1.0).into(),
+            StrokeOptions::default(), &mut |_| Err("full")),
+            Err(StrokeExpandError::Sink("full")));
+    }
+
+    #[test] fn polyline_joins_support_bevel_round_miter_and_fallback() {
+        let points = [(2.0, 4.0).into(), (4.0, 4.0).into(), (4.0, 6.0).into()];
+        let collect = |join, miter_limit| {
+            let mut edges = Vec::new();
+            let options = StrokeOptions::new(2.0).unwrap().with_join(join)
+                .with_miter_limit(miter_limit).unwrap();
+            stroke_polyline(&points, false, options, &mut |edge| {
+                edges.push(edge); Ok::<_, Infallible>(())
+            }).unwrap();
+            edges
+        };
+        let has_corner = |edges: &[Edge]| edges.iter().any(|edge|
+            [edge.upper, edge.lower].contains(&(5.0, 3.0).into()));
+        let bevel = collect(LineJoin::Bevel, 4.0);
+        let round = collect(LineJoin::Round, 4.0);
+        let miter = collect(LineJoin::Miter, 4.0);
+        let fallback = collect(LineJoin::Miter, 1.0);
+        assert!(!has_corner(&bevel) && !has_corner(&round));
+        assert!(has_corner(&miter) && !has_corner(&fallback));
+        assert!(round.len() > bevel.len());
+    }
+
+    #[test] fn polylines_ignore_repeated_points_and_closed_contours_have_no_caps() {
+        let collect = |points: &[Point], closed| {
+            let mut edges = Vec::new();
+            stroke_polyline(points, closed,
+                StrokeOptions::new(2.0).unwrap().with_cap(LineCap::Square),
+                &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
+            edges
+        };
+        let x_bounds = |edges: &[Edge]| edges.iter().flat_map(|edge|
+            [edge.upper.x, edge.lower.x]).fold((f32::INFINITY, f32::NEG_INFINITY),
+            |(minimum, maximum), x| (minimum.min(x), maximum.max(x)));
+        let plain    = collect(&[(2.0, 3.0).into(), (6.0, 3.0).into()], false);
+        let repeated = collect(&[(2.0, 3.0).into(), (2.0, 3.0).into(),
+                                 (6.0, 3.0).into(), (6.0, 3.0).into()], false);
+        assert_eq!(plain.len(), 2);
+        assert_eq!(x_bounds(&plain), x_bounds(&repeated));
+
+        let closed = collect(&[(2.0, 3.0).into(), (6.0, 3.0).into()], true);
+        assert_eq!(x_bounds(&plain),  (1.0, 7.0));
+        assert_eq!(x_bounds(&closed), (2.0, 6.0));
+
+        let options = StrokeOptions::new(100.0).unwrap().with_cap(LineCap::Round)
+            .with_join(LineJoin::Bevel).with_tolerance(1e-4).unwrap()
+            .with_max_arc_segments(2).unwrap();
+        let mut edges = Vec::new();
+        stroke_polyline(&[(0.0, 0.0).into(), (1.0, 0.0).into(), (1.0, 1.0).into()],
+            true, options, &mut |edge| {
+                edges.push(edge); Ok::<_, Infallible>(())
+            }).unwrap();
+        assert!(!edges.is_empty());
+
+        edges.clear();
+        stroke_polyline(&[(1.0, 1.0).into(), (1.0, 1.0).into()], true, options,
+            &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }).unwrap();
+        assert!(edges.is_empty());
+    }
+
+    #[test] fn randomized_finite_polylines_emit_only_valid_edges() {
+        let (mut seed, mut edges) = (0x5EED_1234_u32, Vec::new());
+        let random = |seed: &mut u32| {
+            *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            ((*seed >> 8) as f32 / 0x00FF_FFFF as f32) * 32.0 - 16.0
+        };
+        for case in 0..512 {
+            let len = case * 7 % 9;
+            let mut points = Vec::with_capacity(len);
+            for index in 0..len {
+                let point = if index != 0 && (case + index) % 5 == 0 {
+                    points[index - 1]
+                } else { (random(&mut seed), random(&mut seed)).into() };
+                points.push(point);
+            }
+            let cap = [LineCap::Butt, LineCap::Round, LineCap::Square][case % 3];
+            let join = [LineJoin::Miter, LineJoin::Round, LineJoin::Bevel][case / 3 % 3];
+            let options = StrokeOptions::new(0.125 + (case % 16) as f32 * 0.25).unwrap()
+                .with_cap(cap).with_join(join);
+            edges.clear();
+            stroke_polyline(&points, case & 1 != 0, options, &mut |edge| {
+                edges.push(edge); Ok::<_, Infallible>(())
+            }).unwrap();
+            assert!(edges.iter().all(Edge::is_valid), "case {case}: {points:?}");
+        }
+    }
+
+    #[test] fn polyline_preflight_rejects_arc_budget_and_overflow_before_writing() {
+        let mut edges = Vec::new();
+        let options = StrokeOptions::new(100.0).unwrap().with_join(LineJoin::Round)
+            .with_tolerance(1e-4).unwrap().with_max_arc_segments(2).unwrap();
+        assert!(matches!(stroke_polyline(&[(0.0, 0.0).into(),
+                        (1.0, 0.0).into(), (1.0, 1.0).into()], false, options,
+                &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }),
+            Err(StrokeExpandError::ArcSegmentLimit { .. })));
+        assert!(edges.is_empty());
+
+        assert_eq!(stroke_polyline(&[(0.0, 0.0).into(), (1.0, 0.0).into(),
+                (f32::MAX, f32::MAX).into(), (-f32::MAX, -f32::MAX).into()],
+                false, StrokeOptions::default(),
+                &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }),
+        Err(StrokeExpandError::NonFinitePoint));
+        assert!(edges.is_empty());
+    }
+}

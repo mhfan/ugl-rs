@@ -2,9 +2,6 @@
 use super::*;
 use alloc::{vec, vec::Vec};
 use core::convert::Infallible;
-#[cfg(feature = "f32")]
-use crate::float::analytic::{Intersection as AnalyticIntersection,
-    Workspace as AnalyticWorkspace, rasterize_edges as rasterize_edges_analytic};
 
 fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }
 
@@ -17,16 +14,6 @@ fn polygon_edges<T: Copy + PartialOrd>(points: &[Point<T>]) -> Vec<Edge<T>> {
         }
     }
     edges
-}
-
-#[cfg(feature = "f32")]
-fn assert_coverage_near(
-    actual: &[u8], expected: &[u8], tolerance: u8, context: impl core::fmt::Display) {
-    assert_eq!(actual.len(), expected.len(), "{context}: coverage dimensions differ");
-    for (pixel, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
-        assert!(actual.abs_diff(expected) <= tolerance,
-            "{context}, pixel {pixel}: actual={actual}, expected={expected}");
-    }
 }
 
 fn render(edges: &[Edge<Scalar>], width: usize, height: usize,
@@ -66,21 +53,6 @@ fn render_region(edges: &[Edge<Scalar>], width: usize, height: usize,
         &mut Workspace { segments: &mut segments, trapezoids: &mut trapezoids,
             row_area: &mut row_area, strip_offsets: &mut strip_offsets,
             strip_indices: &mut strip_indices,
-        }, &mut |x, y, coverage| {
-            pixels[y as usize * width + x as usize] = coverage;
-            Ok::<_, Infallible>(())
-        }).unwrap();
-    pixels
-}
-
-#[cfg(feature = "f32")]
-fn render_analytic(edges: &[Edge], width: usize, height: usize,
-    fill_rule: FillRule) -> Vec<u8> {
-    let (mut pixels, mut row) = (vec![0; width * height], vec![0.0; width]);
-    let mut intersections = vec![AnalyticIntersection::default(); edges.len()];
-    rasterize_edges_analytic(edges, width as _, height as _, fill_rule,
-        &mut AnalyticWorkspace {
-            intersections: &mut intersections, row_coverage: &mut row,
         }, &mut |x, y, coverage| {
             pixels[y as usize * width + x as usize] = coverage;
             Ok::<_, Infallible>(())
@@ -149,83 +121,11 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(render(&edges, 4, 1, FillRule::EvenOdd), [255, 0, 0, 255]);
 }
 
-#[cfg(feature = "f32")]
-#[test] fn triangles_track_the_f32_analytic_reference() {
-    let mut state = 0x8f31_7a2d_u32;
-    let mut random_raw = || {
-        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        (state % (7 * SUBPIXEL_SCALE)) as i32 - SUBPIXEL_SCALE as i32
-    };
-    for case in 0..512 {
-        let points: [Point<Scalar>; 3] = core::array::from_fn(|_| (
-            Scalar::from_bits(random_raw()), Scalar::from_bits(random_raw())).into());
-        let fixed_edges = polygon_edges(&points);
-        let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
-            upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
-            lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
-            winding: edge.winding,
-        }).collect();
-        assert_coverage_near(
-            &render(&fixed_edges, 6, 6, FillRule::NonZero),
-            &render_analytic(&float_edges, 6, 6, FillRule::NonZero),
-            2, format_args!("triangle case {case}"));
-    }
-}
-
-#[cfg(feature = "f32")]
-#[test] fn self_intersections_track_the_f32_analytic_reference() {
-    let scenes = [[(0, 0), (512, 512), (0, 512), (512, 0)],
-                    [(32, 17), (737, 491), (61, 690), (689, 3)],
-                    [(-64, 100), (800, 600), (0, 700), (720, -20)]];
-    for (case, points) in scenes.into_iter().enumerate() {
-        let points = points.map(|(x, y)|
-            (Scalar::from_bits(x), Scalar::from_bits(y)).into());
-        let fixed_edges = polygon_edges(&points);
-        let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
-            upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
-            lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
-            winding: edge.winding,
-        }).collect();
-        for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
-            assert_coverage_near(
-                &render(&fixed_edges, 3, 3, fill_rule),
-                &render_analytic(&float_edges, 3, 3, fill_rule),
-                2, format_args!("self-intersection case {case}, {fill_rule:?}"));
-        }
-    }
-}
-
 #[test] fn rational_crossing_events_round_only_at_the_area_boundary() {
     let line = |from, to| Line::new(Edge::from_line(from, to).unwrap()).unwrap();
     let left  = line((fixed(0.0), fixed(0.0)).into(), (fixed(3.0), fixed(2.0)).into());
     let right = line((fixed(2.0), fixed(0.0)).into(), (fixed(0.0), fixed(2.0)).into());
     assert_eq!(crossing_event(left, right), Some(Crossing { y: 205, x: 307 }));
-}
-
-#[cfg(feature = "f32")]
-#[test] fn randomized_quadrilaterals_track_the_f32_reference() {
-    let mut state = 0xd431_72a9_u32;
-    let mut coordinate = || {
-        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        Scalar::from_bits((state % 2048) as i32 - 256)
-    };
-    for case in 0..256 {
-        let points: [Point<Scalar>; 4] =
-            core::array::from_fn(|_| (coordinate(), coordinate()).into());
-        let fixed_edges = polygon_edges(&points);
-        let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
-            upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
-            lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
-            winding: edge.winding,
-        }).collect();
-        for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
-            assert_coverage_near(
-                &render(&fixed_edges, 6, 6, fill_rule),
-                &render_analytic(&float_edges, 6, 6, fill_rule),
-                2, format_args!(
-                    "quadrilateral case {case}, {fill_rule:?}, points={points:?}"));
-        }
-    }
 }
 
 #[test] fn rational_order_handles_negative_values_and_different_denominators() {
@@ -712,4 +612,112 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
         Err(Error::WorkspaceTooSmall {
             kind: WorkspaceKind::Spans, required: 2,
         }));
+}
+
+#[cfg(feature = "f32")] mod refer_tests { use super::*;
+use crate::float::analytic::{Intersection as AnalyticIntersection,
+    Workspace as AnalyticWorkspace, rasterize_edges as rasterize_edges_analytic};
+
+
+fn assert_coverage_near(
+    actual: &[u8], expected: &[u8], tolerance: u8, context: impl core::fmt::Display) {
+    assert_eq!(actual.len(), expected.len(), "{context}: coverage dimensions differ");
+    for (pixel, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
+        assert!(actual.abs_diff(expected) <= tolerance,
+            "{context}, pixel {pixel}: actual={actual}, expected={expected}");
+    }
+}
+
+
+
+fn render_analytic(edges: &[Edge], width: usize, height: usize,
+    fill_rule: FillRule) -> Vec<u8> {
+    let (mut pixels, mut row) = (vec![0; width * height], vec![0.0; width]);
+    let mut intersections = vec![AnalyticIntersection::default(); edges.len()];
+    rasterize_edges_analytic(edges, width as _, height as _, fill_rule,
+        &mut AnalyticWorkspace {
+            intersections: &mut intersections, row_coverage: &mut row,
+        }, &mut |x, y, coverage| {
+            pixels[y as usize * width + x as usize] = coverage;
+            Ok::<_, Infallible>(())
+        }).unwrap();
+    pixels
+}
+
+
+
+#[test] fn triangles_track_the_f32_analytic_reference() {
+    let mut state = 0x8f31_7a2d_u32;
+    let mut random_raw = || {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (state % (7 * SUBPIXEL_SCALE)) as i32 - SUBPIXEL_SCALE as i32
+    };
+    for case in 0..512 {
+        let points: [Point<Scalar>; 3] = core::array::from_fn(|_| (
+            Scalar::from_bits(random_raw()), Scalar::from_bits(random_raw())).into());
+        let fixed_edges = polygon_edges(&points);
+        let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
+            upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
+            lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
+            winding: edge.winding,
+        }).collect();
+        assert_coverage_near(
+            &render(&fixed_edges, 6, 6, FillRule::NonZero),
+            &render_analytic(&float_edges, 6, 6, FillRule::NonZero),
+            2, format_args!("triangle case {case}"));
+    }
+}
+
+
+
+#[test] fn self_intersections_track_the_f32_analytic_reference() {
+    let scenes = [[(0, 0), (512, 512), (0, 512), (512, 0)],
+                    [(32, 17), (737, 491), (61, 690), (689, 3)],
+                    [(-64, 100), (800, 600), (0, 700), (720, -20)]];
+    for (case, points) in scenes.into_iter().enumerate() {
+        let points = points.map(|(x, y)|
+            (Scalar::from_bits(x), Scalar::from_bits(y)).into());
+        let fixed_edges = polygon_edges(&points);
+        let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
+            upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
+            lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
+            winding: edge.winding,
+        }).collect();
+        for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
+            assert_coverage_near(
+                &render(&fixed_edges, 3, 3, fill_rule),
+                &render_analytic(&float_edges, 3, 3, fill_rule),
+                2, format_args!("self-intersection case {case}, {fill_rule:?}"));
+        }
+    }
+}
+
+
+
+#[test] fn randomized_quadrilaterals_track_the_f32_reference() {
+    let mut state = 0xd431_72a9_u32;
+    let mut coordinate = || {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        Scalar::from_bits((state % 2048) as i32 - 256)
+    };
+    for case in 0..256 {
+        let points: [Point<Scalar>; 4] =
+            core::array::from_fn(|_| (coordinate(), coordinate()).into());
+        let fixed_edges = polygon_edges(&points);
+        let float_edges: Vec<Edge> = fixed_edges.iter().map(|edge| Edge {
+            upper: (edge.upper.x.to_num(), edge.upper.y.to_num()).into(),
+            lower: (edge.lower.x.to_num(), edge.lower.y.to_num()).into(),
+            winding: edge.winding,
+        }).collect();
+        for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
+            assert_coverage_near(
+                &render(&fixed_edges, 6, 6, fill_rule),
+                &render_analytic(&float_edges, 6, 6, fill_rule),
+                2, format_args!(
+                    "quadrilateral case {case}, {fill_rule:?}, points={points:?}"));
+        }
+    }
+}
+
+
 }

@@ -142,7 +142,8 @@ pub(crate) fn scaled_integer_sqrt(value: u128) -> (u128, u128) {
     (root, 1 << fraction_bits)
 }
 
-#[cfg(all(test, feature = "f32"))] mod tests { use super::*; use crate::float::{cos, sin};
+#[cfg(all(test, feature = "f32"))] mod refer_tests {
+    use super::*; use crate::float::{cos, sin};
     #[test] fn rotation_cordic_tracks_unit_circle() {
         let mut maximum_error = 0.0_f32;
         for step in 0..65_536_u32 {

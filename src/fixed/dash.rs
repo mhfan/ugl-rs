@@ -167,52 +167,6 @@ fn dash_segment<W: DashOutput<Point<Scalar>>>(
 use super::*;
 use crate::{common::dash::{DashContour, DashError, DashRequirements, DashWorkspace},
     fixed::Scalar};
-#[cfg(feature = "f32")]
-use crate::{fixed::DEVICE_RAW_LIMIT, float::dash::{DashPattern as ReferencePattern,
-    dash_polyline as reference_dash_polyline, dash_requirements}};
-#[cfg(feature = "f32")] use alloc::vec::Vec;
-
-#[cfg(feature = "f32")]
-fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->
-    Result<Vec<Vec<Point>>, DashError> {
-    let pattern = ReferencePattern::new(lengths, phase).unwrap();
-    let (mut output, mut contours) =
-        ([Point::default(); 64], [DashContour::default(); 16]);
-    let mut workspace = DashWorkspace { points: &mut output, contours: &mut contours };
-    let dashed = reference_dash_polyline(points, closed, pattern, &mut workspace)?;
-    Ok(dashed.contours().map(|(points, _)| points.to_vec()).collect())
-}
-
-    #[cfg(feature = "f32")]
-    #[test] fn dash_matches_f32_on_exact_metric_segments() {
-        let fixed = Scalar::from_num;
-        let fixed_points = [(fixed(0), fixed(0)).into(), (fixed(6), fixed(8)).into()];
-        let fixed_lengths = [fixed(3), fixed(2)];
-        let fixed_pattern = Pattern::new(&fixed_lengths, fixed(1)).unwrap();
-        let (mut fixed_output, mut fixed_contours) = (
-            [(Scalar::ZERO, Scalar::ZERO).into(); 16],
-            [DashContour::default(); 8],
-        );
-        let mut fixed_workspace = DashWorkspace {
-            points: &mut fixed_output, contours: &mut fixed_contours,
-        };
-        let fixed_dashed = dash_polyline(
-            &fixed_points, false, fixed_pattern, &mut fixed_workspace).unwrap();
-        let fixed_result: Vec<Vec<_>> = fixed_dashed.contours()
-            .map(|(points, _)| points.to_vec()).collect();
-
-        let float_points = [(0.0, 0.0).into(), (6.0, 8.0).into()];
-        let float_result = collect(&float_points, false, &[3.0, 2.0], 1.0).unwrap();
-        assert_eq!(fixed_result.len(), float_result.len());
-        for (fixed_contour, float_contour) in fixed_result.iter().zip(&float_result) {
-            assert_eq!(fixed_contour.len(), float_contour.len());
-            for (fixed, float) in fixed_contour.iter().zip(float_contour) {
-                assert!((fixed.x.to_num::<f32>() - float.x).abs() <= 1.0 / 256.0);
-                assert!((fixed.y.to_num::<f32>() - float.y).abs() <= 1.0 / 256.0);
-            }
-        }
-    }
-
 
     #[test] fn pattern_and_closed_seam_follow_reference_contract() {
         let fixed = Scalar::from_num;
@@ -255,7 +209,57 @@ fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->
     }
 
 
-    #[cfg(feature = "f32")]
+
+    #[cfg(feature = "f32")] mod refer_tests { use super::*;
+        use alloc::vec::Vec;
+        use crate::{fixed::DEVICE_RAW_LIMIT, float::dash::{DashPattern as ReferencePattern,
+    dash_polyline as reference_dash_polyline, dash_requirements}};
+
+
+fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->
+    Result<Vec<Vec<Point>>, DashError> {
+    let pattern = ReferencePattern::new(lengths, phase).unwrap();
+    let (mut output, mut contours) =
+        ([Point::default(); 64], [DashContour::default(); 16]);
+    let mut workspace = DashWorkspace { points: &mut output, contours: &mut contours };
+    let dashed = reference_dash_polyline(points, closed, pattern, &mut workspace)?;
+    Ok(dashed.contours().map(|(points, _)| points.to_vec()).collect())
+}
+
+
+
+    #[test] fn dash_matches_f32_on_exact_metric_segments() {
+        let fixed = Scalar::from_num;
+        let fixed_points = [(fixed(0), fixed(0)).into(), (fixed(6), fixed(8)).into()];
+        let fixed_lengths = [fixed(3), fixed(2)];
+        let fixed_pattern = Pattern::new(&fixed_lengths, fixed(1)).unwrap();
+        let (mut fixed_output, mut fixed_contours) = (
+            [(Scalar::ZERO, Scalar::ZERO).into(); 16],
+            [DashContour::default(); 8],
+        );
+        let mut fixed_workspace = DashWorkspace {
+            points: &mut fixed_output, contours: &mut fixed_contours,
+        };
+        let fixed_dashed = dash_polyline(
+            &fixed_points, false, fixed_pattern, &mut fixed_workspace).unwrap();
+        let fixed_result: Vec<Vec<_>> = fixed_dashed.contours()
+            .map(|(points, _)| points.to_vec()).collect();
+
+        let float_points = [(0.0, 0.0).into(), (6.0, 8.0).into()];
+        let float_result = collect(&float_points, false, &[3.0, 2.0], 1.0).unwrap();
+        assert_eq!(fixed_result.len(), float_result.len());
+        for (fixed_contour, float_contour) in fixed_result.iter().zip(&float_result) {
+            assert_eq!(fixed_contour.len(), float_contour.len());
+            for (fixed, float) in fixed_contour.iter().zip(float_contour) {
+                assert!((fixed.x.to_num::<f32>() - float.x).abs() <= 1.0 / 256.0);
+                assert!((fixed.y.to_num::<f32>() - float.y).abs() <= 1.0 / 256.0);
+            }
+        }
+    }
+
+
+
+
     #[test] fn randomized_f32_and_fixed_dash_outputs_remain_bounded() {
         let mut state = 0x4d59_5df4_d0f3_3173_u64;
         let mut random = || {
@@ -319,4 +323,7 @@ fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->
                         value.unsigned_abs() <= DEVICE_RAW_LIMIT as u32))));
         }
     }
+
+    }
+
 }

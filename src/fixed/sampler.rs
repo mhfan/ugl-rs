@@ -458,45 +458,9 @@ impl PaintSampler for ConicGradient<'_> {
 #[cfg(test)] mod tests {
     use super::*;
     use super::super::math::integer_sqrt;
-    #[cfg(feature = "f32")] use super::super::math::cordic_turn;
     use crate::common::color::SRGBA;
-    #[cfg(feature = "f32")]
-    use crate::{float::{atan2, floor, sampler::{
-        ConicGradient as ReferenceConicGradient, GradientStop, GradientStops,
-        LinearGradient as ReferenceLinearGradient, PaintSampler as ReferencePaintSampler,
-        RadialGradient as ReferenceRadialGradient,
-    }}};
-
-    #[cfg(feature = "f32")]
-    const TAU: f32 = core::f32::consts::PI * 2.0;
 
     fn encoded(color: SRGBA<u8>) -> PremulSRGBA8 { color.premul_encoded() }
-    #[cfg(feature = "f32")]
-    fn red_blue_stops() -> [GradientStop; 2] {
-        [GradientStop::new(0.0, SRGBA::red()),
-         GradientStop::new(1.0, SRGBA::blue())]
-    }
-
-    #[cfg(feature = "f32")]
-    #[test] fn linear_gradient_matches_the_encoded_reference_ramp() {
-        let stops = red_blue_stops();
-        let mut storage = [PremulSRGBA8::zeroed(); 257];
-        let stops = GradientStops::with_ramp(&stops, &mut storage).unwrap();
-        let ramp = stops.encoded_ramp().unwrap();
-        let (from, to) = ((Scalar::from_num(2), Scalar::from_num(0)),
-                          (Scalar::from_num(10), Scalar::from_num(0)));
-        for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {
-            let fixed = LinearGradient::new(from, to, ramp, spread).unwrap();
-            let reference =
-                ReferenceLinearGradient::new(
-                    (2.0, 0.0), (10.0, 0.0), stops, spread).unwrap();
-            for x in 0..32 {
-                assert_eq!(fixed.sample(x, 3),
-                    reference.sample(x as f32 + 0.5, 3.5), "spread={spread:?}, x={x}");
-            }
-        }
-    }
-
 
     #[test] fn linear_gradient_validates_geometry_and_widens_extremes() {
         let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
@@ -546,7 +510,104 @@ impl PaintSampler for ConicGradient<'_> {
     }
 
 
-    #[cfg(feature = "f32")]
+    #[test] fn concentric_radial_validates_radii_and_integer_sqrt() {
+        let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
+        let center = (Scalar::ZERO, Scalar::ZERO);
+        assert_eq!(RadialGradient::new(center,
+            Scalar::from_num(-1), &ramp, SpreadMode::Pad).unwrap_err(),
+            GradientError::NegativeRadius);
+        assert_eq!(RadialGradient::with_radii(center,
+            Scalar::from_num(2), Scalar::from_num(2),
+            &ramp, SpreadMode::Pad).unwrap_err(), GradientError::DegenerateGeometry);
+
+        for root in [0_u128, 1, 2, 3, 255, 65_535, u32::MAX as _] {
+            let square = root * root;
+            assert_eq!(integer_sqrt(square), root);
+            if root != 0 { assert_eq!(integer_sqrt(square - 1), root - 1); }
+            assert_eq!(integer_sqrt(square + root), root);
+        }
+        assert_eq!(integer_sqrt(u128::MAX), u64::MAX as u128);
+        let mut value = 0x9e37_79b9_7f4a_7c15_d1b5_4a32_d192_ed03_u128;
+        for _ in 0..1_000 {
+            value = value.wrapping_mul(0xda94_2042_e4dd_58b5)
+                         .wrapping_add(0x94d0_49bb_1331_11eb);
+            let root = integer_sqrt(value);
+            assert!(root * root <= value);
+            if root < u64::MAX as u128 { assert!((root + 1) * (root + 1) > value); }
+        }
+    }
+
+
+    #[test] fn two_circle_radial_enforces_the_device_domain() {
+        let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
+        let fixed = Scalar::from_num;
+        assert_eq!(RadialGradient::new(
+            (Scalar::from_bits(DEVICE_RAW_LIMIT + 1), fixed(0)), fixed(1),
+            &ramp, SpreadMode::Pad).unwrap_err(), GradientError::CoordinateOutOfRange);
+        let radial = RadialGradient::new(
+            (fixed(0), fixed(0)), fixed(1), &ramp, SpreadMode::Pad).unwrap();
+        let first_outside_pixel = DEVICE_RAW_LIMIT as u32 / 256;
+        assert_eq!(radial.sample(first_outside_pixel, 0),
+            PremulSRGBA8::zeroed());
+    }
+
+
+    #[test] fn conic_validates_ramp_and_device_domain() {
+        let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
+        let fixed = Scalar::from_num;
+        assert_eq!(Angle::from_turn_fraction(1, 4), Some(Angle::QUARTER_TURN));
+        assert_eq!(Angle::from_turn_fraction(1, 0), None);
+        assert_eq!(ConicGradient::new((fixed(0), fixed(0)),
+            Angle::ZERO, &ramp[..1]).unwrap_err(), GradientError::RampTooSmall);
+        assert_eq!(ConicGradient::new(
+            (Scalar::from_bits(DEVICE_RAW_LIMIT + 1), fixed(0)),
+            Angle::ZERO, &ramp).unwrap_err(), GradientError::CoordinateOutOfRange);
+        let conic = ConicGradient::new(
+            (fixed(0), fixed(0)), Angle::ZERO, &ramp).unwrap();
+        assert_eq!(conic.sample(DEVICE_RAW_LIMIT as u32 / 256, 0),
+            PremulSRGBA8::zeroed());
+    }
+
+    #[cfg(feature = "f32")] mod refer_tests { use super::*;
+        use super::super::super::math::cordic_turn;
+    use crate::{float::{atan2, floor, sampler::{
+        ConicGradient as ReferenceConicGradient, GradientStop, GradientStops,
+        LinearGradient as ReferenceLinearGradient, PaintSampler as ReferencePaintSampler,
+        RadialGradient as ReferenceRadialGradient,
+    }}};
+
+
+    const TAU: f32 = core::f32::consts::PI * 2.0;
+
+    fn red_blue_stops() -> [GradientStop; 2] {
+        [GradientStop::new(0.0, SRGBA::red()),
+         GradientStop::new(1.0, SRGBA::blue())]
+    }
+
+
+
+    #[test] fn linear_gradient_matches_the_encoded_reference_ramp() {
+        let stops = red_blue_stops();
+        let mut storage = [PremulSRGBA8::zeroed(); 257];
+        let stops = GradientStops::with_ramp(&stops, &mut storage).unwrap();
+        let ramp = stops.encoded_ramp().unwrap();
+        let (from, to) = ((Scalar::from_num(2), Scalar::from_num(0)),
+                          (Scalar::from_num(10), Scalar::from_num(0)));
+        for spread in [SpreadMode::Pad, SpreadMode::Repeat, SpreadMode::Reflect] {
+            let fixed = LinearGradient::new(from, to, ramp, spread).unwrap();
+            let reference =
+                ReferenceLinearGradient::new(
+                    (2.0, 0.0), (10.0, 0.0), stops, spread).unwrap();
+            for x in 0..32 {
+                assert_eq!(fixed.sample(x, 3),
+                    reference.sample(x as f32 + 0.5, 3.5), "spread={spread:?}, x={x}");
+            }
+        }
+    }
+
+
+
+
     #[test] fn concentric_radial_matches_the_encoded_reference_ramp() {
         let stops = red_blue_stops();
         let mut storage = [PremulSRGBA8::zeroed(); 257];
@@ -591,35 +652,8 @@ impl PaintSampler for ConicGradient<'_> {
     }
 
 
-    #[test] fn concentric_radial_validates_radii_and_integer_sqrt() {
-        let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
-        let center = (Scalar::ZERO, Scalar::ZERO);
-        assert_eq!(RadialGradient::new(center,
-            Scalar::from_num(-1), &ramp, SpreadMode::Pad).unwrap_err(),
-            GradientError::NegativeRadius);
-        assert_eq!(RadialGradient::with_radii(center,
-            Scalar::from_num(2), Scalar::from_num(2),
-            &ramp, SpreadMode::Pad).unwrap_err(), GradientError::DegenerateGeometry);
-
-        for root in [0_u128, 1, 2, 3, 255, 65_535, u32::MAX as _] {
-            let square = root * root;
-            assert_eq!(integer_sqrt(square), root);
-            if root != 0 { assert_eq!(integer_sqrt(square - 1), root - 1); }
-            assert_eq!(integer_sqrt(square + root), root);
-        }
-        assert_eq!(integer_sqrt(u128::MAX), u64::MAX as u128);
-        let mut value = 0x9e37_79b9_7f4a_7c15_d1b5_4a32_d192_ed03_u128;
-        for _ in 0..1_000 {
-            value = value.wrapping_mul(0xda94_2042_e4dd_58b5)
-                         .wrapping_add(0x94d0_49bb_1331_11eb);
-            let root = integer_sqrt(value);
-            assert!(root * root <= value);
-            if root < u64::MAX as u128 { assert!((root + 1) * (root + 1) > value); }
-        }
-    }
 
 
-    #[cfg(feature = "f32")]
     #[test] fn two_circle_radial_matches_quadratic_and_linear_references() {
         fn assert_close(fixed: &RadialGradient<'_>,
             reference: &ReferenceRadialGradient<'_>,
@@ -675,21 +709,8 @@ impl PaintSampler for ConicGradient<'_> {
     }
 
 
-    #[test] fn two_circle_radial_enforces_the_device_domain() {
-        let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
-        let fixed = Scalar::from_num;
-        assert_eq!(RadialGradient::new(
-            (Scalar::from_bits(DEVICE_RAW_LIMIT + 1), fixed(0)), fixed(1),
-            &ramp, SpreadMode::Pad).unwrap_err(), GradientError::CoordinateOutOfRange);
-        let radial = RadialGradient::new(
-            (fixed(0), fixed(0)), fixed(1), &ramp, SpreadMode::Pad).unwrap();
-        let first_outside_pixel = DEVICE_RAW_LIMIT as u32 / 256;
-        assert_eq!(radial.sample(first_outside_pixel, 0),
-            PremulSRGBA8::zeroed());
-    }
 
 
-    #[cfg(feature = "f32")]
     #[test] fn conic_cordic_tracks_exact_angles_and_encoded_ramp() {
         assert_eq!(cordic_turn( 1,  0), Angle::ZERO.to_bits());
         assert_eq!(cordic_turn( 0,  1), Angle::QUARTER_TURN.to_bits());
@@ -753,19 +774,7 @@ impl PaintSampler for ConicGradient<'_> {
     }
 
 
-    #[test] fn conic_validates_ramp_and_device_domain() {
-        let ramp = [encoded(SRGBA::<u8>::red()), encoded(SRGBA::<u8>::blue())];
-        let fixed = Scalar::from_num;
-        assert_eq!(Angle::from_turn_fraction(1, 4), Some(Angle::QUARTER_TURN));
-        assert_eq!(Angle::from_turn_fraction(1, 0), None);
-        assert_eq!(ConicGradient::new((fixed(0), fixed(0)),
-            Angle::ZERO, &ramp[..1]).unwrap_err(), GradientError::RampTooSmall);
-        assert_eq!(ConicGradient::new(
-            (Scalar::from_bits(DEVICE_RAW_LIMIT + 1), fixed(0)),
-            Angle::ZERO, &ramp).unwrap_err(), GradientError::CoordinateOutOfRange);
-        let conic = ConicGradient::new(
-            (fixed(0), fixed(0)), Angle::ZERO, &ramp).unwrap();
-        assert_eq!(conic.sample(DEVICE_RAW_LIMIT as u32 / 256, 0),
-            PremulSRGBA8::zeroed());
+
     }
+
 }

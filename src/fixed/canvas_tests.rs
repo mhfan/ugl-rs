@@ -1,11 +1,6 @@
 use super::*;
 use crate::common::{color::{PremulRGBA, PremulSRGBA8, SRGBA},
     geometry::{Affine, Edge, PathBuilder}, render::SpreadMode};
-#[cfg(feature = "f32")]
-use crate::float::{analytic::{Cell as AnalyticCell,
-    Intersection as AnalyticIntersection}, canvas::{
-    RenderOptions as FloatRenderOptions, RenderWorkspace as FloatRenderWorkspace,
-    rasterize_path_clip as rasterize_float_path_clip}};
 
 #[test] fn planners_return_exact_capacities_for_fill_stroke_and_dash() {
     use crate::{common::stroke::StrokeContour, fixed::{Scalar, dash::Pattern}};
@@ -54,30 +49,6 @@ use crate::float::{analytic::{Cell as AnalyticCell,
     assert_eq!(dashed.stroke.render.edges, 4);
 }
 
-#[cfg(feature = "f32")]
-struct AnalyticBuffers<const EDGES: usize, const WIDTH: usize> {
-    intersections: [AnalyticIntersection; EDGES],
-    edges: [Edge; EDGES], cells: [AnalyticCell; WIDTH],
-    row_offsets: [u32; 9], edge_indices: [u32; EDGES],
-}
-
-#[cfg(feature = "f32")]
-impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
-    fn new() -> Self { Self {
-        intersections: [AnalyticIntersection::default(); EDGES],
-        edges: [Edge::default(); EDGES], cells: [AnalyticCell::default(); WIDTH],
-        row_offsets: [0; 9], edge_indices: [0; EDGES],
-    } }
-
-    fn workspace(&mut self) -> FloatRenderWorkspace<'_> {
-        FloatRenderWorkspace {
-            edges: &mut self.edges, intersections: &mut self.intersections,
-            cells: &mut self.cells, row_offsets: &mut self.row_offsets,
-            edge_indices: &mut self.edge_indices,
-        }
-    }
-}
-
 #[test] fn path_clip_supports_curves_and_preserves_mask_on_geometry_error() {
     use crate::{fixed::Scalar,
         fixed::raster::{Line, Workspace, Segment, Trapezoid},
@@ -105,23 +76,6 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert!(mask_data[..12].iter().any(|&coverage| coverage != 0));
     assert!(mask_data[..12].iter().any(|&coverage| coverage != u8::MAX));
     assert_eq!(mask_data[12..], [17, 17]);
-
-    #[cfg(feature = "f32")]
-    {
-        let mut reference_builder = PathBuilder::new();
-        reference_builder.move_to((0.5, 2.5))
-            .quad_to((2.0, -0.5), (3.5, 2.5)).line_to((0.5, 2.5)).close();
-        let mut reference_data = [0; 12];
-        let mut reference_buffers = AnalyticBuffers::<32, 4>::new();
-        rasterize_float_path_clip(&reference_builder.build(), Affine::identity(),
-            FloatRenderOptions::default(),
-            &mut CoverageMaskMut::new(&mut reference_data, 4, 3, 4).unwrap(),
-            &mut reference_buffers.workspace()).unwrap();
-        for (fixed, reference) in mask_data[..12].iter().zip(reference_data) {
-            assert!(fixed.abs_diff(reference) <= 2,
-                "fixed={fixed}, reference={reference}");
-        }
-    }
 
     let mut untouched = [23; 12];
     assert_eq!(rasterize_path_clip(&path, RenderOptions::default(),
@@ -371,7 +325,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 
-#[test] fn dashed_path_matches_f32_reference_coverage() {
+#[test] fn dashed_path_has_expected_coverage() {
     use crate::{common::{dash::DashContour, geometry::PathBuilder,
             stroke::{StrokeContour, StrokePathWorkspace}},
         fixed::{Scalar, dash::Pattern},
@@ -454,4 +408,48 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut target = Pixmap::from_buffer(&mut spanned, 16, 16, 64).unwrap();
     for y in 0..16 { target.blend_solid_span(0, y, 16, color, u8::MAX); }
     assert_eq!(tiled, spanned);
+}
+
+#[cfg(feature = "f32")] mod refer_tests { use super::*;
+    use crate::{fixed::{Scalar, raster::{Line, Segment, Trapezoid, Workspace}},
+        float::{analytic::{Cell, Intersection}, canvas::{
+            RenderOptions as FloatRenderOptions, RenderWorkspace as FloatWorkspace,
+            rasterize_path_clip as rasterize_float_path_clip}}};
+
+    #[test] fn curved_path_clip_tracks_the_f32_reference() {
+        let fixed = Scalar::from_num;
+        let mut builder = PathBuilder::new();
+        builder.move_to((fixed(0.5), fixed(2.5)))
+            .quad_to((fixed(2.0), fixed(-0.5)), (fixed(3.5), fixed(2.5)))
+            .line_to((fixed(0.5), fixed(2.5))).close();
+        let (mut edges, mut lines) = ([Edge::default(); 32], [Line::default(); 32]);
+        let (mut segments, mut trapezoids, mut row_area) =
+            ([Segment::default(); 32], [Trapezoid::default(); 16], [0; 4]);
+        let (mut strip_offsets, mut strip_indices) = ([0; 2], [0; 32]);
+        let mut fixed_data = [0; 12];
+        rasterize_path_clip(&builder.build(), RenderOptions::default(),
+            &mut CoverageMaskMut::new(&mut fixed_data, 4, 3, 4).unwrap(),
+            &mut GeometryWorkspace { edges: &mut edges, lines: &mut lines },
+            &mut Workspace { segments: &mut segments, trapezoids: &mut trapezoids,
+                row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+                strip_indices: &mut strip_indices }).unwrap();
+
+        let mut builder = PathBuilder::new();
+        builder.move_to((0.5, 2.5)).quad_to((2.0, -0.5), (3.5, 2.5))
+            .line_to((0.5, 2.5)).close();
+        let (mut edges, mut intersections, mut cells) = ([Edge::default(); 32],
+            [Intersection::default(); 32], [Cell::default(); 4]);
+        let (mut row_offsets, mut edge_indices) = ([0; 9], [0; 32]);
+        let mut reference = [0; 12];
+        rasterize_float_path_clip(&builder.build(), Affine::identity(),
+            FloatRenderOptions::default(),
+            &mut CoverageMaskMut::new(&mut reference, 4, 3, 4).unwrap(),
+            &mut FloatWorkspace { edges: &mut edges, intersections: &mut intersections,
+                cells: &mut cells, row_offsets: &mut row_offsets,
+                edge_indices: &mut edge_indices }).unwrap();
+        for (fixed, reference) in fixed_data.into_iter().zip(reference) {
+            assert!(fixed.abs_diff(reference) <= 2,
+                "fixed={fixed}, reference={reference}");
+        }
+    }
 }

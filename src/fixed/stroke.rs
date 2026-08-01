@@ -478,7 +478,6 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
 #[cfg(test)] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
-    #[cfg(feature = "f32")] use crate::float::stroke;
 
     fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }
 
@@ -507,7 +506,9 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
         assert_eq!(x_bounds(&square), (fixed(1.0), fixed(7.0)));
     }
 
-    #[cfg(feature = "f32")]
+    #[cfg(feature = "f32")] mod refer_tests { use super::*;
+        use crate::float::stroke;
+
     #[test] fn diagonal_offsets_track_the_f32_reference() {
         let options = Options::new(fixed(2.0)).unwrap();
         let actual = collect(&[(2.0, 2.0), (6.0, 6.0)], false, options);
@@ -531,6 +532,7 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
             assert!((actual - expected).abs() <= 1.0 / 128.0,
                 "actual={actual}, expected={expected}");
         }
+    }
     }
 
     #[test] fn bevel_and_miter_joins_follow_limit_and_degenerate_rules() {
