@@ -1,7 +1,7 @@
 //! Supersampled floating-point reference rasterizer.
 
-use crate::{edge::Edge, float::{ceil, floor}, geometry::Rect,
-    raster::{CoverageSink, FillRule}};
+use crate::{common::{edge::Edge, geometry::Rect, raster::{CoverageSink, FillRule}},
+    float::{ceil, floor}};
 
 /// Coverage adapter that intersects incoming spans with an antialiased rectangle.
 pub struct RectClipSink<'a, S> {

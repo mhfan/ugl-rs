@@ -1,6 +1,6 @@
 //! Shared dash storage and floating-point decomposition.
 
-use crate::geometry::{Point, Scalar};
+use crate::common::geometry::{Point, Scalar};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub struct DashContour {
     start: u32, len: u32, closed: bool,

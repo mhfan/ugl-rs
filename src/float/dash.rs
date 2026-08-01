@@ -1,5 +1,5 @@
-use crate::{dash::{DashCounter, DashError, DashOutput, DashRequirements, DashWorkspace,
-    DashWriter, DashedPath, validate_capacity}, geometry::Point};
+use crate::common::{dash::{DashCounter, DashError, DashOutput, DashRequirements,
+    DashWorkspace, DashWriter, DashedPath, validate_capacity}, geometry::Point};
 use crate::float::{fmod, sqrt};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum DashPatternError {

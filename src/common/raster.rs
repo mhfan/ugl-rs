@@ -217,9 +217,9 @@ use crate::float::raster::{Intersection, RasterError, RasterOptions, RasterWorks
     rasterize_edges};
 #[cfg(all(test, feature = "f32"))] mod tests { use super::*;
     use crate::{float::flatten::{FlattenOptions, build_fill_edges},
-        geometry::{Affine, PathBuilder, Rect},
+        common::{geometry::{Affine, PathBuilder, Rect}, edge::Edge},
         float::raster::RectClipSink,
-        edge::Edge};
+        };
     use core::convert::Infallible;
     use alloc::{vec, vec::Vec};
 

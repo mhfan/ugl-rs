@@ -1,7 +1,7 @@
 //! Allocation-free curve flattening for the `f32` reference backend.
 
 use crate::{common::edge::{EdgeSink, FillEdgeBuilder, LineSink},
-    geometry::{Affine, Path, PathError, PathSegment, Point}};
+    common::geometry::{Affine, Path, PathError, PathSegment, Point}};
 
 const STACK_CAPACITY: usize = 32;
 
@@ -215,7 +215,7 @@ fn midpoint(a: Point, b: Point) -> Point {
 }
 
 #[cfg(test)] mod tests { use super::*;
-    use crate::geometry::PathBuilder;
+    use crate::common::geometry::PathBuilder;
     use core::convert::Infallible;
     use alloc::vec::Vec;
 

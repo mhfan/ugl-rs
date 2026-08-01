@@ -2,9 +2,11 @@
 
 use alloc::{rc::Rc, vec::Vec};
 use crate::{
-    render::{Pixmap, RenderError},
-    color::SRGBA, edge::Edge,
-    dash::DashContour, fixed::{Scalar, canvas::{DashedStrokePathOptions,
+    common::{color::SRGBA, dash::DashContour, edge::Edge,
+        geometry::{Affine, Path, Point, Rect}, raster::{CoverageMask, FillRule},
+        render::{Clip, DrawState, GlobalAlphaPaint}, stroke::StrokePathWorkspace,
+        Pixmap, RenderError, SolidPaint},
+    fixed::{Scalar, canvas::{DashedStrokePathOptions,
             DashedStrokeRequirements, DashedStrokeWorkspace, GeometryWorkspace,
             RenderOptions, RenderRequirements, StrokePathOptions,
             StrokePlanningWorkspace, StrokeRequirements,
@@ -16,9 +18,6 @@ use crate::{
         flatten::Options as FlattenOptions, raster::{Error as RasterError, Line, Segment,
             Trapezoid, Workspace as RasterWorkspace, WorkspaceKind},
         sampler::PaintSampler, stroke::Options as StrokeOptions},
-    geometry::{Affine, Path, Point, Rect}, raster::{CoverageMask, FillRule},
-    common::SolidPaint, render::{Clip, DrawState, GlobalAlphaPaint},
-    stroke::StrokePathWorkspace,
 };
 
 /// Caller-owned scratch borrowed by [`CanvasRef`].
@@ -39,7 +38,7 @@ impl<'a> Workspace<'a> {
 }
 
 #[derive(Default)] struct CanvasStorage {
-    points: Vec<Point<Scalar>>, contours: Vec<crate::stroke::StrokeContour>,
+    points: Vec<Point<Scalar>>, contours: Vec<crate::common::stroke::StrokeContour>,
     dash_points: Vec<Point<Scalar>>, dash_contours: Vec<DashContour>,
     edges: Vec<Edge<Scalar>>, lines: Vec<Line>, segments: Vec<Segment>,
     trapezoids: Vec<Trapezoid>, row_area: Vec<u64>, strip_offsets: Vec<u32>,
@@ -332,14 +331,14 @@ pub struct Canvas<'target> {
 }
 
 impl Canvas<'static> {
-    pub fn new(width: u32, height: u32) -> Result<Self, crate::PixmapError> {
+    pub fn new(width: u32, height: u32) -> Result<Self, crate::common::PixmapError> {
         Ok(Self::from_target(Pixmap::new(width, height)?))
     }
 }
 
 impl<'target> Canvas<'target> {
     pub fn from_buffer(data: &'target mut [u8], width: u32, height: u32, stride: u32) ->
-        Result<Self, crate::PixmapError> {
+        Result<Self, crate::common::PixmapError> {
         Ok(Self::from_target(Pixmap::from_buffer(data, width, height, stride)?))
     }
 
@@ -523,8 +522,9 @@ impl<'target> Canvas<'target> {
 
 #[cfg(test)] mod tests {
     use super::*;
-    use crate::{edge::Edge, fixed::raster::{Line, Segment, Trapezoid},
-        geometry::PathBuilder, stroke::{StrokeContour, StrokePathWorkspace}};
+    use crate::{common::{edge::Edge, geometry::PathBuilder,
+            stroke::{StrokeContour, StrokePathWorkspace}},
+        fixed::raster::{Line, Segment, Trapezoid}};
 
     #[test] fn canvas_ref_matches_state_clip_and_workspace_shape() {
         let fixed = Scalar::from_num;

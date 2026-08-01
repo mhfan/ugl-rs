@@ -1,8 +1,9 @@
 //! Allocation-free Q24.8 curve flattening without floating point.
 
-use crate::{edge::{EdgeSink, FillEdgeBuilder, LineSink}, fixed::{DEVICE_RAW_LIMIT, Scalar},
+use crate::common::{edge::{EdgeSink, FillEdgeBuilder, LineSink},
     geometry::{Affine, Path, PathError,
         PathSegment, Point}};
+use crate::fixed::{DEVICE_RAW_LIMIT, Scalar};
 
 const STACK_CAPACITY: usize = 32;
 
@@ -216,7 +217,7 @@ fn midpoint(a: Point<Scalar>, b: Point<Scalar>) -> Point<Scalar> {
 #[cfg(test)] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
-    use crate::geometry::PathBuilder;
+    use crate::common::{edge::Edge, geometry::PathBuilder};
 
     type Line = (Point<Scalar>, Point<Scalar>);
 
@@ -232,12 +233,12 @@ fn midpoint(a: Point<Scalar>, b: Point<Scalar>) -> Point<Scalar> {
 
     #[test] fn lines_share_edge_normalization_and_winding() {
         let (zero, one) = (Scalar::ZERO, Scalar::ONE);
-        assert_eq!(crate::edge::Edge::from_line(
+        assert_eq!(Edge::from_line(
             (zero, one).into(), (one, zero).into()),
-            Some(crate::edge::Edge {
+            Some(Edge {
                 upper: (one, zero).into(), lower: (zero, one).into(), winding: -1,
             }));
-        assert_eq!(crate::edge::Edge::from_line(
+        assert_eq!(Edge::from_line(
             (zero, one).into(), (one, one).into()), None);
     }
 

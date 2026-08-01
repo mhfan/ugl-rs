@@ -3,7 +3,7 @@
 use crate::{fixed::{DEVICE_RAW_LIMIT, raster::{
         CoverageStrips, Error, Line, RenderError, SUBPIXEL_SCALE, Workspace,
         WorkspaceKind, rasterize_lines,
-    }}, raster::{CoverageSink, FillRule}};
+    }}, common::raster::{CoverageSink, FillRule}};
 
 pub const TILE_WIDTH:  u32 = 16;
 pub const TILE_HEIGHT: u32 = 16;
@@ -416,7 +416,7 @@ fn tile_is_full(pieces: &[CoverageTilePiece], width: u32, height: u32) -> bool {
 #[cfg(test)] mod tests { use super::*;
     use alloc::{vec, vec::Vec};
     use core::convert::Infallible;
-    use crate::{edge::Edge, fixed::Scalar, raster::FillRule,
+    use crate::{common::{edge::Edge, raster::FillRule}, fixed::Scalar,
         fixed::raster::{CoverageRun, CoverageStrip, CoverageWorkspace,
             Line, Workspace, RenderError, Segment, Trapezoid,
             STRIP_HEIGHT, strip_requirements, prepare_lines, rasterize_lines,

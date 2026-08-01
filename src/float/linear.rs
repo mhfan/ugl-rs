@@ -8,16 +8,15 @@
 use alloc::vec::Vec;
 use core::convert::Infallible;
 use crate::{
-    common::{Pixmap, RenderError, SolidPaint},
-    canvas::{DashedStrokePathOptions, DashedStrokeWorkspace,
+    common::{color::{LinearPremulRGBA, LinearRGBA, PremulSRGBA8, SRGBA},
+        geometry::{Affine, Path, Rect}, raster::{CoverageMask, CoverageSink, MaskClipSink},
+        Pixmap, RenderError, SolidPaint},
+    float::canvas::{DashedStrokePathOptions, DashedStrokeWorkspace,
         RenderOptions, RenderWorkspace, StrokePathOptions,
         StrokeWorkspace, render_path_to,
         render_stroke_dashed_to, render_stroke_to},
-    color::{LinearPremulRGBA, LinearRGBA, PremulSRGBA8, SRGBA},
-    geometry::{Affine, Path, Rect},
-    raster::{CoverageMask, CoverageSink, MaskClipSink},
     float::raster::RectClipSink,
-    sampler::LinearPaintSampler,
+    float::sampler::LinearPaintSampler,
 };
 
 pub const SRGB8_ENCODE_LUT_SIZE: usize = 4096;
@@ -236,7 +235,7 @@ impl<'a> LinearPixmap<'a> {
 
     fn encode_dirty_with<F>(&mut self, destination: &mut Pixmap<'_>,
         encode: F) -> Result<(), LinearPixmapError>
-        where F: Fn(LinearPremulRGBA<f32>) -> crate::color::PremulSRGBA8 {
+        where F: Fn(LinearPremulRGBA<f32>) -> crate::common::color::PremulSRGBA8 {
         self.validate_destination(destination)?;
         let tile_area = u64::from(LINEAR_DIRTY_TILE_SIZE).pow(2);
         let pixel_count = u64::from(self.width) * u64::from(self.height);
@@ -491,9 +490,10 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
 }
 
 #[cfg(test)] mod tests { use super::*;
-    use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection},
-        edge::Edge, geometry::{PathBuilder, Point},
-        raster::CoverageMask, stroke::StrokeContour};
+    use crate::{float::analytic::{Cell as AnalyticCell,
+            Intersection as AnalyticIntersection},
+        common::{edge::Edge, geometry::{PathBuilder, Point},
+            raster::CoverageMask, stroke::StrokeContour}};
 
     fn rectangle() -> Path {
         let mut builder = PathBuilder::new();
@@ -692,8 +692,8 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
     }
 
     #[test] fn opaque_sampler_fast_path_matches_source_over_at_full_and_partial_coverage() {
-        use crate::{color::SRGBA as RGBA, render::SpreadMode,
-            sampler::{GradientStop, GradientStops, LinearGradient}};
+        use crate::{common::{color::SRGBA as RGBA, render::SpreadMode},
+            float::sampler::{GradientStop, GradientStops, LinearGradient}};
 
         struct Composite<'a, S>(&'a S);
         impl<S: LinearPaintSampler> LinearPaintSampler for Composite<'_, S> {

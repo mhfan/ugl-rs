@@ -3,7 +3,7 @@ use super::*;
 use alloc::{vec, vec::Vec};
 use core::convert::Infallible;
 #[cfg(feature = "f32")]
-use crate::analytic::{Intersection as AnalyticIntersection,
+use crate::float::analytic::{Intersection as AnalyticIntersection,
     Workspace as AnalyticWorkspace, rasterize_edges as rasterize_edges_analytic};
 
 fn fixed(value: f32) -> Scalar { Scalar::from_num(value) }

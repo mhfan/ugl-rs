@@ -104,7 +104,7 @@ use crate::float::{floor, sqrt};
 }
 
 pub type CompOp = BlendMode;
-use crate::color::{PremulRGBA, RGBA};
+use crate::common::color::{PremulRGBA, RGBA};
 
 /* impl RGBA<u8> {
     /// Composite: ao x Co = αs x Fa x Cs + αb x Fb x Cb, ao = αs x Fa + αb x Fb;

@@ -1,11 +1,11 @@
 //! No-FPU stroke expansion for Q24.8 polylines.
 
-use crate::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point},
+use crate::{common::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point},
+        stroke::{FlattenedStrokePath, LineCap, LineJoin, StrokePathWorkspace,
+            StrokeWorkspaceError, flatten_stroke_path_with}},
     fixed::{DEVICE_RAW_LIMIT, Scalar,
         flatten::{Error as FlattenError, Options as FlattenOptions},
-        math::{Angle, cordic_turn, cordic_unit_vector, integer_sqrt_u64}},
-    stroke::{FlattenedStrokePath, LineCap, LineJoin, StrokePathWorkspace,
-        StrokeWorkspaceError, flatten_stroke_path_with}};
+        math::{Angle, cordic_turn, cordic_unit_vector, integer_sqrt_u64}}};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum Error {
     NonPositiveWidth, WidthOutOfRange, MiterLimitTooSmall, RoundSegmentLimitZero,

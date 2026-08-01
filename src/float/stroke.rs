@@ -1,10 +1,11 @@
 //! Floating-point stroke expansion.
 
 use core::f32::consts::{FRAC_PI_2, PI};
-use crate::{edge::{Edge, EdgeSink}, float::{acos, atan2, ceil, cos, sin, sqrt},
-    geometry::{Affine, Path, Point}, float::flatten::{flatten_path, FlattenError, FlattenOptions},
-    stroke::{FlattenedStrokePath, LineCap, LineJoin, StrokePathWorkspace,
-        StrokeWorkspaceError, flatten_stroke_path_with}};
+use crate::{common::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point},
+        stroke::{FlattenedStrokePath, LineCap, LineJoin, StrokePathWorkspace,
+            StrokeWorkspaceError, flatten_stroke_path_with}},
+    float::{acos, atan2, ceil, cos, sin, sqrt,
+        flatten::{flatten_path, FlattenError, FlattenOptions}}};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum StrokeError {
     NonFiniteWidth, NonPositiveWidth, NonFiniteMiterLimit, MiterLimitTooSmall,

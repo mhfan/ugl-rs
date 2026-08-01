@@ -8,7 +8,7 @@ pub mod raster;
 pub mod stroke;
 pub(crate) use math::*;
 
-impl crate::edge::Edge {
+impl crate::common::edge::Edge {
     pub(crate) fn is_valid(&self) -> bool {
         [self.upper.x, self.upper.y, self.lower.x, self.lower.y]
             .iter().all(|value| value.is_finite()) &&

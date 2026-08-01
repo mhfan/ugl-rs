@@ -1,13 +1,14 @@
 use super::*;
-use crate::{color::{PremulRGBA, PremulSRGBA8, SRGBA as RGBA}, edge::Edge,
+use crate::common::{color::{PremulRGBA, PremulSRGBA8, SRGBA as RGBA}, edge::Edge,
     geometry::{Affine, PathBuilder}, render::SpreadMode};
 #[cfg(feature = "f32")]
-use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection}, canvas::{
+use crate::float::{analytic::{Cell as AnalyticCell,
+    Intersection as AnalyticIntersection}, canvas::{
     RenderOptions as FloatRenderOptions, RenderWorkspace as FloatRenderWorkspace,
     rasterize_path_clip as rasterize_float_path_clip}};
 
 #[test] fn planners_return_exact_capacities_for_fill_stroke_and_dash() {
-    use crate::{fixed::{Scalar, dash::Pattern}, stroke::StrokeContour};
+    use crate::{common::stroke::StrokeContour, fixed::{Scalar, dash::Pattern}};
 
     let fixed = |value: f32| Scalar::from_num(value);
     let mut builder = PathBuilder::new();
@@ -323,9 +324,9 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 
 
 #[test] fn curved_stroke_path_uses_bounded_workspaces() {
-    use crate::{fixed::Scalar, geometry::PathBuilder,
+    use crate::{common::{geometry::PathBuilder,
+            stroke::{StrokeContour, StrokePathWorkspace}}, fixed::Scalar,
         fixed::raster::{Line, Workspace, Segment, Trapezoid},
-        stroke::{StrokeContour, StrokePathWorkspace},
     };
 
     let fixed = Scalar::from_num;
@@ -371,10 +372,10 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 
 
 #[test] fn dashed_path_matches_f32_reference_coverage() {
-    use crate::{dash::DashContour, fixed::{Scalar, dash::Pattern},
-        geometry::PathBuilder,
+    use crate::{common::{dash::DashContour, geometry::PathBuilder,
+            stroke::{StrokeContour, StrokePathWorkspace}},
+        fixed::{Scalar, dash::Pattern},
         fixed::raster::{Line, Workspace, Segment, Trapezoid},
-        stroke::{StrokeContour, StrokePathWorkspace},
     };
 
     let fixed = Scalar::from_num;
@@ -413,7 +414,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 
 
 #[test] fn curved_path_renders_end_to_end() {
-    use crate::{fixed::Scalar, geometry::PathBuilder,
+    use crate::{common::geometry::PathBuilder, fixed::Scalar,
         fixed::raster::{Line, Workspace, Segment, Trapezoid},
     };
 

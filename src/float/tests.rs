@@ -1,13 +1,12 @@
 
 use super::*;
-use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection},
+use crate::{float::analytic::{Cell as AnalyticCell,
+        Intersection as AnalyticIntersection},
     common::PixmapError,
-    color::{PremulSRGBA8, SRGBA as RGBA},
-    edge::Edge,
-    geometry::{Affine, PathBuilder}, float::raster::Intersection,
-    sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient},
-    render::SpreadMode,
-    stroke::{LineCap, LineJoin},
+    common::{color::{PremulSRGBA8, SRGBA as RGBA}, edge::Edge,
+        geometry::{Affine, PathBuilder}, render::SpreadMode,
+        stroke::{LineCap, LineJoin}}, float::raster::Intersection,
+    float::sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient},
 };
 use alloc::vec;
 
@@ -269,7 +268,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 }
 
 #[test] fn analytic_dashed_stroke_renders_alternating_on_intervals() {
-    use crate::{dash::DashContour, float::dash::DashPattern};
+    use crate::{common::dash::DashContour, float::dash::DashPattern};
 
     let mut builder = PathBuilder::new();
     builder.move_to((0.5, 0.5)).line_to((4.5, 0.5));

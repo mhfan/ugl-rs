@@ -1,8 +1,8 @@
 //! Widened arithmetic primitives for the Q24.8 fixed-point raster backend.
 
 use core::cmp::Ordering;
-use crate::{edge::Edge, fixed::{DEVICE_RAW_LIMIT, Scalar}, geometry::Point,
-    raster::{CoverageSink, FillRule}};
+use crate::{common::{edge::Edge, geometry::Point, raster::{CoverageSink, FillRule}},
+    fixed::{DEVICE_RAW_LIMIT, Scalar}};
 
 /// Accepted Q24.8 raw-coordinate magnitude for the fixed rasterizer.
 ///

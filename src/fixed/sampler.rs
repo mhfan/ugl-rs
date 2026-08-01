@@ -1,7 +1,7 @@
 //! Paint sampling contracts for the fixed-point rendering backend.
 
-use crate::{color::PremulSRGBA8, fixed::{DEVICE_RAW_LIMIT, Scalar}, geometry::Point,
-    render::GlobalAlphaPaint};
+use crate::{common::{color::PremulSRGBA8, geometry::Point, render::GlobalAlphaPaint},
+    fixed::{DEVICE_RAW_LIMIT, Scalar}};
 use super::math::{cordic_turn, integer_sqrt_u64, scaled_integer_sqrt};
 
 use crate::common::{GradientError, SolidPaint, SpreadMode};
@@ -459,13 +459,13 @@ impl PaintSampler for ConicGradient<'_> {
     use super::*;
     use super::super::math::integer_sqrt;
     #[cfg(feature = "f32")] use super::super::math::cordic_turn;
-    use crate::color::SRGBA;
+    use crate::common::color::SRGBA;
     #[cfg(feature = "f32")]
-    use crate::{float::{atan2, floor}, sampler::{
+    use crate::{float::{atan2, floor, sampler::{
         ConicGradient as ReferenceConicGradient, GradientStop, GradientStops,
         LinearGradient as ReferenceLinearGradient, PaintSampler as ReferencePaintSampler,
         RadialGradient as ReferenceRadialGradient,
-    }};
+    }}};
 
     #[cfg(feature = "f32")]
     const TAU: f32 = core::f32::consts::PI * 2.0;

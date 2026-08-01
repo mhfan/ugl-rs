@@ -15,9 +15,10 @@
       a texture (image)
  */
 
-use crate::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA},
-    float::{atan2, floor, sqrt}, geometry::{Affine, Point}, render::GlobalAlphaPaint};
-use crate::render::{GradientError, SolidPaint, SpreadMode};
+use crate::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA},
+        geometry::{Affine, Point}, render::GlobalAlphaPaint,
+        GradientError, SolidPaint, SpreadMode},
+    float::{atan2, floor, sqrt}};
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
 /// Implementations should be small values borrowed by the compositor. Calls are
@@ -627,11 +628,11 @@ fn unit_angle_approx(x: f32, y: f32) -> f32 {
 }
 
 #[cfg(test)] mod tests { use super::*;
-    use crate::{color::SRGBA as RGBA, float::{cos, sin}};
+    use crate::{common::color::SRGBA as RGBA, float::{cos, sin}};
     fn encoded(color: SRGBA<u8>) -> PremulSRGBA8 { color.premul_encoded() }
 
     fn linear(r: f32, g: f32, b: f32, a: f32) -> PremulSRGBA8 {
-        crate::color::LinearRGBA::new(r, g, b, a).premul().to_encoded_srgba8()
+        crate::common::color::LinearRGBA::new(r, g, b, a).premul().to_encoded_srgba8()
     }
 
     #[test] fn solid_paint_is_position_independent_and_premultiplied() {

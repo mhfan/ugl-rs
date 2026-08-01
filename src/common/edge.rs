@@ -1,7 +1,7 @@
 //! Directed fill edges produced from flattened paths.
 
 use core::cmp::Ordering;
-use crate::geometry::{Point, Scalar};
+use crate::common::geometry::{Point, Scalar};
 
 pub trait LineSink<T = Scalar> { type Error;
     fn begin_subpath(&mut self, _: Point<T>) -> Result<(), Self::Error> { Ok(()) }
@@ -91,7 +91,7 @@ impl<S, T> FillEdgeBuilder<'_, S, T> where S: EdgeSink<T>, T: Copy + PartialOrd 
 
 #[cfg(all(test, feature = "f32"))] mod tests { use super::*;
     use crate::{float::flatten::{build_fill_edges, FlattenError, FlattenOptions},
-        geometry::{Affine, PathBuilder, Path}};
+        common::geometry::{Affine, PathBuilder, Path}};
     use core::convert::Infallible;
     use alloc::vec::Vec;
 

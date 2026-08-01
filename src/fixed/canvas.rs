@@ -2,9 +2,12 @@
 
 use core::convert::Infallible;
 use crate::{
-    render::{EdgeCapacity, EdgeSliceSink, Pixmap, RenderError, map_dash_error,
+    common::{color::SRGBA, dash::{DashContour, DashWorkspace}, edge::Edge,
+        geometry::{Affine, Path, Point, Rect},
+        raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
+        render::{EdgeCapacity, EdgeSliceSink, Pixmap, RenderError, map_dash_error,
         validate_coverage_dimensions},
-    color::SRGBA, dash::{DashContour, DashWorkspace}, edge::Edge,
+        stroke::{StrokePathWorkspace, StrokeWorkspaceError}, SolidPaint},
     fixed::{DEVICE_RAW_LIMIT, Scalar, dash::{Pattern as DashPattern, dash_polyline},
         flatten::{Error as FlattenError, Options as FlattenOptions, build_fill_edges},
         raster::{CoverageStrips, Error as RasterError, Line,
@@ -14,10 +17,6 @@ use crate::{
         stroke::{ExpandError as StrokeExpandError, Options as StrokeOptions,
             flatten_path as flatten_stroke_path, stroke_polyline},
         tile::{CoverageTiles, DirectTileWorkspace, TileKind, rasterize_lines_to_tiles}},
-    geometry::{Affine, Path, Point, Rect},
-    raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
-    common::SolidPaint,
-    stroke::{StrokePathWorkspace, StrokeWorkspaceError},
 };
 fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
     x: u32, y: u32, len: u32, sampler: &S, coverage: u8) {

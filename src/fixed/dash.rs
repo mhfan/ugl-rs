@@ -1,9 +1,10 @@
 //! Fixed-point dash decomposition.
 
-use crate::{dash::{DashCounter, DashError, DashOutput, DashRequirements, DashWorkspace,
+use crate::{common::{dash::{DashCounter, DashError, DashOutput, DashRequirements, DashWorkspace,
         DashWriter, DashedPath, validate_capacity},
+        geometry::Point},
     fixed::{DEVICE_RAW_LIMIT, Scalar, math::integer_sqrt_u64},
-    geometry::Point};
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum PatternError {
     Empty, NonPositiveLength, CycleOverflow, SlotCountOverflow,
@@ -164,7 +165,7 @@ fn dash_segment<W: DashOutput<Point<Scalar>>>(
 
 #[cfg(test)] mod tests {
 use super::*;
-use crate::dash::{DashContour, DashError, DashRequirements, DashWorkspace};
+use crate::common::dash::{DashContour, DashError, DashRequirements, DashWorkspace};
 #[cfg(feature = "f32")]
 use crate::float::dash::{DashPattern as ReferencePattern,
     dash_polyline as reference_dash_polyline, dash_requirements};
