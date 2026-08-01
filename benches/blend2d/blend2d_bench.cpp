@@ -16,7 +16,8 @@ constexpr uint32_t kHeight = 256;
 constexpr uint32_t kShapes = 64;
 
 enum class Operation {
-  kFill, kFillClipped, kFillGradient, kFillRadial, kFillConic, kFillMasked, kBuildMask,
+  kFill, kFillClipped, kFillGradient, kFillRadial, kFillConic,
+  kFillMasked, kFillMaskedSparse, kBuildMask,
   kStroke, kStrokeRound
 };
 
@@ -104,14 +105,14 @@ BLPath curves() {
   return path;
 }
 
-BLPath mask_path() {
-  constexpr double k = 55.228474;
+BLPath mask_path(double radius = 100.0) {
+  double k = radius * 0.55228474;
   BLPath path;
-  path.move_to(228.0, 128.0);
-  path.cubic_to(228.0, 128.0 + k, 128.0 + k, 228.0, 128.0, 228.0);
-  path.cubic_to(128.0 - k, 228.0, 28.0, 128.0 + k, 28.0, 128.0);
-  path.cubic_to(28.0, 128.0 - k, 128.0 - k, 28.0, 128.0, 28.0);
-  path.cubic_to(128.0 + k, 28.0, 228.0, 128.0 - k, 228.0, 128.0);
+  path.move_to(128.0 + radius, 128.0);
+  path.cubic_to(128.0 + radius, 128.0 + k, 128.0 + k, 128.0 + radius, 128.0, 128.0 + radius);
+  path.cubic_to(128.0 - k, 128.0 + radius, 128.0 - radius, 128.0 + k, 128.0 - radius, 128.0);
+  path.cubic_to(128.0 - radius, 128.0 - k, 128.0 - k, 128.0 - radius, 128.0, 128.0 - radius);
+  path.cubic_to(128.0 + k, 128.0 - radius, 128.0 + radius, 128.0 - k, 128.0 + radius, 128.0);
   path.close();
   return path;
 }
@@ -168,6 +169,10 @@ int main(int argc, char** argv) {
     path = large_rectangle();
     operation = Operation::kFillMasked;
   }
+  else if (std::strcmp(scene, "fill_rectangle_path_mask_sparse") == 0) {
+    path = large_rectangle();
+    operation = Operation::kFillMaskedSparse;
+  }
   else if (std::strcmp(scene, "build_path_mask") == 0) {
     path = mask_path();
     operation = Operation::kBuildMask;
@@ -217,16 +222,16 @@ int main(int argc, char** argv) {
   if (operation == Operation::kFillClipped)
     context.clip_to_rect(BLRect(48.0, 104.0, 160.0, 48.0));
   BLImage mask(kWidth, kHeight, BL_FORMAT_PRGB32);
-  if (operation == Operation::kFillMasked) {
+  if (operation == Operation::kFillMasked || operation == Operation::kFillMaskedSparse) {
     BLContext mask_context(mask);
     mask_context.clear_all();
     mask_context.set_fill_style(BLRgba32(255, 255, 255, 255));
-    mask_context.fill_path(mask_path());
+    mask_context.fill_path(mask_path(operation == Operation::kFillMaskedSparse ? 24.0 : 100.0));
     mask_context.end();
   }
   auto render = [&]() {
     context.clear_all();
-    if (operation == Operation::kFillMasked) {
+    if (operation == Operation::kFillMasked || operation == Operation::kFillMaskedSparse) {
       context.set_comp_op(BL_COMP_OP_SRC_OVER);
       context.fill_path(path);
       context.set_comp_op(BL_COMP_OP_DST_IN);

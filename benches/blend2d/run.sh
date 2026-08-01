@@ -25,6 +25,7 @@ for scene in \
   fill_rectangle_radial_gradient \
   fill_rectangle_conic_gradient \
   fill_rectangle_path_mask \
+  fill_rectangle_path_mask_sparse \
   build_path_mask \
   fill_triangles_64 \
   fill_cubics_8 \

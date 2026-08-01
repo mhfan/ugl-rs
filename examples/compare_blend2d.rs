@@ -22,7 +22,8 @@ const SHAPES: usize = 64;
 const EDGE_CAPACITY: usize = 4096;
 
 #[derive(Clone, Copy)] enum Operation {
-    Fill, FillClipped, FillGradient, FillRadial, FillConic, FillMasked, BuildMask,
+    Fill, FillClipped, FillGradient, FillRadial, FillConic,
+    FillMasked, FillMaskedSparse, BuildMask,
     Stroke { round: bool },
 }
 
@@ -76,14 +77,18 @@ fn curves() -> Path {
     path.build()
 }
 
-fn mask_path() -> Path {
+fn mask_path(radius: f32) -> Path {
     let mut path = PathBuilder::with_capacity(6);
-    const K: f32 = 55.228_474;
-    path.move_to((228.0, 128.0))
-        .cubic_to((228.0, 128.0 + K), (128.0 + K, 228.0), (128.0, 228.0))
-        .cubic_to((128.0 - K, 228.0), (28.0, 128.0 + K), (28.0, 128.0))
-        .cubic_to((28.0, 128.0 - K), (128.0 - K, 28.0), (128.0, 28.0))
-        .cubic_to((128.0 + K, 28.0), (228.0, 128.0 - K), (228.0, 128.0));
+    let k = radius * 0.552_284_7;
+    path.move_to((128.0 + radius, 128.0))
+        .cubic_to((128.0 + radius, 128.0 + k),
+            (128.0 + k, 128.0 + radius), (128.0, 128.0 + radius))
+        .cubic_to((128.0 - k, 128.0 + radius),
+            (128.0 - radius, 128.0 + k), (128.0 - radius, 128.0))
+        .cubic_to((128.0 - radius, 128.0 - k),
+            (128.0 - k, 128.0 - radius), (128.0, 128.0 - radius))
+        .cubic_to((128.0 + k, 128.0 - radius),
+            (128.0 + radius, 128.0 - k), (128.0 + radius, 128.0));
     path.build()
 }
 
@@ -102,7 +107,9 @@ fn scene() -> Result<(&'static str, Path, Operation), String> {
             large_rectangle(), Operation::FillConic)),
         "fill_rectangle_path_mask" => Ok(("fill_rectangle_path_mask",
             large_rectangle(), Operation::FillMasked)),
-        "build_path_mask" => Ok(("build_path_mask", mask_path(), Operation::BuildMask)),
+        "fill_rectangle_path_mask_sparse" => Ok(("fill_rectangle_path_mask_sparse",
+            large_rectangle(), Operation::FillMaskedSparse)),
+        "build_path_mask" => Ok(("build_path_mask", mask_path(100.0), Operation::BuildMask)),
         "fill_triangles_64" => Ok(("fill_triangles_64", triangles(), Operation::Fill)),
         "fill_cubics_8" => Ok(("fill_cubics_8", curves(), Operation::Fill)),
         "fill_cubics_8_clip_rect" => Ok(("fill_cubics_8_clip_rect", curves(),
@@ -196,8 +203,9 @@ fn run_f32() -> Result<(), String> {
         GradientStops::with_ramp(&stop_values, &mut conic_ramp).unwrap(),
         ConicAngleMode::Fast).unwrap();
     let mut mask_data = vec![0; WIDTH as usize * HEIGHT as usize];
-    if matches!(operation, Operation::FillMasked) {
-        rasterize_path_clip(&mask_path(), Affine::identity(), RenderOptions::default(),
+    if matches!(operation, Operation::FillMasked | Operation::FillMaskedSparse) {
+        let radius = if matches!(operation, Operation::FillMaskedSparse) { 24.0 } else { 100.0 };
+        rasterize_path_clip(&mask_path(radius), Affine::identity(), RenderOptions::default(),
             &mut CoverageMaskMut::new(&mut mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
             &mut RenderWorkspace {
                 edges: &mut edges, intersections: &mut intersections, cells: &mut cells,
@@ -257,7 +265,8 @@ fn run_f32() -> Result<(), String> {
                         cells: &mut cells, row_offsets: &mut row_offsets,
                         edge_indices: &mut edge_indices,
                     }),
-                Operation::FillMasked => render_solid_masked(&path, Affine::identity(),
+                Operation::FillMasked | Operation::FillMaskedSparse =>
+                    render_solid_masked(&path, Affine::identity(),
                     SRGBA::new(40, 120, 220, 192),
                     CoverageMask::new(&mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
                     RenderOptions::default(), &mut target, &mut RenderWorkspace {
@@ -319,7 +328,7 @@ fn run_f32() -> Result<(), String> {
 #[cfg(feature = "fixed")]
 fn fixed_path(scene: &str) -> Path<ugl_rs::fixed::Scalar> {
     use ugl_rs::fixed::Scalar;
-    if scene == "build_path_mask" { return fixed_mask_path(); }
+    if scene == "build_path_mask" { return fixed_mask_path(100.0); }
     let fixed = Scalar::from_num;
     let mut path = PathBuilder::new();
     match scene {
@@ -336,7 +345,7 @@ fn fixed_path(scene: &str) -> Path<ugl_rs::fixed::Scalar> {
         "fill_rectangle_large" | "fill_rectangle_linear_gradient" |
         "fill_rectangle_radial_gradient" |
         "fill_rectangle_conic_gradient" |
-        "fill_rectangle_path_mask" => {
+        "fill_rectangle_path_mask" | "fill_rectangle_path_mask_sparse" => {
             path.move_to((fixed(16.25), fixed(20.5)))
                 .line_to((fixed(239.5), fixed(20.5)))
                 .line_to((fixed(239.5), fixed(235.25)))
@@ -369,20 +378,21 @@ fn fixed_path(scene: &str) -> Path<ugl_rs::fixed::Scalar> {
 }
 
 #[cfg(feature = "fixed")]
-fn fixed_mask_path() -> Path<ugl_rs::fixed::Scalar> {
+fn fixed_mask_path(radius: f32) -> Path<ugl_rs::fixed::Scalar> {
     use ugl_rs::fixed::Scalar;
     let fixed = Scalar::from_num;
     let mut path = PathBuilder::with_capacity(6);
-    let k = fixed(55.228_474);
-    path.move_to((fixed(228.0), fixed(128.0)))
-        .cubic_to((fixed(228.0), fixed(128.0) + k),
-            (fixed(128.0) + k, fixed(228.0)), (fixed(128.0), fixed(228.0)))
-        .cubic_to((fixed(128.0) - k, fixed(228.0)),
-            (fixed(28.0), fixed(128.0) + k), (fixed(28.0), fixed(128.0)))
-        .cubic_to((fixed(28.0), fixed(128.0) - k),
-            (fixed(128.0) - k, fixed(28.0)), (fixed(128.0), fixed(28.0)))
-        .cubic_to((fixed(128.0) + k, fixed(28.0)),
-            (fixed(228.0), fixed(128.0) - k), (fixed(228.0), fixed(128.0)));
+    let (radius, k) = (fixed(radius), fixed(radius * 0.552_284_7));
+    let center = fixed(128.0);
+    path.move_to((center + radius, center))
+        .cubic_to((center + radius, center + k),
+            (center + k, center + radius), (center, center + radius))
+        .cubic_to((center - k, center + radius),
+            (center - radius, center + k), (center - radius, center))
+        .cubic_to((center - radius, center - k),
+            (center - k, center - radius), (center, center - radius))
+        .cubic_to((center + k, center - radius),
+            (center + radius, center - k), (center + radius, center));
     path.build()
 }
 
@@ -441,14 +451,15 @@ fn run_fixed() -> Result<(), String> {
     let mut stroke_points = vec![Default::default(); 2048];
     let mut stroke_contours = vec![StrokeContour::default(); 16];
     let mut mask_data = vec![0; WIDTH as usize * HEIGHT as usize];
-    if matches!(operation, Operation::FillMasked) {
+    if matches!(operation, Operation::FillMasked | Operation::FillMaskedSparse) {
         let mut geometry = GeometryWorkspace { edges: &mut edges, lines: &mut lines };
         let mut raster = Workspace {
             segments: &mut segments, trapezoids: &mut trapezoids,
             row_area: &mut row_area, strip_offsets: &mut strip_offsets,
             strip_indices: &mut strip_indices,
         };
-        rasterize_fixed_path_clip(&fixed_mask_path(), RenderOptions::default(),
+        let radius = if matches!(operation, Operation::FillMaskedSparse) { 24.0 } else { 100.0 };
+        rasterize_fixed_path_clip(&fixed_mask_path(radius), RenderOptions::default(),
             &mut CoverageMaskMut::new(&mut mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
             &mut geometry, &mut raster).map_err(|error| format!("mask: {error:?}"))?;
     }
@@ -487,7 +498,8 @@ fn run_fixed() -> Result<(), String> {
                     RenderOptions::default(), &mut target, &mut geometry, &mut raster),
                 Operation::FillConic => render_path(&path, &conic,
                     RenderOptions::default(), &mut target, &mut geometry, &mut raster),
-                Operation::FillMasked => render_path_masked(&path, &paint,
+                Operation::FillMasked | Operation::FillMaskedSparse =>
+                    render_path_masked(&path, &paint,
                     CoverageMask::new(&mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
                     RenderOptions::default(), &mut target, &mut geometry, &mut raster),
                 Operation::BuildMask => unreachable!(),
