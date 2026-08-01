@@ -326,7 +326,7 @@ frames produced:
 | 16 fractional rectangles, fill | 17.50 µs | 28.44 µs | 11.53 µs | 1.52× faster | 1.63× slower |
 | 64 fractional rectangles, fill | 59.45 µs | 107.95 µs | 34.13 µs | 1.74× faster | 1.82× slower |
 | large fractional rectangle, fill | 22.00 µs | 28.81 µs | 14.38 µs | 1.53× faster | 1.31× slower |
-| large rectangle, linear gradient | 64.41 µs | 187.13 µs | 31.85 µs | 2.02× faster | 2.91× slower |
+| large rectangle, linear gradient | 64.41 µs | 151.25 µs | 31.85 µs | 2.02× faster | 2.35× slower |
 | large rectangle, radial gradient | 115.97 µs | 353.59 µs | 41.44 µs | 2.80× faster | 3.05× slower |
 | large rectangle, conic gradient (Fast) | 184.70 µs | 361.90 µs | 68.38 µs | 2.70× faster | 1.96× slower |
 | large rectangle, sparse retained path mask | 6.20 µs | 7.48 µs | 31.12 µs¹ | 5.02× slower | 1.21× slower |
@@ -428,8 +428,8 @@ stops whose alpha changes from 32 to 224, avoiding ambiguity from different RGB
 interpolation spaces. Batched affine span stepping plus direct full-coverage
 composition reduced f32 from 381.33 to 192.50 µs. Direct Pad-ramp traversal
 then reduced it to 130.14 µs; direct vertical coverage now brings the complete
-f32 draw to 64.41 µs. Direct fixed trapezoid emission reduces its result to
-187.13 µs. Both
+f32 draw to 64.41 µs. Direct fixed trapezoid emission and a checked i64 span
+projection reduce the fixed result to 151.25 µs. Both
 ugl-rs backends are byte-identical; their one-code-value delta from Blend2D is
 its gradient quantization rule. The remaining 2.02× desktop gap is dominated
 by scalar ramp lookup and per-pixel writes rather than coverage.

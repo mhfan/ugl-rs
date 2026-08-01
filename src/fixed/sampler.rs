@@ -87,6 +87,7 @@ impl PaintSampler for LinearGradient<'_> {
 
     fn sample_span(&self, x: u32, y: u32, len: u32,
         mut emit: impl FnMut(PremulSRGBA8)) {
+        if len == 0 { return; }
         const HALF_PIXEL_RAW: i128 = 1 << 7;
         const SUBPIXEL_SCALE: i128 = 1 << 8;
         let point = [
@@ -96,6 +97,20 @@ impl PaintSampler for LinearGradient<'_> {
         let mut parameter = point[0] * self.delta[0] as i128 +
                             point[1] * self.delta[1] as i128;
         let step = self.delta[0] as i128 * SUBPIXEL_SCALE;
+        let last_parameter = parameter + step * (len - 1) as i128;
+        if ramp_index_i64_supported(self.length_squared, self.ramp.len(), self.spread) {
+            if let (Ok(mut parameter), Ok(last_parameter), Ok(step), Ok(denominator)) =
+                (i64::try_from(parameter), i64::try_from(last_parameter),
+                 i64::try_from(step), i64::try_from(self.length_squared)) {
+                for index in 0..len {
+                    emit(self.ramp[ramp_index_i64(parameter, denominator,
+                        self.ramp.len(), self.spread)]);
+                    if index + 1 < len { parameter += step; }
+                }
+                debug_assert_eq!(parameter, last_parameter);
+                return;
+            }
+        }
         for _ in 0..len {
             emit(self.ramp[ramp_index(parameter, self.length_squared,
                 self.ramp.len(), self.spread)]);
@@ -308,9 +323,11 @@ fn validate_ramp(ramp: &[PremulSRGBA8]) -> Result<(), GradientError> {
 fn ramp_index(parameter: i128, denominator: i128, ramp_len: usize,
     spread: SpreadMode) -> usize {
     debug_assert!(denominator > 0);
-    if let (Ok(parameter), Ok(denominator)) =
-        (i64::try_from(parameter), i64::try_from(denominator)) {
-        return ramp_index_i64(parameter, denominator, ramp_len, spread);
+    if ramp_index_i64_supported(denominator, ramp_len, spread) {
+        if let (Ok(parameter), Ok(denominator)) =
+            (i64::try_from(parameter), i64::try_from(denominator)) {
+            return ramp_index_i64(parameter, denominator, ramp_len, spread);
+        }
     }
     let mapped = match spread {
         SpreadMode::Pad => parameter.clamp(0, denominator),
@@ -322,6 +339,14 @@ fn ramp_index(parameter: i128, denominator: i128, ramp_len: usize,
     };
     let scale = (ramp_len - 1) as i128;
     ((mapped * scale + denominator / 2) / denominator) as _
+}
+
+fn ramp_index_i64_supported(denominator: i128, ramp_len: usize,
+    spread: SpreadMode) -> bool {
+    let Ok(denominator) = u64::try_from(denominator) else { return false };
+    let scale = (ramp_len - 1) as u64;
+    denominator <= i64::MAX as u64 / if spread == SpreadMode::Reflect { 2 } else { 1 }
+        && denominator <= u64::MAX / scale
 }
 
 /// Narrow equivalent of `ramp_index` for the concentric radial hot path.
@@ -475,6 +500,35 @@ impl PaintSampler for ConicGradient<'_> {
             (Scalar::from_bits(i32::MAX), Scalar::from_bits(i32::MAX)),
             &ramp, SpreadMode::Reflect).unwrap();
         assert!(ramp.contains(&extreme.sample(u32::MAX, u32::MAX)));
+
+        for gradient in [
+            LinearGradient::new(
+                (Scalar::from_num(2), Scalar::from_num(3)),
+                (Scalar::from_num(257), Scalar::from_num(91)),
+                &ramp, SpreadMode::Pad).unwrap(),
+            LinearGradient::new(
+                (Scalar::from_num(257), Scalar::from_num(91)),
+                (Scalar::from_num(2), Scalar::from_num(3)),
+                &ramp, SpreadMode::Pad).unwrap(),
+            LinearGradient::new(
+                (Scalar::from_num(2), Scalar::from_num(3)),
+                (Scalar::from_num(257), Scalar::from_num(91)),
+                &ramp, SpreadMode::Reflect).unwrap(),
+            extreme,
+        ] {
+            let mut span = [PremulSRGBA8::zeroed(); 8];
+            let x = if gradient.from[0] == i32::MIN { u32::MAX - 7 } else { 13 };
+            let y = if gradient.from[1] == i32::MIN { u32::MAX } else { 17 };
+            let mut count = 0;
+            gradient.sample_span(x, y, span.len() as _, |color| {
+                span[count] = color;
+                count += 1;
+            });
+            assert_eq!(count, span.len());
+            for (offset, color) in span.into_iter().enumerate() {
+                assert_eq!(color, gradient.sample(x + offset as u32, y));
+            }
+        }
     }
 
 

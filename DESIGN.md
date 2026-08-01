@@ -371,10 +371,12 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   full-coverage writes over transparent destinations avoid redundant coverage
   multiplication. Together these changes reduced the matched large-gradient
   draw from 381.33 to 192.50 µs for f32 and 446.92 to 221.24 µs for fixed.
-  Direct Pad-ramp traversal plus vertical-run emission reduced f32 to 64.41 µs,
-  while both backends remain byte-identical. Blend2D is still 2.02× faster, so
-  future work should batch ramp lookup/output rather than further tune path
-  coverage for this scene.
+  Direct Pad-ramp traversal plus vertical-run emission reduced f32 to 64.41 µs.
+  Fixed span projection narrows parameter, step, denominator, and terminal value
+  together before entering its i64 ramp mapper, reducing the fixed draw from
+  187.13 to 151.25 µs. Both backends remain byte-identical. Blend2D is still
+  2.02× faster than f32, so future work should batch ramp lookup/output rather
+  than further tune path coverage for this scene.
 - Concentric radial samplers advance squared distance with a second-order
   difference across each span instead of rebuilding coordinates and products
   per pixel. Scheduling four recurrence values together, while preserving the
@@ -523,6 +525,9 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   generic callback erased its end-to-end benefit. The encoded and linear hot
   loops therefore retain explicit batches: the former improves the matched draw
   by about 6.5%, while the latter more than halves its isolated span diagnostic.
+- Replacing fixed linear Pad-ramp division with an i128 quotient/remainder
+  recurrence did not improve the isolated span diagnostic and regressed the
+  complete draw by roughly 2–3%. The existing narrowed i64 mapping remains.
 
 ## Implementation rules
 
