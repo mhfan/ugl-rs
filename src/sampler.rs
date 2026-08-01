@@ -253,7 +253,7 @@ impl<'a> GradientStops<'a> {
 
     fn sample(&self, t: f32) -> PremulSRGBA8 {
         let Some(ramp) = self.encoded_ramp else { return Self::sample_stops(self.stops, t); };
-        let index = (t.clamp(0.0, 1.0) * (ramp.len() - 1) as f32 + 0.5) as usize;
+        let index = (t * (ramp.len() - 1) as f32 + 0.5) as usize;
         ramp[index]
     }
 
@@ -265,7 +265,7 @@ impl<'a> GradientStops<'a> {
         let Some(ramp) = self.linear_ramp else {
             return Self::sample_linear_stops(self.stops, t);
         };
-        let index = (t.clamp(0.0, 1.0) * (ramp.len() - 1) as f32 + 0.5) as usize;
+        let index = (t * (ramp.len() - 1) as f32 + 0.5) as usize;
         ramp[index]
     }
 
@@ -333,6 +333,15 @@ impl PaintSampler for LinearGradient<'_> {
                      (y - self.from.y) * self.delta.y) * self.inverse_length_squared;
         let step = (dx * self.delta.x + dy * self.delta.y) *
                    self.inverse_length_squared;
+        if let (SpreadMode::Pad, Some(ramp)) = (self.spread, self.stops.encoded_ramp) {
+            let scale = (ramp.len() - 1) as f32;
+            for _ in 0..len {
+                let index = (t.clamp(0.0, 1.0) * scale + 0.5) as usize;
+                emit(ramp[index]);
+                t += step;
+            }
+            return;
+        }
         for _ in 0..len {
             emit(self.stops.sample(self.spread.map(t)));
             t += step;
