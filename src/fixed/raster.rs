@@ -761,8 +761,7 @@ fn next_crossing_boundary(lines: &[Line], segments: &mut [Segment],
     Result<(Scalar, bool, bool), Error> {
     let (top, bottom) = validate_slab(top, bottom)?;
     let (mut boundary, mut snap_top, mut snap_bottom) = (bottom, false, false);
-    segments.sort_unstable_by(|left, right| left.top_x.cmp_x(&right.top_x)
-        .then_with(|| left.bottom_x.cmp_x(&right.bottom_x)));
+    order_segments(segments);
     for pair in segments.windows(2) {
         if !pair[0].bottom_x.cmp_x(&pair[1].bottom_x).is_gt() { continue; }
         let (left, right) = (pair[0].line_index as usize, pair[1].line_index as usize);
@@ -847,9 +846,22 @@ pub fn collect_trapezoids(segments: &mut [Segment], fill_rule: FillRule,
         segment.top_y != first.top_y || segment.bottom_y != first.bottom_y) {
         return Err(Error::InvalidSlabPartition);
     }
-    segments.sort_unstable_by(|left, right| left.top_x.cmp_x(&right.top_x)
-        .then_with(|| left.bottom_x.cmp_x(&right.bottom_x)));
+    order_segments(segments);
     collect_ordered_trapezoids(segments, fill_rule, output)
+}
+
+fn order_segments(segments: &mut [Segment]) {
+    for index in 1..segments.len() {
+        let mut current = index;
+        while current != 0 {
+            let after = segments[current - 1].top_x.cmp_x(&segments[current].top_x)
+                .then_with(|| segments[current - 1].bottom_x
+                    .cmp_x(&segments[current].bottom_x)).is_gt();
+            if !after { break; }
+            segments.swap(current - 1, current);
+            current -= 1;
+        }
+    }
 }
 
 fn collect_ordered_trapezoids(segments: &[Segment], fill_rule: FillRule,

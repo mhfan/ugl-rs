@@ -1291,6 +1291,43 @@ fn benchmark_paint(c: &mut Criterion) {
             black_box((sink.runs, sink.pixels));
         }));
     }
+
+    let mut triangle_edges = Vec::with_capacity(SHAPES * 2);
+    for index in 0..SHAPES {
+        let (x, y) = (
+            Scalar::from_num((index % 8) as f32 * 30.0 + 4.25),
+            Scalar::from_num((index / 8) as f32 * 30.0 + 4.5),
+        );
+        let (left, apex, right) = (
+            Point::from((x, y + Scalar::from_num(21.5))),
+            Point::from((x + Scalar::from_num(11.25), y)),
+            Point::from((x + Scalar::from_num(22.5), y + Scalar::from_num(21.5))),
+        );
+        triangle_edges.extend([
+            Edge { upper: apex, lower: left, winding: -1 },
+            Edge { upper: apex, lower: right, winding: 1 },
+        ]);
+    }
+    let mut lines = vec![Line::default(); triangle_edges.len()];
+    let line_count = prepare_lines(&triangle_edges, &mut lines).unwrap();
+    let requirements = ugl_rs::fixed::raster::strip_requirements(
+        &lines[..line_count], HEIGHT).unwrap();
+    let (mut segments, mut trapezoids, mut row_area, mut offsets, mut indices) = (
+        vec![Segment::default(); line_count],
+        vec![Trapezoid::default(); line_count.div_ceil(2)],
+        vec![0; WIDTH as usize], vec![0; requirements.offsets],
+        vec![0; requirements.indices],
+    );
+    group.bench_function(BenchmarkId::new("fixed_stream", "triangles_64"), |b| b.iter(|| {
+        let mut sink = RunCounter::default();
+        rasterize_lines(&lines[..line_count], WIDTH, HEIGHT, FillRule::NonZero,
+            &mut Workspace {
+                segments: &mut segments, trapezoids: &mut trapezoids,
+                row_area: &mut row_area,
+                strip_offsets: &mut offsets, strip_indices: &mut indices,
+            }, &mut sink).unwrap();
+        black_box((sink.runs, sink.pixels));
+    }));
     group.finish();
 }
 
