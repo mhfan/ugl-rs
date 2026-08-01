@@ -286,3 +286,25 @@ pub(crate) fn validate_coverage_dimensions(width: u32, height: u32, target: &Pix
         });
     }   Ok(())
 }
+
+#[cfg(test)] mod tests { use super::*;
+    #[test] fn sampled_pixel_composition_matches_solid_terms_randomly() {
+        let mut state = 0x9e37_79b9_u32;
+        for _ in 0..10_000 {
+            let mut next = || {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                state as u8
+            };
+            let (source_alpha, destination_alpha, coverage) = (next(), next(), next());
+            let source = PremulSRGBA8::new(
+                next().min(source_alpha), next().min(source_alpha),
+                next().min(source_alpha), source_alpha).unwrap();
+            let destination = [next().min(destination_alpha), next().min(destination_alpha),
+                               next().min(destination_alpha), destination_alpha];
+            let (mut expected, mut actual) = (destination, destination);
+            blend_solid_bytes(&mut expected, solid_blend_terms(source, coverage));
+            blend_sampled_pixel(&mut actual, source, coverage);
+            assert_eq!(actual, expected);
+        }
+    }
+}
