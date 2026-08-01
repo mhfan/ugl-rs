@@ -330,9 +330,9 @@ frames produced:
 | large rectangle, conic gradient (Fast) | 243.29 µs | 450.13 µs | 68.42 µs | 3.56× faster | 1.85× slower |
 | large rectangle, retained path mask | 81.07 µs | 123.87 µs | 29.98 µs¹ | 2.70× faster | 1.53× slower |
 | build circular path mask | 59.44 µs | 118.73 µs | 9.16 µs | 6.49× faster | 2.00× slower |
-| 1 fractional rectangle, fill | 4.26 µs | 9.43 µs | 3.55 µs | 1.20× faster | 2.21× slower |
-| 16 fractional rectangles, fill | 23.23 µs | 60.31 µs | 10.97 µs | 2.12× faster | 2.60× slower |
-| 64 fractional rectangles, fill | 83.67 µs | 238.70 µs | 33.68 µs | 2.48× faster | 2.85× slower |
+| 1 fractional rectangle, fill | 4.26 µs | 8.60 µs | 3.55 µs | 1.20× faster | 2.02× slower |
+| 16 fractional rectangles, fill | 23.23 µs | 44.88 µs | 10.97 µs | 2.12× faster | 1.93× slower |
+| 64 fractional rectangles, fill | 83.67 µs | 172.66 µs | 33.68 µs | 2.48× faster | 2.06× slower |
 | 64 triangles, fill | 118.49 µs | 261.31 µs | 33.62 µs | 3.52× faster | 2.21× slower |
 | 8 gentle cubic arches, fill | 17.85 µs | 30.97 µs | 8.21 µs | 2.17× faster | 1.73× slower |
 | cubic fill under rectangle clip | 15.72 µs | 25.22 µs | 3.53 µs | 4.45× faster | 1.60× slower |
@@ -386,10 +386,17 @@ matched scenes.
 
 The nested-prefix 1/16/64 rectangle series separates fixed frame overhead from
 per-shape scaling. f32 grows by about 1.25 µs per additional rectangle, fixed
-by 3.6 µs, and Blend2D by 0.48 µs. The one-rectangle f32 gap is only 1.20×;
+by 2.6 µs, and Blend2D by 0.48 µs. The one-rectangle f32 gap is only 1.20×;
 the widening gap is therefore dominated by repeated edge/raster/span work, not
 runner or clear overhead. The f32 and fixed outputs are byte-identical at all
 three points.
+
+Stage measurements put f32 cell coverage at 55.53 of the 83.67 µs complete
+64-rectangle draw. Fixed streaming coverage initially consumed 203.61 of
+238.70 µs. A vertical-trapezoid boundary formula avoids general polygon
+clipping for axis-aligned edges, reducing fixed coverage to 144.04 µs and the
+complete draw to 172.66 µs without changing output. Generic sloped and crossing
+edges retain the exact rational/polygon path.
 
 The matched horizontal linear gradient uses a 256-entry encoded ramp and black
 stops whose alpha changes from 32 to 224, avoiding ambiguity from different RGB

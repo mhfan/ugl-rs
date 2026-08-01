@@ -299,10 +299,15 @@ fn accumulate_trapezoid_row_region(trapezoid: Trapezoid, x_origin: u32,
 
     let interior = trapezoid.interior_pixel_range(width);
     let interior_area = 2 * trapezoid.left.height_raw() as u64 * SUBPIXEL_SCALE as u64;
+    let vertical = xs[0] == xs[1] && xs[2] == xs[3];
 
     for x in first..last {
         let area = if interior.contains(&x) { interior_area } else {
-            trapezoid.pixel_area_twice_raw(x, y)?
+            if vertical {
+                let pixel_left = x as i64 * scale;
+                let overlap = xs[2].min(pixel_left + scale) - xs[0].max(pixel_left);
+                2 * trapezoid.left.height_raw() as u64 * overlap.max(0) as u64
+            } else { trapezoid.pixel_area_twice_raw(x, y)? }
         };
         let cell = &mut row_area[(x - x_origin) as usize];
         *cell = (*cell + area).min(PIXEL_AREA_TWICE);

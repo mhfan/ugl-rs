@@ -183,6 +183,32 @@ fn benchmark_f32(c: &mut Criterion) {
         black_box(&pixels);
     }));
 
+    let mut prepared_edges = Vec::with_capacity(EDGE_CAPACITY);
+    build_fill_edges(&path, Affine::identity(), FlattenOptions::default(),
+        &mut |edge| {
+            prepared_edges.push(edge);
+            Ok::<_, core::convert::Infallible>(())
+        }).unwrap();
+    let requirements = bin_requirements(&prepared_edges, HEIGHT).unwrap();
+    let (mut coverage_offsets, mut coverage_indices) =
+        (vec![0; requirements.offsets], vec![0; requirements.indices]);
+    let bins = build_row_bins(&prepared_edges, HEIGHT, AnalyticBinWorkspace {
+        row_offsets: &mut coverage_offsets, edge_indices: &mut coverage_indices,
+    }).unwrap();
+    let (mut coverage_active, mut coverage_cells) = (
+        vec![AnalyticIntersection::default(); prepared_edges.len()],
+        vec![AnalyticCell::default(); WIDTH as usize],
+    );
+    group.bench_function(BenchmarkId::new("analytic_coverage", "64_rectangles"),
+        |b| b.iter(|| {
+        let mut sink = RunCounter::default();
+        rasterize_edges_cells(&prepared_edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+            &mut AnalyticCellWorkspace {
+                intersections: &mut coverage_active, cells: &mut coverage_cells,
+            }, &mut sink).unwrap();
+        black_box((sink.runs, sink.pixels));
+    }));
+
     let mut linear_pixels =
         vec![LinearPremulRGBA::default(); WIDTH as usize * HEIGHT as usize];
     group.bench_function(BenchmarkId::new("analytic_linear_working", "64_rectangles"),

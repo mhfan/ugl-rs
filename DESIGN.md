@@ -404,8 +404,11 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   Blend2D's 3.55/10.97/33.68 µs. The f32 increment is about 1.25 µs per shape
   versus Blend2D's 0.48 µs, so the widening fill gap belongs to repeated edge,
   coverage-run, and composition work rather than clear or runner overhead.
-  Fixed measures 9.43/60.31/238.70 µs, about 3.6 µs per added rectangle; its
-  widened exact area arithmetic needs separate trapezoid/rational attribution.
+  Fixed initially measured 9.43/60.31/238.70 µs. Coverage-only attribution
+  showed 203.61 µs in its raster stage; direct vertical-trapezoid boundary area
+  reduced that to 144.04 µs and the formal 1/16/64 draws to
+  8.60/44.88/172.66 µs. Sloped edges retain polygon clipping and exact rational
+  crossings, while axis-aligned rectangles no longer pay that general cost.
 - The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
   The canonical rectangle scene has one-pixel boundary runs around 16–21-pixel
   interiors; full-coverage runs contain about 83% of covered pixels. Future
