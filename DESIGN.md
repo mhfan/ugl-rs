@@ -381,6 +381,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   81.07 µs for f32 and 164.03 to 123.87 µs for fixed. Blend2D has no public
   free-path clip; its 29.98 µs comparison is a retained PRGB32 `DST_IN`
   emulation and must remain labeled as such.
+- Building the circular mask separately measures 59.44 µs for f32, 118.73 µs
+  for fixed, and 9.16 µs for Blend2D. RGBA normalization is excluded. This
+  6.49× f32 gap belongs to curve flattening and coverage rasterization; it must
+  not be attributed to retained-mask lookup or source-over composition.
 - The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
   The canonical rectangle scene has one-pixel boundary runs around 16–21-pixel
   interiors; full-coverage runs contain about 83% of covered pixels. Future
