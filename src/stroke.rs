@@ -217,8 +217,7 @@ pub fn stroke_polyline<S: EdgeSink>(points: &[Point], closed: bool, options: Str
         arc_segments(options.half_width(), options).map_err(|(needed, maximum)|
             StrokeExpandError::ArcSegmentLimit { needed, maximum })?;
     }
-    if !closed && options.cap != LineCap::Round && options.join != LineJoin::Round &&
-        points.len() >= 2 && points.windows(2).all(|pair| pair[0] != pair[1]) &&
+    if !closed && points.len() >= 2 && points.windows(2).all(|pair| pair[0] != pair[1]) &&
         points.windows(3).all(|triple| {
             let (ax, ay) = (triple[1].x - triple[0].x, triple[1].y - triple[0].y);
             let (bx, by) = (triple[2].x - triple[1].x, triple[2].y - triple[1].y);
@@ -282,7 +281,14 @@ fn stroke_open_outline<S: EdgeSink>(points: &[Point], options: StrokeOptions,
         emit_outline_join(&mut contour, points[index], before, after, 1.0, options)?;
     }
     contour.point(offset_endpoint(points[last], last_unit, radius, 1.0, extension))?;
-    contour.point(offset_endpoint(points[last], last_unit, radius, -1.0, extension))?;
+    if options.cap == LineCap::Round {
+        let start = atan2(last_unit.y, last_unit.x) + FRAC_PI_2;
+        let segments = arc_segments(radius, options).map_err(|(needed, maximum)|
+            StrokeExpandError::ArcSegmentLimit { needed, maximum })?;
+        contour.arc(points[last], radius, start, -PI, segments)?;
+    } else {
+        contour.point(offset_endpoint(points[last], last_unit, radius, -1.0, extension))?;
+    }
     for index in (1..last).rev() {
         let before = unit_vector(points[index + 1], points[index])
             .map_err(|()| StrokeExpandError::NonFinitePoint)?.unwrap();
@@ -291,6 +297,12 @@ fn stroke_open_outline<S: EdgeSink>(points: &[Point], options: StrokeOptions,
         emit_outline_join(&mut contour, points[index], before, after, 1.0, options)?;
     }
     contour.point(offset_endpoint(points[0], first_unit, radius, -1.0, -extension))?;
+    if options.cap == LineCap::Round {
+        let start = atan2(-first_unit.y, -first_unit.x) + FRAC_PI_2;
+        let segments = arc_segments(radius, options).map_err(|(needed, maximum)|
+            StrokeExpandError::ArcSegmentLimit { needed, maximum })?;
+        contour.arc(points[0], radius, start, -PI, segments)?;
+    }
     contour.close()
 }
 
@@ -320,6 +332,18 @@ fn emit_outline_join<S: EdgeSink>(contour: &mut EdgeContour<'_, S>, point: Point
     let outer = cross * side < 0.0;
     if !outer {
         return contour.point(intersection);
+    }
+    if options.join == LineJoin::Round {
+        contour.point(before_offset)?;
+        let start = atan2(before_offset.y - point.y, before_offset.x - point.x);
+        let end = atan2(after_offset.y - point.y, after_offset.x - point.x);
+        let mut sweep = end - start;
+        if sweep > 0.0 { sweep -= PI * 2.0; }
+        let base_segments = arc_segments(radius, options).map_err(|(needed, maximum)|
+            StrokeExpandError::ArcSegmentLimit { needed, maximum })?;
+        let segments = ceil(base_segments as f32 * sweep.abs() / PI)
+            .max(1.0) as usize;
+        return contour.arc(point, radius, start, sweep, segments);
     }
     if options.join == LineJoin::Miter {
         let (dx, dy) = (intersection.x - point.x, intersection.y - point.y);
