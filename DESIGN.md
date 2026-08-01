@@ -384,7 +384,8 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
 - The matched conic scene explicitly uses the opt-in `Fast` angle policy while
   `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
   approximation; fixed evaluates the same polynomial in widened integer turns
-  instead of 16 CORDIC steps. Formal medians are 258.14 µs f32, 449.79 µs fixed,
+  instead of 16 CORDIC steps. Encoded span traversal reuses coordinates and
+  direct ramp indexing. Formal medians are 243.29 µs f32, 450.13 µs fixed,
   and 68.42 µs Blend2D. Fixed differs from f32 at 2 of 65,536 pixels, each by one
   code value; the fixed fast path is about 77% faster than the Exact CORDIC
   diagnostic without adding allocation or floating-point work.

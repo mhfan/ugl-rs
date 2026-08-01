@@ -170,7 +170,6 @@ impl<'a> RadialGradient<'a> {
     fn concentric_ramp_index(&self, x: u32, y: u32) -> Option<usize> {
         const HALF_PIXEL_RAW: i64 = 1 << 7;
         const SUBPIXEL_SCALE: u64 = 1 << 8;
-        const FULL_TURN: u64 = 1_u64 << 32;
         let (x, y) = (x as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64,
                       y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64);
         if x > DEVICE_RAW_LIMIT as u64 || y > DEVICE_RAW_LIMIT as u64 {
@@ -379,6 +378,7 @@ impl<'a> ConicGradient<'a> {
     fn ramp_index(&self, x: u32, y: u32) -> Option<usize> {
         const HALF_PIXEL_RAW: i64 = 1 << 7;
         const SUBPIXEL_SCALE: u64 = 1 << 8;
+        const FULL_TURN: u64 = 1_u64 << 32;
         let (x, y) = (x as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64,
                       y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64);
         if x > DEVICE_RAW_LIMIT as u64 || y > DEVICE_RAW_LIMIT as u64 {

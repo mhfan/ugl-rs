@@ -325,7 +325,7 @@ frames produced:
 | large fractional rectangle, fill | 73.61 µs | 115.74 µs | 14.59 µs | 5.05× faster | 1.57× slower |
 | large rectangle, linear gradient | 130.14 µs | 221.24 µs | 31.83 µs | 4.09× faster | 1.70× slower |
 | large rectangle, radial gradient | 177.50 µs | 471.43 µs | 41.84 µs | 4.24× faster | 2.66× slower |
-| large rectangle, conic gradient (Fast) | 258.14 µs | 449.79 µs | 68.42 µs | 3.77× faster | 1.74× slower |
+| large rectangle, conic gradient (Fast) | 243.29 µs | 450.13 µs | 68.42 µs | 3.56× faster | 1.85× slower |
 | large rectangle, retained path mask | 81.07 µs | 123.87 µs | 29.98 µs¹ | 2.70× faster | 1.53× slower |
 | build circular path mask | 59.44 µs | 118.73 µs | 9.16 µs | 6.49× faster | 2.00× slower |
 | 64 fractional rectangles, fill | 83.10 µs | 230.77 µs | 33.41 µs | 2.49× faster | 2.78× slower |
