@@ -519,6 +519,23 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     }
 }
 
+#[test] fn full_row_integral_accumulates_overlapping_trapezoids_before_quantization() {
+    let segment = |left, right, winding| Segment {
+        line_index: 0, top_y: 0, bottom_y: 256,
+        top_x: Intersection { num: left, den: 1, winding },
+        bottom_x: Intersection { num: right, den: 1, winding },
+    };
+    let half = Trapezoid {
+        left: segment(0, 0, 1), right: segment(128, 128, -1),
+    };
+    let mut row = [0; 2];
+    let rounded = round_trapezoid(half).unwrap();
+    accumulate_full_row_trapezoid(rounded, 0, 2, &mut row);
+    assert_eq!(row.map(quantize_area_coverage), [128, 0]);
+    accumulate_full_row_trapezoid(rounded, 0, 2, &mut row);
+    assert_eq!(row.map(quantize_area_coverage), [255, 0]);
+}
+
 #[test] fn trapezoid_extracts_only_guaranteed_full_pixel_runs() {
     let segment = |top_y, bottom_y, top_x, bottom_x, winding| Segment {
         line_index: 0, top_y, bottom_y,

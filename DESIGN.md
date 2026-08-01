@@ -467,8 +467,12 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   polylines, with a pure-Q24.8 intersection and CORDIC arc implementation and
   the previous polygon-union path retained for repeated/reversing degeneracy.
   On the synchronized host benchmark this reduced the eight-cubic fixed stroke
-  from 284.75 to 74.02 µs; butt/miter and round 32-segment polylines measure
-  189.49 and 197.59 µs respectively. The matched width-6 round scene uses four
+  from 284.75 to 64.89 µs; butt/miter and round 32-segment polylines measure
+  134.33 and 183.43 µs respectively. Full-height overlapping trapezoids now
+  accumulate through the same integer clamp primitive as disjoint direct rows,
+  retaining the caller-owned area row while avoiding per-pixel polygon
+  clipping; partial-height and crossing slabs retain the general clipper. The
+  matched width-6 round scene uses four
   fixed segments per half circle, corresponding to the f32 backend's 0.25 px
   tolerance at this radius. The fixed API default of eight remains conservative
   because one segment count cannot represent a pixel-error tolerance across all

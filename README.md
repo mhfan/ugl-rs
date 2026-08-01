@@ -335,9 +335,9 @@ frames produced:
 | 64 triangles, fill | 65.34 µs | 204.70 µs | 33.62 µs | 1.94× faster | 3.13× slower |
 | 8 gentle cubic arches, fill | 13.37 µs | 26.10 µs | 8.27 µs | 1.62× faster | 1.95× slower |
 | cubic fill under rectangle clip | 11.93 µs | 22.51 µs | 3.54 µs | 3.37× faster | 1.89× slower |
-| cubic arches, width-6 butt/miter stroke | 28.23 µs | 72.75 µs | 14.35 µs | 1.97× faster | 2.58× slower |
-| 32-segment polyline, butt/miter stroke | 60.57 µs | 183.15 µs | 25.71 µs | 2.36× faster | 3.02× slower |
-| 32-segment polyline, round stroke | 77.76 µs | 197.59 µs | 34.51 µs | 2.25× faster | 2.54× slower |
+| cubic arches, width-6 butt/miter stroke | 28.23 µs | 64.89 µs | 14.35 µs | 1.97× faster | 2.30× slower |
+| 32-segment polyline, butt/miter stroke | 60.57 µs | 134.33 µs | 25.71 µs | 2.36× faster | 2.22× slower |
+| 32-segment polyline, round stroke | 77.76 µs | 183.43 µs | 34.51 µs | 2.25× faster | 2.36× slower |
 
 | Scene | f32 pixels changed from Blend2D | fixed pixels changed from f32 | fixed mean/max error from f32 |
 | --- | ---: | ---: | ---: |
