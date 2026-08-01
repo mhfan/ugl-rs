@@ -149,13 +149,27 @@ impl<'a> Pixmap<'a> {
         let start = y as usize * self.stride as usize +
                     x as usize * BYTES_PER_PIXEL as usize;
         let end = start + len as usize * BYTES_PER_PIXEL as usize;
-        let mut pixels = self.as_bytes_mut()[start..end]
-            .chunks_exact_mut(BYTES_PER_PIXEL as _);
+        let bytes = &mut self.as_bytes_mut()[start..end];
+        let mut pairs = bytes.chunks_exact_mut(8);
+        let mut pending = None;
         sampler.sample_span(x as f32 + 0.5, y as f32 + 0.5, 1.0, 0.0, len, |color| {
-            let pixel = pixels.next().expect("sampler emitted too many span pixels");
-            blend_sampled_pixel(pixel, color, coverage);
+            let Some(first) = pending.take() else { pending = Some(color); return; };
+            let pair = pairs.next().expect("sampler emitted too many span pixels");
+            if coverage == u8::MAX && pair == [0; 8] {
+                let (first, second) = (
+                    u32::from_le_bytes(first.to_array()) as u64,
+                    u32::from_le_bytes(color.to_array()) as u64,
+                );
+                pair.copy_from_slice(&(first | second << 32).to_le_bytes());
+            } else {
+                blend_sampled_pixel(&mut pair[..4], first, coverage);
+                blend_sampled_pixel(&mut pair[4..], color, coverage);
+            }
         });
-        debug_assert!(pixels.next().is_none());
+        let remainder = pairs.into_remainder();
+        if let Some(color) = pending {
+            blend_sampled_pixel(remainder, color, coverage);
+        } else { debug_assert!(remainder.is_empty()); }
     }
 
     #[cfg(feature = "fixed")] pub(crate) fn blend_solid_tile(&mut self, x: u32, y: u32,
