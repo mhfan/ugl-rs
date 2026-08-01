@@ -1,6 +1,7 @@
 //! Widened arithmetic primitives for the Q24.8 fixed-point raster backend.
 
 use core::cmp::Ordering;
+pub use crate::common::raster::{CoverageRun, CoverageStrip, CoverageStrips};
 use crate::{common::{geometry::{Edge, Point}, raster::{CoverageSink, FillRule}},
     fixed::{DEVICE_RAW_LIMIT, Scalar}};
 
@@ -404,92 +405,10 @@ pub struct Workspace<'a> {
     pub strip_indices: &'a mut [u32],
 }
 
-/// One non-empty horizontal coverage run within a 16-row strip.
-///
-/// Keeping `y` strip-local makes the record 12 bytes while preserving the
-/// Q24.8 backend's full supported device width.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] #[repr(C)]
-pub struct CoverageRun { pub x: u32, pub len: u32, pub row: u8, pub coverage: u8 }
-
-/// Range of coverage runs belonging to one non-empty 16-row strip.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] #[repr(C)]
-pub struct CoverageStrip { pub y: u32, pub run_start: u32, pub run_count: u32 }
-
 /// Caller-owned storage for optional retained sparse coverage.
 pub struct CoverageWorkspace<'a> {
     pub strips: &'a mut [CoverageStrip],
     pub runs: &'a mut [CoverageRun],
-}
-
-/// Borrowed sparse coverage produced by [`rasterize_lines_to_strips`].
-#[derive(Clone, Copy, Debug)]
-pub struct CoverageStrips<'a> {
-    width: u32, height: u32,
-    strips: &'a [CoverageStrip],
-      runs: &'a [CoverageRun],
-}
-
-impl<'a> CoverageStrips<'a> {
-    pub(crate) fn from_parts(width: u32, height: u32,
-        strips: &'a [CoverageStrip], runs: &'a [CoverageRun]) -> Self {
-        Self { width, height, strips, runs }
-    }
-
-    pub fn  width(&self) -> u32 { self.width }
-    pub fn height(&self) -> u32 { self.height }
-    pub fn strips(&self) -> &'a [CoverageStrip] { self.strips }
-    pub fn   runs(&self) -> &'a [CoverageRun] { self.runs }
-
-    /// Replays retained coverage through the ordinary streaming sink contract.
-    pub fn replay<S: CoverageSink>(&self, sink: &mut S) -> Result<(), S::Error> {
-        for strip in self.strips {
-            let start = strip.run_start as usize;
-            for run in &self.runs[start..start + strip.run_count as usize] {
-                sink.span(run.x, strip.y + run.row as u32, run.len, run.coverage)?;
-            }
-        }   Ok(())
-    }
-}
-
-impl crate::common::raster::ClipMask for CoverageStrips<'_> {
-    fn dimensions(self) -> (u32, u32) { (self.width, self.height) }
-
-    fn bounds(self) -> Option<(u32, u32, u32, u32)> {
-        let first = self.runs.first()?;
-        let (mut left, mut top, mut right, mut bottom) =
-            (first.x, self.height, first.x + first.len, 0);
-        for strip in self.strips {
-            let start = strip.run_start as usize;
-            for run in &self.runs[start..start + strip.run_count as usize] {
-                let y = strip.y + u32::from(run.row);
-                left = left.min(run.x); right = right.max(run.x + run.len);
-                top = top.min(y);       bottom = bottom.max(y + 1);
-            }
-        }
-        Some((left, top, right, bottom))
-    }
-
-    fn clip_span<S: CoverageSink>(self, x: u32, y: u32, len: u32,
-        coverage: u8, sink: &mut S) -> Result<(), S::Error> {
-        let strip_y = y / STRIP_HEIGHT * STRIP_HEIGHT;
-        let Ok(index) = self.strips.binary_search_by_key(&strip_y, |strip| strip.y)
-            else { return Ok(()); };
-        let strip = self.strips[index];
-        let start = strip.run_start as usize;
-        let runs = &self.runs[start..start + strip.run_count as usize];
-        let row = (y - strip_y) as u8;
-        let start = runs.partition_point(|run| run.row < row);
-        let end = start + runs[start..].partition_point(|run| run.row == row);
-        let incoming_end = x.saturating_add(len);
-        for run in &runs[start..end] {
-            let (left, right) = (x.max(run.x), incoming_end.min(run.x + run.len));
-            if left >= right { continue; }
-            let coverage = (u16::from(coverage) * u16::from(run.coverage) + 127)
-                .div_euclid(255) as u8;
-            if coverage != 0 { sink.span(left, y, right - left, coverage)?; }
-        }
-        Ok(())
-    }
 }
 
 /// Caller-owned storage required to bin prepared lines for a target height.
@@ -770,11 +689,8 @@ struct CoverageEncoder<'a> {
 
 impl<'a> CoverageEncoder<'a> {
     fn finish(self) -> CoverageStrips<'a> {
-        CoverageStrips {
-            width: self.width, height: self.height,
-            strips: &self.strips[..self.strip_count],
-            runs: &self.runs[..self.run_count],
-        }
+        CoverageStrips::from_parts(self.width, self.height,
+            &self.strips[..self.strip_count], &self.runs[..self.run_count])
     }
 }
 

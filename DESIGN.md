@@ -111,6 +111,10 @@ may use bounded strip bins while retaining trapezoid/scanline area evaluation.
 Both families may share edge preparation, area formulas, fill semantics, paint
 sampling, and compositing. Backend-specific inverse slopes, cell accumulators,
 strip IDs, and SIMD layouts do not enter the common `Edge` representation.
+The compact `CoverageRun`, `CoverageStrip`, and borrowed `CoverageStrips` storage
+contracts are likewise backend-neutral and live in `common`; fixed re-exports
+their established names while each rasterizer remains responsible for producing
+valid ordered runs.
 
 ## Coordinates and transforms
 

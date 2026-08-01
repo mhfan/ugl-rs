@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use super::{color::{PremulSRGBA8, SRGBA}, dash::DashError,
     geometry::{Affine, Edge, EdgeSink, PathError, Rect},
     raster::{CoverageMask, FillRule}};
+#[cfg(feature = "fixed")] use super::raster::CoverageStrips;
 #[cfg(feature = "f32")] use super::color::LinearPremulRGBA;
 #[cfg(feature = "fixed")] use crate::fixed::raster::Error as FixedRasterError;
 
@@ -35,7 +36,7 @@ pub enum SpreadMode { #[default] Pad, Repeat, Reflect }
 #[derive(Clone, Copy, Debug)] pub(crate) enum Clip<'a, T = f32> {
     None, Rect(Rect<T>), Mask(CoverageMask<'a>),
     #[cfg(feature = "fixed")]
-    SparseMask(crate::fixed::raster::CoverageStrips<'a>),
+    SparseMask(CoverageStrips<'a>),
 }
 
 #[derive(Clone, Copy, Debug)]

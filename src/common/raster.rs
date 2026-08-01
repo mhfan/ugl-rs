@@ -33,6 +33,40 @@ impl<E, F> CoverageSink for F where F: FnMut(u32, u32, u8) -> Result<(), E> {
     }   type Error = E;
 }
 
+/// One non-empty horizontal coverage run within a 16-row strip.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] #[repr(C)]
+pub struct CoverageRun { pub x: u32, pub len: u32, pub row: u8, pub coverage: u8 }
+
+/// Range of coverage runs belonging to one non-empty 16-row strip.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] #[repr(C)]
+pub struct CoverageStrip { pub y: u32, pub run_start: u32, pub run_count: u32 }
+
+/// Borrowed backend-neutral sparse 8-bit coverage.
+#[derive(Clone, Copy, Debug)] pub struct CoverageStrips<'a> {
+    width: u32, height: u32,
+    strips: &'a [CoverageStrip], runs: &'a [CoverageRun],
+}
+
+impl<'a> CoverageStrips<'a> {
+    #[cfg(feature = "fixed")]
+    pub(crate) fn from_parts(width: u32, height: u32,
+        strips: &'a [CoverageStrip], runs: &'a [CoverageRun]) -> Self {
+        Self { width, height, strips, runs }
+    }
+    pub fn width(&self) -> u32 { self.width }
+    pub fn height(&self) -> u32 { self.height }
+    pub fn strips(&self) -> &'a [CoverageStrip] { self.strips }
+    pub fn runs(&self) -> &'a [CoverageRun] { self.runs }
+    pub fn replay<S: CoverageSink>(&self, sink: &mut S) -> Result<(), S::Error> {
+        for strip in self.strips {
+            let start = strip.run_start as usize;
+            for run in &self.runs[start..start + strip.run_count as usize] {
+                sink.span(run.x, strip.y + u32::from(run.row), run.len, run.coverage)?;
+            }
+        }   Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum CoverageMaskError {
     StrideTooSmall { minimum: u32, actual: u32 },
     BufferTooSmall { minimum: usize, actual: usize },
@@ -273,6 +307,45 @@ impl ClipMask for CoverageMask<'_> {
             }
             cursor += run;
         }   Ok(())
+    }
+}
+
+impl ClipMask for CoverageStrips<'_> {
+    #[cfg(feature = "fixed")]
+    fn dimensions(self) -> (u32, u32) { (self.width, self.height) }
+    #[cfg(feature = "fixed")]
+    fn bounds(self) -> Option<(u32, u32, u32, u32)> {
+        let first = self.runs.first()?;
+        let (mut left, mut top, mut right, mut bottom) =
+            (first.x, self.height, first.x + first.len, 0);
+        for strip in self.strips { for run in &self.runs[strip.run_start as usize..
+            strip.run_start as usize + strip.run_count as usize] {
+            let y = strip.y + u32::from(run.row);
+            left = left.min(run.x); right = right.max(run.x + run.len);
+            top = top.min(y); bottom = bottom.max(y + 1);
+        } }
+        Some((left, top, right, bottom))
+    }
+    fn clip_span<S: CoverageSink>(self, x: u32, y: u32, len: u32,
+        coverage: u8, sink: &mut S) -> Result<(), S::Error> {
+        let strip_y = y / 16 * 16;
+        let Ok(index) = self.strips.binary_search_by_key(&strip_y, |strip| strip.y)
+            else { return Ok(()); };
+        let strip = self.strips[index];
+        let runs = &self.runs[strip.run_start as usize..
+            strip.run_start as usize + strip.run_count as usize];
+        let row = (y - strip_y) as u8;
+        let start = runs.partition_point(|run| run.row < row);
+        let end = start + runs[start..].partition_point(|run| run.row == row);
+        let incoming_end = x.saturating_add(len);
+        for run in &runs[start..end] {
+            let (left, right) = (x.max(run.x), incoming_end.min(run.x + run.len));
+            if left >= right { continue; }
+            let coverage = (u16::from(coverage) * u16::from(run.coverage) + 127)
+                .div_euclid(255) as u8;
+            if coverage != 0 { sink.span(left, y, right - left, coverage)?; }
+        }
+        Ok(())
     }
 }
 
