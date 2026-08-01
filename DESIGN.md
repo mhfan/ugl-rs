@@ -797,7 +797,11 @@ intersection are checked pixel-for-pixel. New masks select their representation
 before intersection, so two sparse masks use an ordered merge-join with work
 proportional to their run counts. Deterministic randomized sparse/sparse,
 sparse/dense, nested path/path, and `save`/`restore` tests compare against
-independently rendered or scalar dense results.
+independently rendered or scalar dense results. A longer state-machine test runs
+eight deterministic 256-operation sequences across clear, rectangle, empty,
+opaque, dense and sparse masks, free paths, and nested `save`/`restore`. Its
+independent reference retains geometric rectangles until rasterization so the
+comparison does not introduce an artificial second 8-bit quantization.
 
 The isolated `clip_alloc` integration test installs a counting system allocator
 without slowing the normal benchmark binary. For the 512×512 diagonal it reports
@@ -807,8 +811,11 @@ zero allocations. Mutating a saved dense 64×64 clip uses three allocations and
 peaks at 8,736 bytes while copy-on-write storage and its normalized sparse result
 briefly coexist. Direct borrowed-mask encoding was required here: the earlier
 dense-copy-first route peaked at 524,304 bytes despite its small final mask.
-Remaining work is randomized fuzzing over longer clip sequences and real-device
-allocator/code-size measurements.
+Remaining work is nondeterministic/property fuzzing and real-device allocator/
+code-size measurements. A public pre-encoded sparse-mask entry point is not
+planned: exposing strip/run storage would leak a backend layout through the
+Canvas facade. Internal producers should instead feed retained sparse coverage
+directly when profiling shows that dense mask encoding is material.
 
 Retained memory, initial mask allocation, rasterization, and subsequent
 intersection now scale with the clipped region. Large-target peak-allocation

@@ -1144,6 +1144,137 @@ impl<'target> Canvas<'target> {
         }
     }
 
+    #[test] fn randomized_clip_state_sequences_match_a_dense_reference() {
+        const WIDTH: usize = 24;
+        const HEIGHT: usize = 20;
+        let fixed = Scalar::from_bits;
+        let full_path = {
+            let mut path = PathBuilder::new();
+            path.move_to((Scalar::ZERO, Scalar::ZERO))
+                .line_to((Scalar::from_num(WIDTH), Scalar::ZERO))
+                .line_to((Scalar::from_num(WIDTH), Scalar::from_num(HEIGHT)))
+                .line_to((Scalar::ZERO, Scalar::from_num(HEIGHT)));
+            path.build()
+        };
+        let paths = [
+            [(384, 256), (5632, 640), (4736, 4736), (768, 4224)],
+            [(128, 2432), (2688, 128), (6016, 2816), (2944, 4992)],
+            [(1024, 512), (5504, 1536), (4096, 4864), (256, 3072)],
+        ].map(|points| {
+            let mut path = PathBuilder::new();
+            path.move_to((fixed(points[0].0), fixed(points[0].1)));
+            for point in &points[1..] { path.line_to((fixed(point.0), fixed(point.1))); }
+            path.build()
+        });
+        let path_masks = paths.each_ref().map(|path| {
+            let mut canvas = Canvas::new(WIDTH as _, HEIGHT as _).unwrap();
+            canvas.set_clip_path(path).unwrap().set_color(SRGBA::red())
+                .fill(&full_path).unwrap();
+            canvas.target().as_bytes().chunks_exact(4).map(|pixel| pixel[3])
+                .collect::<Vec<_>>()
+        });
+
+        let mut masks = [const { [0; WIDTH * HEIGHT] }; 4];
+        for y in 3..17 { for x in 4..21 { masks[1][y * WIDTH + x] = u8::MAX; } }
+        for y in 0..HEIGHT {
+            masks[2][y * WIDTH + y * 7 % WIDTH] = 32 + (y * 11) as u8;
+            for x in 0..WIDTH {
+                masks[3][y * WIDTH + x] = 1 + ((x * 29 + y * 47) % 254) as u8;
+            }
+        }
+        let rects = [
+            Rect::from_ltrb(fixed(128), fixed(192), fixed(6016), fixed(4928)).unwrap(),
+            Rect::from_ltrb(fixed(1728), fixed(896), fixed(4544), fixed(4032)).unwrap(),
+            Rect::from_ltrb(fixed(-384), fixed(2688), fixed(3328), fixed(5504)).unwrap(),
+        ];
+        let opaque_mask_rect = Rect::from_ltrb(
+            Scalar::from_num(4), Scalar::from_num(3),
+            Scalar::from_num(21), Scalar::from_num(17)).unwrap();
+
+        #[derive(Clone)] enum ReferenceClip { None, Rect(Rect<Scalar>), Dense(Vec<u8>) }
+        let apply_rect = |clip: &mut ReferenceClip, rect| match clip {
+            ReferenceClip::None => *clip = ReferenceClip::Rect(rect),
+            ReferenceClip::Rect(current) => *clip = intersect_rects(*current, rect)
+                .map_or_else(|| ReferenceClip::Dense(alloc::vec![0; WIDTH * HEIGHT]),
+                    ReferenceClip::Rect),
+            ReferenceClip::Dense(values) => for y in 0..HEIGHT { for x in 0..WIDTH {
+                let value = &mut values[y * WIDTH + x];
+                *value = ((u64::from(*value) * rect_pixel_area(rect, x as _, y as _) +
+                    32_768) / 65_536) as _;
+            } },
+        };
+        let apply_dense = |clip: &mut ReferenceClip, mask: &[u8]| match clip {
+            ReferenceClip::None => *clip = ReferenceClip::Dense(mask.to_vec()),
+            ReferenceClip::Rect(rect) => {
+                let rect = *rect;
+                *clip = ReferenceClip::Dense(mask.iter().enumerate().map(|(index, value)| {
+                    let (x, y) = (index % WIDTH, index / WIDTH);
+                    ((u64::from(*value) * rect_pixel_area(rect, x as _, y as _) +
+                        32_768) / 65_536) as _
+                }).collect());
+            }
+            ReferenceClip::Dense(values) => for (value, mask) in values.iter_mut().zip(mask) {
+                *value = (u16::from(*value) * u16::from(*mask) + 127)
+                    .div_euclid(255) as _;
+            },
+        };
+
+        for seed in 1..=8_u32 {
+            let mut canvas = Canvas::new(WIDTH as _, HEIGHT as _).unwrap();
+            canvas.set_color(SRGBA::red());
+            let (mut reference, mut saved) = (ReferenceClip::None, Vec::new());
+            let mut random = seed.wrapping_mul(0x9e37_79b9);
+            for step in 0..256 {
+                random = random.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let choice = (random >> 27) % 8;
+                match choice {
+                    0 => {
+                        canvas.clear_clip(); reference = ReferenceClip::None;
+                    }
+                    1 => if saved.len() < 12 {
+                        canvas.save(); saved.push(reference.clone());
+                    },
+                    2 => {
+                        let expected = saved.pop();
+                        assert_eq!(canvas.restore(), expected.is_some());
+                        if let Some(value) = expected { reference = value; }
+                    }
+                    3 | 4 => {
+                        let index = (random as usize >> 8) % masks.len();
+                        let mask = &masks[index];
+                        canvas.set_clip_mask(CoverageMask::new(
+                            mask, WIDTH as _, HEIGHT as _, WIDTH as _).unwrap());
+                        if index == 1 { apply_rect(&mut reference, opaque_mask_rect); }
+                        else { apply_dense(&mut reference, mask); }
+                    }
+                    5 | 6 => {
+                        let rect = rects[(random as usize >> 8) % rects.len()];
+                        canvas.set_clip_rect(rect);
+                        apply_rect(&mut reference, rect);
+                    }
+                    _ => {
+                        let index = (random as usize >> 8) % paths.len();
+                        canvas.set_clip_path(&paths[index]).unwrap();
+                        apply_dense(&mut reference, &path_masks[index]);
+                    }
+                }
+                canvas.target_mut().as_bytes_mut().fill(0);
+                canvas.fill(&full_path).unwrap();
+                for (index, pixel) in canvas.target().as_bytes().chunks_exact(4).enumerate() {
+                    let expected = match &reference {
+                        ReferenceClip::None => u8::MAX,
+                        ReferenceClip::Rect(rect) => ((255 * rect_pixel_area(*rect,
+                            (index % WIDTH) as _, (index / WIDTH) as _) + 32_768) /
+                            65_536) as _,
+                        ReferenceClip::Dense(values) => values[index],
+                    };
+                    assert_eq!(pixel, &[expected, 0, 0, expected],
+                        "seed={seed}, step={step}, pixel={index}, choice={choice}");
+                }
+            }
+        }
+    }
+
     #[test] fn canvas_ref_matches_state_clip_and_workspace_shape() {
         let fixed = Scalar::from_num;
         let mut builder = PathBuilder::new();
