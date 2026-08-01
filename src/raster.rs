@@ -58,14 +58,17 @@ pub struct RectClipSink<'a, S> {
 
 impl<'a, S> RectClipSink<'a, S> {
     pub fn new(rect: Rect, sink: &'a mut S) -> Self {
-        let integer = |value: f32| value == floor(value);
-        let integer_bounds = [rect.left(), rect.top(), rect.right(), rect.bottom()]
-            .iter().all(|value| integer(*value)).then(|| [
+        let integer_bounds = rect_is_integer(rect).then(|| [
                 rect.left().max(0.0) as _, rect.top().max(0.0) as _,
                 rect.right().max(0.0) as _, rect.bottom().max(0.0) as _,
             ]);
         Self { rect, integer_bounds, sink }
     }
+}
+
+pub(crate) fn rect_is_integer(rect: Rect) -> bool {
+    [rect.left(), rect.top(), rect.right(), rect.bottom()]
+        .iter().all(|value| *value == floor(*value))
 }
 
 impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {

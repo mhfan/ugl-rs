@@ -17,6 +17,7 @@ use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
     flatten::{FlattenError, FlattenOptions}, sampler::{PaintSampler, SolidPaint},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, Intersection,
         MaskClipSink, RasterError, RasterOptions, RasterWorkspace, RectClipSink,
+        rect_is_integer,
         rasterize_edges,
     }, geometry::{Affine, Path, PathError, Point, Rect},
     stroke::{flatten_stroke_path, stroke_polyline, StrokeContour, StrokeExpandError,
@@ -521,9 +522,14 @@ pub fn render_stroke_paint_dashed_clipped<S: PaintSampler>(path: &Path,
     Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_dashed_to_region(path, transform, options, (width, height),
-        clip_region(clip, width, height),
-        &mut RectClipSink::new(clip, &mut compositor), workspace)
+    let region = clip_region(clip, width, height);
+    if rect_is_integer(clip) {
+        render_stroke_dashed_to_region(path, transform, options, (width, height),
+            region, &mut compositor, workspace)
+    } else {
+        render_stroke_dashed_to_region(path, transform, options, (width, height),
+            region, &mut RectClipSink::new(clip, &mut compositor), workspace)
+    }
 }
 
 pub fn render_stroke_paint_dashed_masked<S: PaintSampler>(path: &Path,
@@ -552,9 +558,14 @@ pub fn render_stroke_paint_clipped<S: PaintSampler>(path: &Path, transform: Affi
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_to_region(path, transform, options, (width, height),
-        clip_region(clip, width, height),
-        &mut RectClipSink::new(clip, &mut compositor), workspace)
+    let region = clip_region(clip, width, height);
+    if rect_is_integer(clip) {
+        render_stroke_to_region(path, transform, options, (width, height),
+            region, &mut compositor, workspace)
+    } else {
+        render_stroke_to_region(path, transform, options, (width, height), region,
+            &mut RectClipSink::new(clip, &mut compositor), workspace)
+    }
 }
 
 /// Renders a solid analytic stroke multiplied by a borrowed path clip mask.
@@ -592,9 +603,14 @@ pub fn render_paint_clipped<S: PaintSampler>(path: &Path, transform: Affine,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_path_to_region(path, transform, options, (width, height),
-        clip_region(clip, width, height),
-        &mut RectClipSink::new(clip, &mut compositor), workspace)
+    let region = clip_region(clip, width, height);
+    if rect_is_integer(clip) {
+        render_path_to_region(path, transform, options, (width, height), region,
+            &mut compositor, workspace)
+    } else {
+        render_path_to_region(path, transform, options, (width, height), region,
+            &mut RectClipSink::new(clip, &mut compositor), workspace)
+    }
 }
 
 /// Rasterizes an analytic path clip into caller-owned 8-bit coverage.
