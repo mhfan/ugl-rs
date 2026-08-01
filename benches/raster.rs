@@ -1094,6 +1094,43 @@ fn benchmark_clip_masks(c: &mut Criterion) {
     }
     draw.finish();
 
+    let mut slender = PathBuilder::new();
+    slender.move_to((0.0, 8.0)).line_to((504.0, 512.0))
+        .line_to((512.0, 504.0)).line_to((8.0, 0.0));
+    let slender = slender.build();
+    let mut polygon = PathBuilder::new();
+    polygon.move_to((36.0, 72.0)).line_to((278.0, 24.0))
+        .line_to((486.0, 138.0)).line_to((442.0, 374.0))
+        .line_to((286.0, 488.0)).line_to((92.0, 430.0))
+        .line_to((18.0, 236.0));
+    let polygon = polygon.build();
+    let mut grid = PathBuilder::new();
+    for row in 0..8 { for column in 0..8 {
+        if (row + column) & 1 != 0 { continue; }
+        let (left, top) = (column * 64 + 4, row * 64 + 4);
+        let (right, bottom) = (left + 56, top + 56);
+        grid.move_to((left as _, top as _)).line_to((right as _, top as _))
+            .line_to((right as _, bottom as _)).line_to((left as _, bottom as _));
+    } }
+    let grid = grid.build();
+    let mut path_build = c.benchmark_group("clip_path_build_f32");
+    for (name, clip) in [
+        ("slender", &slender), ("polygon", &polygon), ("complex_grid", &grid),
+    ] {
+        let mut canvas = ugl_rs::float::Canvas::new(SIZE, SIZE).unwrap();
+        canvas.set_clip_path(clip).unwrap();
+        path_build.bench_function(BenchmarkId::new("warm", name), |b| b.iter(|| {
+            canvas.clear_clip().set_clip_path(black_box(clip)).unwrap();
+            black_box(canvas.target());
+        }));
+        path_build.bench_function(BenchmarkId::new("cold", name), |b| b.iter_batched(||
+            ugl_rs::float::Canvas::new(SIZE, SIZE).unwrap(), |mut canvas| {
+                canvas.set_clip_path(black_box(clip)).unwrap();
+                black_box(canvas.target());
+            }, BatchSize::SmallInput));
+    }
+    path_build.finish();
+
     #[cfg(feature = "fixed")] {
         use ugl_rs::fixed::Scalar;
         let fixed = Scalar::from_num;
