@@ -164,25 +164,26 @@ pub fn rasterize_edges_cells<S>(edges: &[Edge], bins: RowBins<'_>, width: u32,
             intersections: edges.len(), row_coverage: width,
         });
     }
-    let (mut active_count, mut previous) = (0, CellRange::EMPTY);
-    let mut reusable_vertical_count = 0;
+    let (mut active_count, mut previous_dirty) = (0, CellRange::EMPTY);
+    let mut reusable_vertical_count = None;
     let mut initialized = false;
     for y in 0..height {
         active_count = retain_active(workspace.intersections, active_count, y as _);
         let row_edges = bins.indices(y);
         if active_count == 0 && row_edges.is_empty() { continue; }
         let cells = &mut workspace.cells[..width];
-        if row_edges.is_empty() && active_count == reusable_vertical_count &&
-            workspace.intersections[..active_count].iter().all(|edge|
-                edge.slope == 0.0 && edge.y_end >= y as f32 + 1.0) {
-            if !previous.is_empty() {
-                emit_cell_runs(&cells[previous.start..previous.end], previous.start, y, sink)?;
+        let active = &workspace.intersections[..active_count];
+        if row_edges.is_empty() && reusable_vertical_count == Some(active_count) &&
+            vertical_edges_span_row(active, y) {
+            if !previous_dirty.is_empty() {
+                emit_cell_runs(&cells[previous_dirty.start..previous_dirty.end],
+                    previous_dirty.start, y, sink)?;
             }
             continue;
         }
         if initialized {
-            if !previous.is_empty() {
-                cells[previous.start..previous.end].fill(Cell::default());
+            if !previous_dirty.is_empty() {
+                cells[previous_dirty.start..previous_dirty.end].fill(Cell::default());
             }
         } else {
             cells.fill(Cell::default());
@@ -195,14 +196,17 @@ pub fn rasterize_edges_cells<S>(edges: &[Edge], bins: RowBins<'_>, width: u32,
         if !dirty.is_empty() {
             emit_cell_runs(&cells[dirty.start..dirty.end], dirty.start, y, sink)?;
         }
-        reusable_vertical_count = if row_edges.is_empty() && active_count != 0 &&
-            workspace.intersections[..active_count].iter().all(|edge|
-                edge.slope == 0.0 && edge.y_end >= y as f32 + 1.0) {
-            active_count
-        } else { 0 };
-        previous = dirty;
+        reusable_vertical_count = (row_edges.is_empty() &&
+            vertical_edges_span_row(&workspace.intersections[..active_count], y))
+            .then_some(active_count);
+        previous_dirty = dirty;
     }
     Ok(())
+}
+
+fn vertical_edges_span_row(active: &[Intersection], y: u32) -> bool {
+    !active.is_empty() && active.iter().all(|edge|
+        edge.slope == 0.0 && edge.y_end >= y as f32 + 1.0)
 }
 
 fn integrate_binned_row_cells(edges: &[Edge], row_edges: &[u32], row_y: f32,
