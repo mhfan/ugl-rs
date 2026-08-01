@@ -973,7 +973,7 @@ fn benchmark_paint(c: &mut Criterion) {
         raster::{CoverageRun, CoverageStrip, CoverageWorkspace,
             Line, Workspace, Segment, Trapezoid, STRIP_HEIGHT,
             prepare_lines, rasterize_lines, rasterize_lines_to_strips},
-        sampler::{Angle, ConicGradient, LinearGradient, RadialGradient},
+        sampler::{Angle, ConicAngleMode, ConicGradient, LinearGradient, RadialGradient},
         stroke::{Options as StrokeOptions, flatten_path as flatten_stroke_path,
             stroke_polyline},
         tile::{CoverageTile, CoverageTilePiece, CoverageTileRun,
@@ -1097,6 +1097,9 @@ fn benchmark_paint(c: &mut Criterion) {
         ramp, SpreadMode::Pad).unwrap();
     let conic = ConicGradient::new(
         (fixed(128), fixed(128)), Angle::from_bits(0x0f12_3456), ramp).unwrap();
+    let conic_fast = ConicGradient::with_angle_mode(
+        (fixed(128), fixed(128)), Angle::from_bits(0x0f12_3456), ramp,
+        ConicAngleMode::Fast).unwrap();
     let mut paint_group = c.benchmark_group("paint_sample_fixed");
     paint_group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
     paint_group.bench_function("linear",
@@ -1113,6 +1116,10 @@ fn benchmark_paint(c: &mut Criterion) {
         |b| b.iter(|| black_box(sample_fixed_checksum(&conic))));
     paint_group.bench_function("conic_span",
         |b| b.iter(|| black_box(sample_fixed_span_checksum(&conic))));
+    paint_group.bench_function("conic_fast_span",
+        |b| b.iter(|| black_box(sample_fixed_span_checksum(&conic_fast))));
+    paint_group.bench_function("conic_fast_point",
+        |b| b.iter(|| black_box(sample_fixed_checksum(&conic_fast))));
     paint_group.finish();
 
     let mut group = c.benchmark_group("raster_rgba8888");
