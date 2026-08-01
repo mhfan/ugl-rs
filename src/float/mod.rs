@@ -10,7 +10,7 @@ pub mod raster;
 pub mod stroke;
 pub(crate) use math::*;
 
-impl Edge {
+impl Edge<f32> {
     pub(crate) fn is_valid(&self) -> bool {
         [self.upper.x, self.upper.y, self.lower.x, self.lower.y]
             .iter().all(|value| value.is_finite()) &&
