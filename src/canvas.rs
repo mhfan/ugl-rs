@@ -171,6 +171,10 @@ impl<'a> Pixmap<'a> {
 
 pub(crate) fn blend_sampled_pixel(pixel: &mut [u8], color: PremulSRGBA8,
     coverage: u8) {
+    if coverage == u8::MAX && pixel[3] == 0 {
+        pixel.copy_from_slice(&color.to_array());
+        return;
+    }
     blend_solid_pixel(pixel, solid_blend_terms(color.into_legacy(), coverage));
 }
 
