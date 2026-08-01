@@ -11,7 +11,7 @@ use crate::{
         stroke::{StrokePathWorkspace, StrokeWorkspaceError}, SolidPaint},
     fixed::{DEVICE_RAW_LIMIT, Scalar, dash::{Pattern as DashPattern, dash_polyline},
         flatten::{Error as FlattenError, Options as FlattenOptions, build_fill_edges},
-        raster::{CoverageStrips, Error as RasterError, Line,
+        raster::{CoverageStrips, Error as RasterError, Line, STRIP_HEIGHT,
             RenderError as RasterRenderError, Workspace, prepare_lines, rasterize_lines,
             rasterize_lines_region, strip_requirements},
         sampler::PaintSampler,
@@ -56,6 +56,65 @@ fn fixed_clip_region(rect: Rect<Scalar>, width: u32, height: u32) ->
 }
 
 struct FixedRectClipSink<'a, S> { rect: Rect<Scalar>, sink: &'a mut S }
+
+struct SparseClipSink<'a, 'mask, S> {
+    mask: CoverageStrips<'mask>, sink: &'a mut S,
+    strip_index: usize, row: Option<u32>, run_start: usize, run_end: usize,
+}
+
+impl<'a, 'mask, S> SparseClipSink<'a, 'mask, S> {
+    fn new(mask: CoverageStrips<'mask>, sink: &'a mut S) -> Self {
+        Self { mask, sink, strip_index: 0, row: None, run_start: 0, run_end: 0 }
+    }
+
+    fn select_row(&mut self, y: u32) {
+        if self.row == Some(y) { return; }
+        let strip_y = y / STRIP_HEIGHT * STRIP_HEIGHT;
+        let strips = self.mask.strips();
+        if self.row.is_none_or(|previous| y < previous) {
+            self.strip_index = strips.partition_point(|strip| strip.y < strip_y);
+        } else {
+            while self.strip_index < strips.len() && strips[self.strip_index].y < strip_y {
+                self.strip_index += 1;
+            }
+        }
+        let Some(strip) = strips.get(self.strip_index).filter(|strip| strip.y == strip_y)
+            else {
+                (self.row, self.run_start, self.run_end) = (Some(y), 0, 0); return;
+            };
+        let start = strip.run_start as usize;
+        let runs = &self.mask.runs()[start..start + strip.run_count as usize];
+        let local_y = (y - strip_y) as u8;
+        let first = runs.partition_point(|run| run.row < local_y);
+        let count = runs[first..].partition_point(|run| run.row == local_y);
+        (self.row, self.run_start, self.run_end) =
+            (Some(y), start + first, start + first + count);
+    }
+}
+
+impl<S: CoverageSink> CoverageSink for SparseClipSink<'_, '_, S> {
+    type Error = S::Error;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        self.select_row(y);
+        let incoming_end = x.saturating_add(len);
+        let runs = self.mask.runs();
+        while self.run_start < self.run_end &&
+            runs[self.run_start].x + runs[self.run_start].len <= x {
+            self.run_start += 1;
+        }
+        for run in &runs[self.run_start..self.run_end] {
+            if run.x >= incoming_end { break; }
+            let (left, right) = (x.max(run.x), incoming_end.min(run.x + run.len));
+            if left >= right { continue; }
+            let coverage = (u16::from(coverage) * u16::from(run.coverage) + 127)
+                .div_euclid(255) as u8;
+            if coverage != 0 { self.sink.span(left, y, right - left, coverage)?; }
+        }
+        Ok(())
+    }
+}
 
 impl<'a, S> FixedRectClipSink<'a, S> {
     fn new(rect: Rect<Scalar>, sink: &'a mut S) -> Self { Self { rect, sink } }
@@ -274,7 +333,7 @@ pub(crate) fn render_path_sparse_masked<
     geometry: &mut GeometryWorkspace<'_>, raster_workspace: &mut Workspace<'_>) ->
     Result<(), RenderError> {
     let usage = prepare_path(path, options, geometry)?;
-    render_paint_with_mask(&geometry.lines[..usage.lines], sampler,
+    render_paint_sparse_masked(&geometry.lines[..usage.lines], sampler,
         mask, options.fill_rule, target, raster_workspace)
 }
 
@@ -436,6 +495,17 @@ pub(crate) fn render_paint_with_mask<M: ClipMask,
     let region = mask.bounds().unwrap_or_default();
     rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
         &mut MaskClipSink::new(mask, &mut compositor)).map_err(map_render_error)
+}
+
+pub(crate) fn render_paint_sparse_masked<S: PaintSampler>(lines: &[Line], sampler: &S,
+    mask: CoverageStrips<'_>, fill_rule: FillRule, target: &mut Pixmap<'_>,
+    workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
+    validate_coverage_dimensions(mask.width(), mask.height(), target)?;
+    let (width, height) = (target.width(), target.height());
+    let mut compositor = PaintCompositor { target, sampler };
+    let region = mask.bounds().unwrap_or_default();
+    rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
+        &mut SparseClipSink::new(mask, &mut compositor)).map_err(map_render_error)
 }
 
 /// Renders prepared Q24.8 lines through direct sparse tiles.

@@ -17,7 +17,7 @@ use crate::{
             map_render_error, prepare_dashed_stroke_path, prepare_stroke_path,
             stroke_requirements,
             render_paint, render_paint_clipped, render_paint_masked,
-            render_paint_with_mask, render_path, render_path_clipped,
+            render_paint_sparse_masked, render_path, render_path_clipped,
             render_path_masked, render_path_sparse_masked},
         dash::Pattern as DashPattern,
         flatten::Options as FlattenOptions,
@@ -728,7 +728,7 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
                 lines, &paint, rect, FillRule::NonZero, self.target, &mut workspace.raster),
             Clip::Mask(mask) => render_paint_masked(
                 lines, &paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
-            Clip::SparseMask(mask) => render_paint_with_mask(
+            Clip::SparseMask(mask) => render_paint_sparse_masked(
                 lines, &paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
         }
     }
@@ -781,7 +781,7 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
                 lines, &paint, rect, FillRule::NonZero, self.target, &mut workspace.raster),
             Clip::Mask(mask) => render_paint_masked(
                 lines, &paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
-            Clip::SparseMask(mask) => render_paint_with_mask(
+            Clip::SparseMask(mask) => render_paint_sparse_masked(
                 lines, &paint, mask, FillRule::NonZero, self.target, &mut workspace.raster),
         }
     }

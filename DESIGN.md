@@ -835,6 +835,10 @@ path/dense-mask, 159–160 µs for path/path, and 73–74 µs for a warmed
 `save`/path/`restore` loop. Drawing the same full-target shape costs 125–132 µs
 without a clip, 151–160 µs with a rectangle, 192–198 µs through the slender
 sparse path, and 146–154 µs after two paths reduce the surviving region.
+The fixed sparse compositor now keeps a monotonic strip/row/run cursor for one
+rasterization call instead of repeating binary and partition searches for every
+span. The slender sparse-path draw fell to about 177–181 µs (roughly 8% by the
+quick-run centers); rectangle and already-small nested clips were unchanged.
 
 Sparse/dense selection deliberately compares logical encoded bytes rather than
 vector capacity. Every short span pays for a complete `CoverageRun`, so this
