@@ -314,7 +314,7 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
 version metadata. The current three-backend baseline was measured on 2026-08-01
-after ugl-rs `ffacf29`, using Blend2D
+after ugl-rs `ef0783e`, using Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
 rustc 1.97.1 on macOS 15.6 arm64. Nine 5,000-frame samples after 500 warm-up
