@@ -49,6 +49,28 @@ fn render(edges: &[Edge<Scalar>], width: usize, height: usize,
     pixels
 }
 
+fn render_region(edges: &[Edge<Scalar>], width: usize, height: usize,
+    region: (u32, u32, u32, u32), fill_rule: FillRule) -> Vec<u8> {
+    let mut lines = vec![Line::default(); edges.len()];
+    prepare_lines(edges, &mut lines).unwrap();
+    let requirements = strip_requirements(&lines, height as _).unwrap();
+    let (mut segments, mut trapezoids, mut row_area, mut strip_offsets, mut strip_indices) = (
+        vec![Segment::default(); lines.len()],
+        vec![Trapezoid::default(); lines.len().div_ceil(2)],
+        vec![0; (region.2 - region.0) as usize],
+        vec![0; requirements.offsets], vec![0; requirements.indices]);
+    let mut pixels = vec![0; width * height];
+    rasterize_lines_region(&lines, width as _, height as _, region, fill_rule,
+        &mut Workspace { segments: &mut segments, trapezoids: &mut trapezoids,
+            row_area: &mut row_area, strip_offsets: &mut strip_offsets,
+            strip_indices: &mut strip_indices,
+        }, &mut |x, y, coverage| {
+            pixels[y as usize * width + x as usize] = coverage;
+            Ok::<_, Infallible>(())
+        }).unwrap();
+    pixels
+}
+
 fn render_analytic(edges: &[Edge], width: usize, height: usize,
     fill_rule: FillRule) -> Vec<u8> {
     let (mut pixels, mut row) = (vec![0; width * height], vec![0.0; width]);
@@ -61,6 +83,21 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
             Ok::<_, Infallible>(())
         }).unwrap();
     pixels
+}
+
+#[test] fn local_region_matches_full_raster_with_spanning_lines() {
+    let points = [(-1.0, -1.0), (9.0, 1.25), (7.5, 9.0), (0.5, 7.25)]
+        .map(|(x, y)| (fixed(x), fixed(y)).into());
+    let edges = polygon_edges(&points);
+    let (width, height, region) = (8, 8, (2, 2, 7, 7));
+    let full = render(&edges, width, height, FillRule::NonZero);
+    let local = render_region(&edges, width, height, region, FillRule::NonZero);
+    for y in 0..height as u32 { for x in 0..width as u32 {
+        let index = (y * width as u32 + x) as usize;
+        if x >= region.0 && x < region.2 && y >= region.1 && y < region.3 {
+            assert_eq!(local[index], full[index], "({x}, {y})");
+        } else { assert_eq!(local[index], 0, "({x}, {y})"); }
+    } }
 }
 
 #[test] fn diagonal_intersection_is_exact_in_raw_subpixels() {

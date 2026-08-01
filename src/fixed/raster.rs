@@ -265,9 +265,14 @@ pub fn quantize_area_coverage(area_twice_raw: u64) -> u8 {
 /// Accumulates one row-local trapezoid into a caller-owned doubled-area row.
 pub fn accumulate_trapezoid_row(trapezoid: Trapezoid, width: u32, y: u32,
     row_area: &mut [u64]) -> Result<(), Error> {
+    accumulate_trapezoid_row_region(trapezoid, 0, width, y, row_area)
+}
+
+fn accumulate_trapezoid_row_region(trapezoid: Trapezoid, x_origin: u32,
+    width: u32, y: u32, row_area: &mut [u64]) -> Result<(), Error> {
     trapezoid.area_twice_raw()?;
-    let width_usize = usize::try_from(width).map_err(|_|
-        Error::DimensionsOverflow)?;
+    let width_usize = usize::try_from(width.saturating_sub(x_origin))
+        .map_err(|_| Error::DimensionsOverflow)?;
     if row_area.len() < width_usize {
         return Err(Error::WorkspaceTooSmall {
             kind: WorkspaceKind::RowArea, required: width_usize,
@@ -286,9 +291,11 @@ pub fn accumulate_trapezoid_row(trapezoid: Trapezoid, width: u32, y: u32,
     let xs = [trapezoid. left.top_x.round_raw(), trapezoid. left.bottom_x.round_raw(),
               trapezoid.right.top_x.round_raw(), trapezoid.right.bottom_x.round_raw()];
     let (minimum, maximum) = (*xs.iter().min().unwrap(), *xs.iter().max().unwrap());
-    let first = minimum.div_euclid(scale).clamp(0, width as i64) as u32;
+    let first = minimum.div_euclid(scale)
+        .clamp(x_origin as i64, width as i64) as u32;
     let last = (maximum.div_euclid(scale) +
-               (maximum.rem_euclid(scale) != 0) as i64).clamp(0, width as i64) as u32;
+               (maximum.rem_euclid(scale) != 0) as i64)
+        .clamp(x_origin as i64, width as i64) as u32;
 
     let interior = trapezoid.interior_pixel_range(width);
     let interior_area = 2 * trapezoid.left.height_raw() as u64 * SUBPIXEL_SCALE as u64;
@@ -297,7 +304,7 @@ pub fn accumulate_trapezoid_row(trapezoid: Trapezoid, width: u32, y: u32,
         let area = if interior.contains(&x) { interior_area } else {
             trapezoid.pixel_area_twice_raw(x, y)?
         };
-        let cell = &mut row_area[x as usize];
+        let cell = &mut row_area[(x - x_origin) as usize];
         *cell = (*cell + area).min(PIXEL_AREA_TWICE);
     }   Ok(())
 }
@@ -305,13 +312,18 @@ pub fn accumulate_trapezoid_row(trapezoid: Trapezoid, width: u32, y: u32,
 /// Quantizes and coalesces one accumulated fixed-point area row.
 pub fn emit_area_runs<S>(row_area: &[u64], y: u32, sink: &mut S) ->
     Result<(), S::Error> where S: CoverageSink {
+    emit_area_runs_offset(row_area, 0, y, sink)
+}
+
+fn emit_area_runs_offset<S>(row_area: &[u64], x_origin: u32, y: u32,
+    sink: &mut S) -> Result<(), S::Error> where S: CoverageSink {
     let mut x = 0;
     while x < row_area.len() {
         let coverage = quantize_area_coverage(row_area[x]);
         if  coverage == 0 { x += 1; continue; }
         let start = x;      x += 1;
         while x < row_area.len() && quantize_area_coverage(row_area[x]) == coverage { x += 1; }
-        sink.span(start as _, y, (x - start) as _, coverage)?;
+        sink.span(x_origin + start as u32, y, (x - start) as _, coverage)?;
     }   Ok(())
 }
 
@@ -394,7 +406,18 @@ pub fn strip_requirements(lines: &[Line], height: u32) ->
 pub fn rasterize_lines<S>(lines: &[Line], width: u32, height: u32,
     fill_rule: FillRule, workspace: &mut Workspace<'_>, sink: &mut S) ->
     Result<(), RenderError<S::Error>> where S: CoverageSink {
-    let width_usize = usize::try_from(width)
+    rasterize_lines_region(lines, width, height, (0, 0, width, height),
+        fill_rule, workspace, sink)
+}
+
+pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
+    region: (u32, u32, u32, u32), fill_rule: FillRule,
+    workspace: &mut Workspace<'_>, sink: &mut S) ->
+    Result<(), RenderError<S::Error>> where S: CoverageSink {
+    let (x0, y0, x1, y1) = region;
+    let (x0, y0, x1, y1) = (
+        x0.min(width), y0.min(height), x1.min(width), y1.min(height));
+    let width_usize = usize::try_from(x1.saturating_sub(x0))
         .map_err(|_| RenderError::Raster(Error::DimensionsOverflow))?;
     let extent = |value: u32| value as u64 * SUBPIXEL_SCALE as u64;
     if extent(width) > DEVICE_RAW_LIMIT as u64 || extent(height) > DEVICE_RAW_LIMIT as u64 {
@@ -409,6 +432,7 @@ pub fn rasterize_lines<S>(lines: &[Line], width: u32, height: u32,
                 Error::WorkspaceTooSmall { kind, required }));
         }
     }
+    if x0 >= x1 || y0 >= y1 { return Ok(()); }
     let Some((first_line, rest)) = lines.split_first() else { return Ok(()); };
     let bins = build_strip_bins(lines, height,
         workspace.strip_offsets, workspace.strip_indices).map_err(RenderError::Raster)?;
@@ -419,9 +443,9 @@ pub fn rasterize_lines<S>(lines: &[Line], width: u32, height: u32,
         maximum_y = maximum_y.max(line.y0 + line.dy as i32);
     }
     let scale = SUBPIXEL_SCALE as i32;
-    let first_row = minimum_y.div_euclid(scale).clamp(0, height as i32) as u32;
+    let first_row = minimum_y.div_euclid(scale).clamp(y0 as i32, y1 as i32) as u32;
     let last_row = (maximum_y.div_euclid(scale) +
-        (maximum_y.rem_euclid(scale) != 0) as i32).clamp(0, height as i32) as u32;
+        (maximum_y.rem_euclid(scale) != 0) as i32).clamp(y0 as i32, y1 as i32) as u32;
 
     let (mut current_strip, mut pending, mut active_count) = (usize::MAX, 0, 0);
     for y in first_row..last_row {
@@ -471,11 +495,11 @@ pub fn rasterize_lines<S>(lines: &[Line], width: u32, height: u32,
                 collect_trapezoids(segments, fill_rule, workspace.trapezoids)
             }.map_err(RenderError::Raster)?;
             for trapezoid in workspace.trapezoids[..trapezoid_count].iter().copied() {
-                accumulate_trapezoid_row(trapezoid, width, y, row)
+                accumulate_trapezoid_row_region(trapezoid, x0, x1, y, row)
                     .map_err(RenderError::Raster)?;
             }   top = next;
         }
-        emit_area_runs(row, y, sink).map_err(RenderError::Sink)?;
+        emit_area_runs_offset(row, x0, y, sink).map_err(RenderError::Sink)?;
     }   Ok(())
 }
 

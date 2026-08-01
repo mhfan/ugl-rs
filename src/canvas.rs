@@ -11,7 +11,9 @@ use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
     edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{BinError as AnalyticBinError, BinWorkspace as AnalyticBinWorkspace,
         Cell as AnalyticCell, CellWorkspace as AnalyticWorkspace,
-        Intersection as AnalyticIntersection, build_row_bins, rasterize_edges_cells},
+        Intersection as AnalyticIntersection, build_row_bins, rasterize_edges_cells,
+        rasterize_edges_cells_region},
+    float::{ceil, floor},
     flatten::{FlattenError, FlattenOptions}, sampler::{PaintSampler, SolidPaint},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, Intersection,
         MaskClipSink, RasterError, RasterOptions, RasterWorkspace, RectClipSink,
@@ -505,7 +507,8 @@ pub fn render_stroke_paint_dashed_clipped<S: PaintSampler>(path: &Path,
     Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_dashed_to(path, transform, options, width, height,
+    render_stroke_dashed_to_region(path, transform, options, (width, height),
+        clip_region(clip, width, height),
         &mut RectClipSink::new(clip, &mut compositor), workspace)
 }
 
@@ -534,7 +537,8 @@ pub fn render_stroke_paint_clipped<S: PaintSampler>(path: &Path, transform: Affi
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_stroke_to(path, transform, options, width, height,
+    render_stroke_to_region(path, transform, options, (width, height),
+        clip_region(clip, width, height),
         &mut RectClipSink::new(clip, &mut compositor), workspace)
 }
 
@@ -572,7 +576,8 @@ pub fn render_paint_clipped<S: PaintSampler>(path: &Path, transform: Affine,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
     let mut compositor = PaintCompositor { target, sampler };
-    render_path_to(path, transform, options, width, height,
+    render_path_to_region(path, transform, options, (width, height),
+        clip_region(clip, width, height),
         &mut RectClipSink::new(clip, &mut compositor), workspace)
 }
 
@@ -704,6 +709,24 @@ pub(crate) fn rasterize<S>(edges: &[Edge], width: u32, height: u32,
         &mut workspace, sink).map_err(map_raster_error)
 }
 
+fn clip_region(clip: Rect, width: u32, height: u32) -> (u32, u32, u32, u32) {
+    (floor(clip.left()).clamp(0.0, width as _) as _,
+     floor(clip.top()).clamp(0.0, height as _) as _,
+      ceil(clip.right()).clamp(0.0, width as _) as _,
+      ceil(clip.bottom()).clamp(0.0, height as _) as _)
+}
+
+fn rasterize_region<S>(edges: &[Edge], dimensions: (u32, u32),
+    region: (u32, u32, u32, u32), fill_rule: FillRule,
+    mut workspace: AnalyticWorkspace<'_>, bin_workspace: AnalyticBinWorkspace<'_>,
+    sink: &mut S) -> Result<(), RenderError>
+    where S: CoverageSink<Error = Infallible> {
+    let (width, height) = dimensions;
+    let bins = build_row_bins(edges, height, bin_workspace).map_err(map_bin_error)?;
+    rasterize_edges_cells_region(edges, bins, (width, height), fill_rule, region,
+        &mut workspace, sink).map_err(map_raster_error)
+}
+
 pub(crate) fn render_path_to<S>(path: &Path, transform: Affine,
     options: RenderOptions, width: u32, height: u32, sink: &mut S,
     workspace: &mut RenderWorkspace<'_>) ->
@@ -711,6 +734,19 @@ pub(crate) fn render_path_to<S>(path: &Path, transform: Affine,
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     rasterize(&workspace.edges[..edge_count], width, height, options.fill_rule,
         AnalyticWorkspace {
+            intersections: workspace.intersections, cells: workspace.cells,
+        }, AnalyticBinWorkspace {
+            row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
+        }, sink)
+}
+
+fn render_path_to_region<S>(path: &Path, transform: Affine, options: RenderOptions,
+    dimensions: (u32, u32), region: (u32, u32, u32, u32), sink: &mut S,
+    workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError>
+    where S: CoverageSink<Error = Infallible> {
+    let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
+    rasterize_region(&workspace.edges[..edge_count], dimensions, region,
+        options.fill_rule, AnalyticWorkspace {
             intersections: workspace.intersections, cells: workspace.cells,
         }, AnalyticBinWorkspace {
             row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
@@ -726,6 +762,20 @@ pub(crate) fn render_stroke_to<S>(path: &Path, transform: Affine,
     } = workspace;
     let usage = build_stroke_edges(path, transform, options, points, contours, edges)?;
     rasterize(&edges[..usage.edges], width, height, FillRule::NonZero,
+        AnalyticWorkspace { intersections, cells },
+        AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
+}
+
+fn render_stroke_to_region<S>(path: &Path, transform: Affine,
+    options: StrokePathOptions, dimensions: (u32, u32),
+    region: (u32, u32, u32, u32), sink: &mut S,
+    workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError>
+    where S: CoverageSink<Error = Infallible> {
+    let StrokeWorkspace {
+        points, contours, edges, intersections, cells, row_offsets, edge_indices,
+    } = workspace;
+    let usage = build_stroke_edges(path, transform, options, points, contours, edges)?;
+    rasterize_region(&edges[..usage.edges], dimensions, region, FillRule::NonZero,
         AnalyticWorkspace { intersections, cells },
         AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
 }
@@ -746,6 +796,27 @@ pub(crate) fn render_stroke_dashed_to<S>(path: &Path, transform: Affine,
     let usage = build_dashed_stroke_edges(path, transform, options,
         &mut path_workspace, &mut dash_workspace, edges)?;
     rasterize(&edges[..usage.edges], width, height, FillRule::NonZero,
+        AnalyticWorkspace { intersections, cells },
+        AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
+}
+
+fn render_stroke_dashed_to_region<S>(path: &Path, transform: Affine,
+    options: DashedStrokePathOptions<'_>, dimensions: (u32, u32),
+    region: (u32, u32, u32, u32), sink: &mut S,
+    workspace: &mut DashedStrokeWorkspace<'_>) -> Result<(), RenderError>
+    where S: CoverageSink<Error = Infallible> {
+    let DashedStrokeWorkspace {
+        stroke: StrokeWorkspace {
+            points, contours, edges, intersections, cells, row_offsets, edge_indices,
+        }, dash_points, dash_contours,
+    } = workspace;
+    let mut path_workspace = StrokePathWorkspace { points, contours };
+    let mut dash_workspace = DashWorkspace {
+        points: dash_points, contours: dash_contours,
+    };
+    let usage = build_dashed_stroke_edges(path, transform, options,
+        &mut path_workspace, &mut dash_workspace, edges)?;
+    rasterize_region(&edges[..usage.edges], dimensions, region, FillRule::NonZero,
         AnalyticWorkspace { intersections, cells },
         AnalyticBinWorkspace { row_offsets, edge_indices }, sink)
 }

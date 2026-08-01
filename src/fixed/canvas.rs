@@ -10,12 +10,13 @@ use crate::{
         flatten::{Error as FlattenError, Options as FlattenOptions, build_fill_edges},
         raster::{CoverageStrips, Error as RasterError, Line,
             RenderError as RasterRenderError, Workspace, prepare_lines, rasterize_lines,
-            strip_requirements},
+            rasterize_lines_region, strip_requirements},
         sampler::PaintSampler,
         stroke::{ExpandError as StrokeExpandError, Options as StrokeOptions,
             flatten_path as flatten_stroke_path, stroke_polyline},
         tile::{CoverageTiles, DirectTileWorkspace, TileKind, rasterize_lines_to_tiles}},
     geometry::{Affine, Path, Point, Rect},
+    float::{ceil, floor},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink,
         RectClipSink},
     sampler::{PaintSampler as CompatPaintSampler, SolidPaint},
@@ -36,6 +37,13 @@ fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
         blend_sampled_pixel(pixel, color, coverage);
     });
     debug_assert!(pixels.next().is_none());
+}
+
+fn clip_region(clip: Rect, width: u32, height: u32) -> (u32, u32, u32, u32) {
+    (floor(clip.left()).clamp(0.0, width as _) as _,
+     floor(clip.top()).clamp(0.0, height as _) as _,
+      ceil(clip.right()).clamp(0.0, width as _) as _,
+      ceil(clip.bottom()).clamp(0.0, height as _) as _)
 }
 
 pub struct GeometryWorkspace<'a> {
@@ -181,7 +189,8 @@ pub fn render_compat_paint_clipped<S: CompatPaintSampler>(
     Result<(), RenderError> {
     let (width, height) = (target.width(), target.height());
     let mut compositor = CompatPaintCompositor { target, sampler };
-    rasterize_lines(lines, width, height, fill_rule, workspace,
+    rasterize_lines_region(lines, width, height, clip_region(clip, width, height),
+        fill_rule, workspace,
         &mut RectClipSink::new(clip, &mut compositor)).map_err(map_render_error)
 }
 
@@ -378,7 +387,8 @@ pub fn render_paint_clipped<
     workspace: &mut Workspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width(), target.height());
     let mut compositor = PaintCompositor { target, sampler };
-    rasterize_lines(lines, width, height, fill_rule, workspace,
+    rasterize_lines_region(lines, width, height, clip_region(clip, width, height),
+        fill_rule, workspace,
         &mut RectClipSink::new(clip, &mut compositor)).map_err(map_render_error)
 }
 
