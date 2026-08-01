@@ -30,9 +30,8 @@
 //! integer framebuffer and is not colorimetrically equivalent to compositing
 //! in linear light. A future linear framebuffer should keep
 //! [`LinearPremulRGBA`] through compositing and encode only for presentation.
-//! Generic [`PremulRGBA`] remains the low-level alpha-association primitive used
-//! by the existing integer compositor; it does not itself identify a transfer
-//! function.
+//! Generic [`PremulRGBA`] remains a transfer-neutral alpha-association primitive
+//! for color math; framebuffer compositing uses [`PremulSRGBA8`] explicitly.
 //!
 //! # Conventions and references
 //!
@@ -389,7 +388,6 @@ impl PremulSRGBA8 {
         Self::new(scale(r), scale(g), scale(b), scale(a))
             .expect("scaling preserves premultiplied channels")
     }
-    pub(crate) fn into_legacy(self) -> PremulRGBA<u8> { self.0 }
 }
 
 impl Default for PremulSRGBA8 { fn default() -> Self { Self::zeroed() } }

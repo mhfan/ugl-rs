@@ -2,7 +2,7 @@
 
 use crate::{
     canvas::{Pixmap, RenderError},
-    color::{PremulSRGBA8, SRGBA}, context::{Clip, DrawState, GlobalAlphaPaint},
+    color::SRGBA, context::{Clip, DrawState, GlobalAlphaPaint},
     dash::DashContour, fixed::{Scalar, canvas::{DashedStrokePathOptions,
             DashedStrokeRequirements, DashedStrokeWorkspace, GeometryWorkspace,
             RenderOptions, RenderRequirements, StrokePathOptions,
@@ -15,6 +15,7 @@ use crate::{
         flatten::Options as FlattenOptions, raster::Workspace as RasterWorkspace,
         sampler::PaintSampler, stroke::Options as StrokeOptions},
     geometry::{Affine, Path, Point, Rect}, raster::{CoverageMask, FillRule},
+    sampler::SolidPaint,
     stroke::StrokePathWorkspace,
 };
 
@@ -33,13 +34,6 @@ impl<'a> Workspace<'a> {
         geometry: GeometryWorkspace<'a>, raster: RasterWorkspace<'a>) -> Self {
         Self { path, dash_points, dash_contours, geometry, raster }
     }
-}
-
-#[derive(Clone, Copy)] struct SolidPaint(PremulSRGBA8);
-
-impl PaintSampler for SolidPaint {
-    fn sample(&self, _x: u32, _y: u32) -> PremulSRGBA8 { self.0 }
-    fn solid_color(&self) -> Option<PremulSRGBA8> { Some(self.0) }
 }
 
 /// Stateful Q24.8 drawing facade.
@@ -63,7 +57,7 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
                 transform: Affine::identity(), fill_rule: FillRule::NonZero,
                 flatten: FlattenOptions::default(),
                 stroke: StrokeOptions::default(),
-                paint: SolidPaint(SRGBA::black().premul_encoded()),
+                paint: SolidPaint::new(SRGBA::black()),
                 global_alpha: u8::MAX,
             },
             clip: Clip::None,
@@ -95,7 +89,7 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
     }
 
     pub fn set_color(&mut self, color: SRGBA<u8>) -> &mut Self {
-        self.state.paint = SolidPaint(color.premul_encoded()); self
+        self.state.paint = SolidPaint::new(color); self
     }
 
     /// Sets the global opacity applied with integer arithmetic (`255` is opaque).

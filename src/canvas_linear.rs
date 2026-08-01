@@ -137,8 +137,11 @@ impl<'a> LinearPixmap<'a> {
     pub fn height(&self) -> u32 { self.height }
     pub fn stride(&self) -> u32 { self.stride }
     pub fn as_pixels(&self) -> &[LinearPremulRGBA<f32>] { self.data.as_slice() }
+
+    /// Returns mutable storage and marks the complete target dirty when
+    /// incremental presentation is enabled.
     pub fn as_pixels_mut(&mut self) -> &mut [LinearPremulRGBA<f32>] {
-        self.data.as_mut_slice()
+        self.mark_all_dirty(); self.data.as_mut_slice()
     }
 
     pub fn pixel(&self, x: u32, y: u32) -> Option<LinearPremulRGBA<f32>> {
@@ -240,7 +243,7 @@ impl<'a> LinearPixmap<'a> {
         let factor = coverage as f32 / u8::MAX as f32;
         if let Some(color) = sampler.solid_color_linear() {
             let stride = self.stride as usize;
-            let pixels = &mut self.as_pixels_mut()[y as usize * stride + x as usize..
+            let pixels = &mut self.data.as_mut_slice()[y as usize * stride + x as usize..
                 y as usize * stride + (x + len) as usize];
             if coverage == u8::MAX && color.alpha() == 1.0 {
                 pixels.fill(color);
@@ -252,7 +255,7 @@ impl<'a> LinearPixmap<'a> {
             }   return;
         }
         let row = y as usize * self.stride as usize;
-        let pixels = &mut self.as_pixels_mut()[row + x as usize..row + (x + len) as usize];
+        let pixels = &mut self.data.as_mut_slice()[row + x as usize..row + (x + len) as usize];
         let mut pixels = pixels.iter_mut();
         if coverage == u8::MAX && sampler.is_opaque_linear() {
             sampler.sample_linear_span(x as f32 + 0.5, y as f32 + 0.5, 1.0, 0.0, len,
@@ -279,6 +282,18 @@ impl<'a> LinearPixmap<'a> {
                 self.dirty_tile_count += 1;
             }
         }
+    }
+
+    fn mark_all_dirty(&mut self) {
+        let rows = self.height.div_ceil(LINEAR_DIRTY_TILE_SIZE);
+        let tile_count = self.dirty_tile_columns * rows;
+        let Some(dirty) = self.dirty_tiles.as_deref_mut() else { return; };
+        dirty.fill(u64::MAX);
+        if let Some(last) = dirty.last_mut() {
+            let remainder = tile_count % u64::BITS;
+            if remainder != 0 { *last = (1_u64 << remainder) - 1; }
+        }
+        self.dirty_tile_count = tile_count;
     }
 }
 
@@ -581,6 +596,20 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         target.encode_dirty_into(&mut Pixmap::from_buffer(&mut bytes,
             48, 16, 192).unwrap()).unwrap();
         assert_eq!(&bytes[..4], &[9; 4]);
+    }
+
+    #[test] fn mutable_pixel_access_marks_the_complete_target_dirty() {
+        let mut pixels = [LinearPremulRGBA::default(); 32 * 16];
+        let mut dirty = [0];
+        let mut target = LinearPixmap::with_dirty_tiles(
+            &mut pixels, 32, 16, 32, &mut dirty).unwrap();
+        target.as_pixels_mut()[16] = LinearPremulRGBA::new(1.0, 0.0, 0.0, 1.0).unwrap();
+
+        let mut bytes = [17; 32 * 16 * 4];
+        target.encode_dirty_into(
+            &mut Pixmap::from_buffer(&mut bytes, 32, 16, 128).unwrap()).unwrap();
+        assert_eq!(&bytes[16 * 4..17 * 4], &[255, 0, 0, 255]);
+        assert_eq!(&bytes[..4], &[0; 4]);
     }
 
     #[test] fn randomized_linear_source_over_matches_f64_reference() {

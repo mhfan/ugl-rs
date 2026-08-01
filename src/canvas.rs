@@ -6,18 +6,17 @@
 
 use alloc::vec::Vec;
 use core::convert::Infallible;
-use crate::{color::{PremulSRGBA8, PremulRGBA, SRGBA},
+use crate::{color::{PremulSRGBA8, SRGBA},
     dash::{dash_polyline, DashContour, DashError, DashPattern, DashWorkspace},
     edge::{build_fill_edges, Edge, EdgeSink},
     analytic::{BinError as AnalyticBinError, BinWorkspace as AnalyticBinWorkspace,
         Cell as AnalyticCell, CellWorkspace as AnalyticWorkspace,
         Intersection as AnalyticIntersection, build_row_bins, rasterize_edges_cells,
         rasterize_edges_cells_region},
-    float::{ceil, floor},
     flatten::{FlattenError, FlattenOptions}, sampler::{PaintSampler, SolidPaint},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, Intersection,
         MaskClipSink, RasterError, RasterOptions, RasterWorkspace, RectClipSink,
-        rect_is_integer,
+        clip_region, rect_is_integer,
         rasterize_edges,
     }, geometry::{Affine, Path, PathError, Point, Rect},
     stroke::{flatten_stroke_path, stroke_polyline, StrokeContour, StrokeExpandError,
@@ -133,7 +132,7 @@ impl<'a> Pixmap<'a> {
     }
 
     pub(crate) fn blend_solid_span(&mut self, x: u32, y: u32, len: u32,
-        color: PremulRGBA<u8>, coverage: u8) {
+        color: PremulSRGBA8, coverage: u8) {
         let terms = solid_blend_terms(color, coverage);
         let start = y as usize * self.stride as usize
             + x as usize * BYTES_PER_PIXEL as usize;
@@ -144,7 +143,7 @@ impl<'a> Pixmap<'a> {
     fn blend_sampled_span<S: PaintSampler>(&mut self, x: u32, y: u32, len: u32,
         sampler: &S, coverage: u8) {
         if let Some(color) = sampler.solid_color() {
-            self.blend_solid_span(x, y, len, color.into_legacy(), coverage);
+            self.blend_solid_span(x, y, len, color, coverage);
             return;
         }
         let start = y as usize * self.stride as usize +
@@ -174,7 +173,7 @@ impl<'a> Pixmap<'a> {
     }
 
     #[cfg(feature = "fixed")] pub(crate) fn blend_solid_tile(&mut self, x: u32, y: u32,
-        width: u32, height: u32, color: PremulRGBA<u8>) {
+        width: u32, height: u32, color: PremulSRGBA8) {
         let terms = solid_blend_terms(color, u8::MAX);
         for row in y..y + height {
             let start = row as usize * self.stride as usize
@@ -192,7 +191,7 @@ pub(crate) fn blend_sampled_pixel(pixel: &mut [u8], color: PremulSRGBA8,
         pixel.copy_from_slice(&color.to_array());
         return;
     }
-    blend_solid_pixel(pixel, solid_blend_terms(color.into_legacy(), coverage));
+    blend_solid_pixel(pixel, solid_blend_terms(color, coverage));
 }
 
 fn blend_solid_pixel(pixel: &mut [u8], (source, alpha, inverse): ([u8; 3], u8, u8)) {
@@ -207,7 +206,7 @@ fn blend_solid_pixel(pixel: &mut [u8], (source, alpha, inverse): ([u8; 3], u8, u
     pixel[3] = alpha.saturating_add(mul_div_255(pixel[3], inverse));
 }
 
-fn solid_blend_terms(color: PremulRGBA<u8>, coverage: u8) -> ([u8; 3], u8, u8) {
+fn solid_blend_terms(color: PremulSRGBA8, coverage: u8) -> ([u8; 3], u8, u8) {
     let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
     let [r, g, b, a] = color.to_array();
     let alpha = mul_div_255(a, coverage);
@@ -740,13 +739,6 @@ pub(crate) fn rasterize<S>(edges: &[Edge], width: u32, height: u32,
         .map_err(map_bin_error)?;
     rasterize_edges_cells(edges, bins, width, height, fill_rule,
         &mut workspace, sink).map_err(map_raster_error)
-}
-
-fn clip_region(clip: Rect, width: u32, height: u32) -> (u32, u32, u32, u32) {
-    (floor(clip.left()).clamp(0.0, width as _) as _,
-     floor(clip.top()).clamp(0.0, height as _) as _,
-      ceil(clip.right()).clamp(0.0, width as _) as _,
-      ceil(clip.bottom()).clamp(0.0, height as _) as _)
 }
 
 fn rasterize_region<S>(edges: &[Edge], dimensions: (u32, u32),

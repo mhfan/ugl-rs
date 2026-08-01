@@ -1,7 +1,7 @@
 
 use super::*;
 use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection},
-    color::{PremulSRGBA8, RGBA as GenericRGBA, SRGBA as RGBA},
+    color::{PremulSRGBA8, SRGBA as RGBA},
     edge::Edge,
     geometry::{Affine, PathBuilder}, raster::Intersection,
     sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient, SpreadMode},
@@ -48,7 +48,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(Pixmap::from_buffer(&mut data, 2, 1, 7).unwrap_err(),
         PixmapError::StrideTooSmall { minimum: 8, actual: 7 });
     let mut target = Pixmap::from_buffer(&mut data, 2, 1, 11).unwrap();
-    target.blend_solid_span(0, 0, 2, GenericRGBA::<u8>::red().premul(), 255);
+    target.blend_solid_span(0, 0, 2, RGBA::red().premul_encoded(), 255);
     assert_eq!(target.pixel_bytes(1, 0), Some([255, 0, 0, 255]));
     assert_eq!(&target.as_bytes()[8..], &[0, 0, 0]);
 }
@@ -65,11 +65,11 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     let mut data = [0, 0, 255, 255];
     let mut target = Pixmap::from_buffer(&mut data, 1, 1, 4).unwrap();
     target.blend_solid_span(
-        0, 0, 1, GenericRGBA::<u8>::new(255, 0, 0, 128).premul(), 255);
+        0, 0, 1, RGBA::new(255, 0, 0, 128).premul_encoded(), 255);
     assert_eq!(target.pixel_bytes(0, 0), Some([128, 0, 127, 255]));
     let before = target.pixel_bytes(0, 0);
     target.blend_solid_span(0, 0, 1,
-        GenericRGBA::<u8>::new(1, 2, 3, 0).premul(), 255);
+        RGBA::new(1, 2, 3, 0).premul_encoded(), 255);
     assert_eq!(target.pixel_bytes(0, 0), before);
 }
 
@@ -80,9 +80,9 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
         let mut next = || { state = state.wrapping_mul(1_664_525)
             .wrapping_add(1_013_904_223); state as u8 };
         let (source_alpha, coverage) = (next(), next());
-        let source = GenericRGBA::<u8>::new(
+        let source = PremulSRGBA8::new(
             next().min(source_alpha), next().min(source_alpha),
-            next().min(source_alpha), source_alpha).premul();
+            next().min(source_alpha), source_alpha).unwrap();
         let terms = solid_blend_terms(source, coverage);
         let mut actual = [0_u8; 12];
         for pixel in actual.chunks_exact_mut(4) {
@@ -111,8 +111,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
             for destination in [[0, 0, 0, 0], [8, 16, 24, 32],
                                 [40, 60, 80, 128], [255; 4]] {
                 let (mut expected, mut actual) = (destination, destination);
-                blend_solid_bytes(&mut expected,
-                    solid_blend_terms(color.into_legacy(), coverage));
+                blend_solid_bytes(&mut expected, solid_blend_terms(color, coverage));
                 blend_sampled_pixel(&mut actual, color, coverage);
                 assert_eq!(actual, expected);
             }

@@ -16,9 +16,8 @@ use crate::{
             flatten_path as flatten_stroke_path, stroke_polyline},
         tile::{CoverageTiles, DirectTileWorkspace, TileKind, rasterize_lines_to_tiles}},
     geometry::{Affine, Path, Point, Rect},
-    float::{ceil, floor},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink,
-        RectClipSink, rect_is_integer},
+        RectClipSink, clip_region, rect_is_integer},
     sampler::{PaintSampler as CompatPaintSampler, SolidPaint},
     stroke::{StrokePathWorkspace, StrokeWorkspaceError},
 };
@@ -26,7 +25,7 @@ use crate::{
 fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
     x: u32, y: u32, len: u32, sampler: &S, coverage: u8) {
     if let Some(color) = sampler.solid_color() {
-        target.blend_solid_span(x, y, len, color.into_legacy(), coverage);
+        target.blend_solid_span(x, y, len, color, coverage);
         return;
     }
     let start = y as usize * target.stride() as usize + x as usize * 4;
@@ -37,13 +36,6 @@ fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
         blend_sampled_pixel(pixel, color, coverage);
     });
     debug_assert!(pixels.next().is_none());
-}
-
-fn clip_region(clip: Rect, width: u32, height: u32) -> (u32, u32, u32, u32) {
-    (floor(clip.left()).clamp(0.0, width as _) as _,
-     floor(clip.top()).clamp(0.0, height as _) as _,
-      ceil(clip.right()).clamp(0.0, width as _) as _,
-      ceil(clip.bottom()).clamp(0.0, height as _) as _)
 }
 
 pub struct GeometryWorkspace<'a> {
@@ -512,14 +504,14 @@ pub fn composite_solid_tiles(tiled: CoverageTiles<'_>,
             TileKind::Full => {
                 let (width, height) = tiled.tile_extent(*tile);
                 compositor.target.blend_solid_tile(
-                    tile.x, tile.y, width, height, paint.color().into_legacy());
+                    tile.x, tile.y, width, height, paint.color());
             }
             TileKind::Boundary => {
                 let start = tile.run_start as usize;
                 for run in &tiled.runs()[start..start + tile.run_count as usize] {
                     compositor.target.blend_solid_span(tile.x + run.x as u32,
                         tile.y + run.row as u32, run.len as _,
-                        paint.color().into_legacy(), run.coverage);
+                        paint.color(), run.coverage);
                 }
             }
         }

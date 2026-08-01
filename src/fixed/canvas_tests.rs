@@ -5,7 +5,7 @@ use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersectio
         render_paint as render_float_paint,
         render_paint_clipped as render_float_paint_clipped,
         render_paint_masked as render_float_paint_masked},
-    color::{PremulRGBA, PremulSRGBA8, RGBA as GenericRGBA, SRGBA as RGBA}, edge::Edge,
+    color::{PremulRGBA, PremulSRGBA8, SRGBA as RGBA}, edge::Edge,
     geometry::{Affine, Path, PathBuilder}, sampler::SpreadMode};
 
 fn rectangle(left: f32, top: f32, right: f32, bottom: f32) -> Path {
@@ -533,7 +533,7 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
 
 #[test] fn full_tile_blending_matches_row_spans() {
     let (mut tiled, mut spanned) = ([17; 16 * 16 * 4], [17; 16 * 16 * 4]);
-    let color = GenericRGBA::<u8>::new(40, 120, 220, 192).premul();
+    let color = RGBA::new(40, 120, 220, 192).premul_encoded();
     Pixmap::from_buffer(&mut tiled, 16, 16, 64).unwrap().blend_solid_tile(0, 0, 16, 16, color);
     let mut target = Pixmap::from_buffer(&mut spanned, 16, 16, 64).unwrap();
     for y in 0..16 { target.blend_solid_span(0, y, 16, color, u8::MAX); }

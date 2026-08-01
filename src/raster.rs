@@ -71,6 +71,13 @@ pub(crate) fn rect_is_integer(rect: Rect) -> bool {
         .iter().all(|value| *value == floor(*value))
 }
 
+pub(crate) fn clip_region(rect: Rect, width: u32, height: u32) -> (u32, u32, u32, u32) {
+    (floor(rect.left()).clamp(0.0, width as _) as _,
+     floor(rect.top()).clamp(0.0, height as _) as _,
+      ceil(rect.right()).clamp(0.0, width as _) as _,
+      ceil(rect.bottom()).clamp(0.0, height as _) as _)
+}
+
 impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
     type Error = S::Error;
 
