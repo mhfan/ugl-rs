@@ -267,6 +267,15 @@ impl Path<f32> {
 }
 
 impl PathBuilder<f32> {
+    /// Builds the path after rejecting non-finite floating-point coordinates.
+    ///
+    /// ```
+    /// use ugl_rs::common::geometry::{PathBuilder, PathError};
+    ///
+    /// let mut path = PathBuilder::new();
+    /// path.move_to((0.0, 0.0)).line_to((f32::INFINITY, 1.0));
+    /// assert_eq!(path.build_checked().unwrap_err(), PathError::NonFiniteCoordinate);
+    /// ```
     pub fn build_checked(self) -> Result<Path, PathError> {
         let path = self.build(); path.validate_finite()?; Ok(path)
     }

@@ -33,12 +33,3 @@ pub mod context;
 pub mod sampler;
 
 pub use context::Canvas;
-
-#[cfg(test)] mod tests {
-    use crate::common::geometry::{PathBuilder, PathError};
-    #[test] fn checked_path_rejects_non_finite_coordinates() {
-        let mut builder = PathBuilder::new();
-        builder.move_to((0.0, 0.0)).line_to((f32::INFINITY, 1.0));
-        assert_eq!(builder.build_checked().unwrap_err(), PathError::NonFiniteCoordinate);
-    }
-}
