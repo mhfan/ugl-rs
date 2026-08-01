@@ -467,9 +467,13 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   polylines, with a pure-Q24.8 intersection and CORDIC arc implementation and
   the previous polygon-union path retained for repeated/reversing degeneracy.
   On the synchronized host benchmark this reduced the eight-cubic fixed stroke
-  from 284.75 to 76.89 µs; butt/miter and round 32-segment polylines measure
-  195.20 and 294.09 µs respectively. The next fixed stroke work is therefore
-  round-arc/edge-count reduction rather than more general polygon emission.
+  from 284.75 to 74.02 µs; butt/miter and round 32-segment polylines measure
+  189.49 and 197.59 µs respectively. The matched width-6 round scene uses four
+  fixed segments per half circle, corresponding to the f32 backend's 0.25 px
+  tolerance at this radius. The fixed API default of eight remains conservative
+  because one segment count cannot represent a pixel-error tolerance across all
+  widths. Four segments reduce coverage from about 236 to 175 µs and also
+  improve fixed-vs-f32 error from 1.184% / max 37 to 0.752% / max 1.
 - The production analytic-cell path stops slabs only at edge starts, ends, and
   real crossings. It integrates boundary cells with the closed-form primitive
   of `clamp(edge_x - cell_x, 0, 1)`, records full intervals with two range

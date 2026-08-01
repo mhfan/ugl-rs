@@ -40,6 +40,11 @@ Third-party source and build products are intentionally not vendored.
   y=24..232 case
   is retained conceptually as a fixed-backend reliability case: its expanded
   outline currently returns `CrossingEdges` and is not a valid timing input.
+- The matched fixed width-6 round-polyline scene uses four segments per half
+  circle, selected with `--fixed-round-segments 4` (the runner default). This
+  matches the f32 0.25 px chord tolerance more closely than the conservative
+  fixed API default of eight. Alternate counts may be measured explicitly but
+  must not be mixed into the synchronized table without relabeling it.
 - Setup excluded: image allocation, path construction, context construction,
   and ugl-rs caller-owned scratch allocation.
 - Timed frame: clear the complete destination and fill or stroke the retained

@@ -337,7 +337,7 @@ frames produced:
 | cubic fill under rectangle clip | 11.93 µs | 22.51 µs | 3.54 µs | 3.37× faster | 1.89× slower |
 | cubic arches, width-6 butt/miter stroke | 28.23 µs | 72.75 µs | 14.35 µs | 1.97× faster | 2.58× slower |
 | 32-segment polyline, butt/miter stroke | 60.57 µs | 183.15 µs | 25.71 µs | 2.36× faster | 3.02× slower |
-| 32-segment polyline, round stroke | 77.76 µs | 270.92 µs | 34.51 µs | 2.25× faster | 3.48× slower |
+| 32-segment polyline, round stroke | 77.76 µs | 197.59 µs | 34.51 µs | 2.25× faster | 2.54× slower |
 
 | Scene | f32 pixels changed from Blend2D | fixed pixels changed from f32 | fixed mean/max error from f32 |
 | --- | ---: | ---: | ---: |
@@ -354,7 +354,7 @@ frames produced:
 | clipped cubic fill | 0.301% | 0% | 0 / 0 |
 | cubic stroke | 1.321% | 0.311% | 0.00171 / 1 |
 | polyline stroke | 3.024% | 0.865% | 0.00442 / 1 |
-| round polyline stroke | 3.267% | 1.184% | 0.05475 / 37 |
+| round polyline stroke | 3.267% | 0.752% | 0.00398 / 1 |
 
 Cold first-frame latency uses nine independent processes per scene with zero
 warm-up and one timed draw. It retains first-use pipeline JIT in Blend2D while

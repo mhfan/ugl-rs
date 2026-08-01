@@ -420,6 +420,8 @@ fn run_fixed() -> Result<(), String> {
     let warmup = argument("--warmup", 500)?;
     let iterations = argument("--iterations", 5_000)?;
     let samples = argument("--samples", 9)?;
+    let fixed_round_segments = u16::try_from(argument("--fixed-round-segments", 4)?)
+        .map_err(|_| "--fixed-round-segments exceeds u16")?;
     if iterations == 0 || samples == 0 {
         return Err("--iterations and --samples must be positive".into());
     }
@@ -515,6 +517,8 @@ fn run_fixed() -> Result<(), String> {
                         FixedStrokeOptions::new(Scalar::from_num(6))
                             .expect("valid comparison stroke")
                             .with_cap(LineCap::Round).with_join(LineJoin::Round)
+                            .with_round_segments(fixed_round_segments)
+                            .map_err(|error| format!("stroke options: {error:?}"))?
                     } else {
                         FixedStrokeOptions::new(Scalar::from_num(6))
                             .expect("valid comparison stroke")

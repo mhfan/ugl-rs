@@ -611,6 +611,15 @@ fn stroke_curve_scene() -> Path {
     }   path.build()
 }
 
+fn comparison_polyline_scene() -> Path {
+    let mut path = PathBuilder::with_capacity(33);
+    path.move_to((8.0, 128.0));
+    for index in 1..=32 {
+        let y = if index & 1 == 0 { 96.0 } else { 160.0 };
+        path.line_to((8.0 + index as f32 * 7.5, y));
+    }   path.build()
+}
+
 fn stroke_requirements(path: &Path, options: StrokePathOptions) ->
     (usize, usize, usize) {
     let (mut points, mut contours) =
@@ -837,6 +846,59 @@ fn benchmark_stroke(c: &mut Criterion) {
     dash_group.finish();
 }
 
+fn benchmark_stroke_coverage(c: &mut Criterion) {
+    let base = StrokeOptions::new(6.0).unwrap();
+    let scenes = [
+        ("polyline_32", comparison_polyline_scene(),
+            StrokePathOptions { stroke: base, ..Default::default() }),
+        ("polyline_round_32", comparison_polyline_scene(), StrokePathOptions {
+            stroke: base.with_cap(LineCap::Round).with_join(LineJoin::Round),
+            ..Default::default()
+        }),
+        ("cubics_8", stroke_curve_scene(),
+            StrokePathOptions { stroke: base, ..Default::default() }),
+    ];
+    let mut group = c.benchmark_group("stroke_coverage_f32");
+    for (name, path, options) in scenes {
+        let (point_count, contour_count, edge_count) = stroke_requirements(&path, options);
+        let (mut points, mut contours) = (
+            vec![Point::default(); point_count],
+            vec![StrokeContour::default(); contour_count],
+        );
+        let mut workspace = StrokePathWorkspace {
+            points: &mut points, contours: &mut contours,
+        };
+        let flattened = flatten_stroke_path(
+            &path, Affine::identity(), options.flatten, &mut workspace).unwrap();
+        let mut edges = Vec::with_capacity(edge_count);
+        for (points, closed) in flattened.contours() {
+            stroke_polyline(points, closed, options.stroke, &mut |edge| {
+                edges.push(edge); Ok::<_, core::convert::Infallible>(())
+            }).unwrap();
+        }
+        let requirements = bin_requirements(&edges, HEIGHT).unwrap();
+        let (mut offsets, mut indices) =
+            (vec![0; requirements.offsets], vec![0; requirements.indices]);
+        let bins = build_row_bins(&edges, HEIGHT, AnalyticBinWorkspace {
+            row_offsets: &mut offsets, edge_indices: &mut indices,
+        }).unwrap();
+        let (mut active, mut cells) = (
+            vec![AnalyticIntersection::default(); edges.len()],
+            vec![AnalyticCell::default(); WIDTH as usize],
+        );
+        group.throughput(Throughput::Elements(edges.len() as _));
+        group.bench_function(name, |b| b.iter(|| {
+            let mut sink = RunCounter::default();
+            rasterize_edges_cells(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+                &mut AnalyticCellWorkspace {
+                    intersections: &mut active, cells: &mut cells,
+                }, &mut sink).unwrap();
+            black_box((sink.runs, sink.pixels));
+        }));
+    }
+    group.finish();
+}
+
 fn sample_checksum(sampler: &impl PaintSampler) -> u64 {
     let mut checksum = 0_u64;
     for y in 0..HEIGHT {
@@ -1009,6 +1071,47 @@ fn benchmark_paint(c: &mut Criterion) {
         black_box(&stroke_edges);
     }));
     stroke_group.finish();
+
+    let comparison_points: Vec<_> = (0..=32).map(|index| (
+        Scalar::from_num(8.0 + index as f32 * 7.5),
+        Scalar::from_num(if index == 0 { 128.0 }
+            else if index & 1 == 0 { 96.0 } else { 160.0 }),
+    ).into()).collect();
+    let comparison_options = StrokeOptions::new(Scalar::from_num(6)).unwrap();
+    let comparison_round = comparison_options
+        .with_cap(LineCap::Round).with_join(LineJoin::Round);
+    let comparison_round_4 = comparison_round.with_round_segments(4).unwrap();
+    let mut coverage_group = c.benchmark_group("stroke_coverage_fixed");
+    for (name, options) in [("polyline_32", comparison_options),
+                            ("polyline_round_32", comparison_round),
+                            ("polyline_round_4_32", comparison_round_4)] {
+        let mut edges = Vec::with_capacity(256);
+        stroke_polyline(&comparison_points, false, options, &mut |edge| {
+            edges.push(edge); Ok::<_, core::convert::Infallible>(())
+        }).unwrap();
+        let mut lines = vec![Line::default(); edges.len()];
+        let line_count = prepare_lines(&edges, &mut lines).unwrap();
+        let requirements = ugl_rs::fixed::raster::strip_requirements(
+            &lines[..line_count], HEIGHT).unwrap();
+        let (mut segments, mut trapezoids, mut row_area, mut offsets, mut indices) = (
+            vec![Segment::default(); line_count],
+            vec![Trapezoid::default(); line_count.div_ceil(2)],
+            vec![0; WIDTH as usize], vec![0; requirements.offsets],
+            vec![0; requirements.indices],
+        );
+        coverage_group.throughput(Throughput::Elements(line_count as _));
+        coverage_group.bench_function(name, |b| b.iter(|| {
+            let mut sink = RunCounter::default();
+            rasterize_lines(&lines[..line_count], WIDTH, HEIGHT, FillRule::NonZero,
+                &mut Workspace {
+                    segments: &mut segments, trapezoids: &mut trapezoids,
+                    row_area: &mut row_area,
+                    strip_offsets: &mut offsets, strip_indices: &mut indices,
+                }, &mut sink).unwrap();
+            black_box((sink.runs, sink.pixels));
+        }));
+    }
+    coverage_group.finish();
 
     let fixed_dash_lengths = [Scalar::from_num(6), Scalar::from_num(3),
         Scalar::from_num(1.5), Scalar::from_num(3)];
@@ -1380,6 +1483,7 @@ fn  benchmarks(c: &mut Criterion) {
     benchmark_active(c);
     benchmark_fill_stages(c);
     benchmark_stroke(c);
+    benchmark_stroke_coverage(c);
     benchmark_paint(c);
 }
 
