@@ -147,11 +147,24 @@ fn circular_mask_scene() -> Path {
     path.build()
 }
 
+fn self_intersect_scene() -> Path {
+    let mut path = PathBuilder::with_capacity(16 * 5);
+    for index in 0..16 {
+        let (x, y) = ((index % 4) as f32 * 60.0 + 8.25,
+                      (index / 4) as f32 * 60.0 + 8.5);
+        path.move_to((x, y)).line_to((x + 44.5, y + 44.25))
+            .line_to((x + 44.5, y)).line_to((x, y + 44.25));
+    }
+    path.build()
+}
+
 fn benchmark_fill_stages(c: &mut Criterion) {
     let mut group = c.benchmark_group("fill_stages_f32");
-    for (name, path) in [("triangles_64", triangle_scene()),
-                         ("cubics_8", fill_curve_scene()),
-                         ("circular_mask", circular_mask_scene())] {
+    for (name, path, fill_rule) in [
+        ("triangles_64", triangle_scene(), FillRule::NonZero),
+        ("cubics_8", fill_curve_scene(), FillRule::NonZero),
+        ("circular_mask", circular_mask_scene(), FillRule::NonZero),
+        ("self_intersect_16", self_intersect_scene(), FillRule::EvenOdd)] {
         let mut edges = Vec::new();
         build_fill_edges(&path, Affine::identity(), FlattenOptions::default(),
             &mut |edge| {
@@ -188,7 +201,7 @@ fn benchmark_fill_stages(c: &mut Criterion) {
         );
         group.bench_function(BenchmarkId::new("coverage_cells", name), |b| b.iter(|| {
             let mut sink = RunCounter::default();
-            rasterize_edges_cells(&edges, bins, WIDTH, HEIGHT, FillRule::NonZero,
+            rasterize_edges_cells(&edges, bins, WIDTH, HEIGHT, fill_rule,
                 &mut AnalyticCellWorkspace {
                     intersections: &mut active, cells: &mut cells,
                 }, &mut sink).unwrap();
@@ -876,6 +889,10 @@ fn benchmark_stroke_coverage(c: &mut Criterion) {
     let scenes = [
         ("polyline_32", comparison_polyline_scene(),
             StrokePathOptions { stroke: base, ..Default::default() }),
+        ("polyline_narrow_32", comparison_polyline_scene(),
+            StrokePathOptions {
+                stroke: StrokeOptions::new(1.0).unwrap(), ..Default::default()
+            }),
         ("polyline_round_32", comparison_polyline_scene(), StrokePathOptions {
             stroke: base.with_cap(LineCap::Round).with_join(LineJoin::Round),
             ..Default::default()
@@ -1339,11 +1356,13 @@ fn benchmark_clip_masks(c: &mut Criterion) {
             else if index & 1 == 0 { 96.0 } else { 160.0 }),
     ).into()).collect();
     let comparison_options = StrokeOptions::new(Scalar::from_num(6)).unwrap();
+    let comparison_narrow = StrokeOptions::new(Scalar::ONE).unwrap();
     let comparison_round = comparison_options
         .with_cap(LineCap::Round).with_join(LineJoin::Round);
     let comparison_round_4 = comparison_round.with_round_segments(4).unwrap();
     let mut coverage_group = c.benchmark_group("stroke_coverage_fixed");
     for (name, options) in [("polyline_32", comparison_options),
+                            ("polyline_narrow_32", comparison_narrow),
                             ("polyline_round_32", comparison_round),
                             ("polyline_round_4_32", comparison_round_4)] {
         let mut edges = Vec::with_capacity(256);
@@ -1479,6 +1498,30 @@ fn benchmark_clip_masks(c: &mut Criterion) {
         vec![Trapezoid::default(); circle_line_count.div_ceil(2)],
         vec![0; WIDTH as usize], vec![0; circle_requirements.offsets],
         vec![0; circle_requirements.indices]);
+    let mut crossing = PathBuilder::with_capacity(16 * 5);
+    for index in 0..16 {
+        let (x, y) = (Scalar::from_num((index % 4) as f32 * 60.0 + 8.25),
+                      Scalar::from_num((index / 4) as f32 * 60.0 + 8.5));
+        crossing.move_to((x, y))
+            .line_to((x + Scalar::from_num(44.5), y + Scalar::from_num(44.25)))
+            .line_to((x + Scalar::from_num(44.5), y))
+            .line_to((x, y + Scalar::from_num(44.25)));
+    }
+    let mut crossing_edges = Vec::new();
+    build_fixed_fill_edges(&crossing.build(), Affine::identity(), FlattenOptions::default(),
+        &mut |edge| {
+            crossing_edges.push(edge); Ok::<_, core::convert::Infallible>(())
+        }).unwrap();
+    let mut crossing_lines = vec![Line::default(); crossing_edges.len()];
+    let crossing_line_count = prepare_lines(&crossing_edges, &mut crossing_lines).unwrap();
+    let crossing_requirements = ugl_rs::fixed::raster::strip_requirements(
+        &crossing_lines[..crossing_line_count], HEIGHT).unwrap();
+    let (mut crossing_segments, mut crossing_trapezoids, mut crossing_area,
+        mut crossing_offsets, mut crossing_indices) = (
+        vec![Segment::default(); crossing_line_count],
+        vec![Trapezoid::default(); crossing_line_count.div_ceil(2)],
+        vec![0; WIDTH as usize], vec![0; crossing_requirements.offsets],
+        vec![0; crossing_requirements.indices]);
     let mut mask_stages = c.benchmark_group("clip_path_stages_fixed");
     mask_stages.bench_function("edge_build/circular_mask", |b| b.iter(|| {
         circle_edges.clear();
@@ -1502,6 +1545,16 @@ fn benchmark_clip_masks(c: &mut Criterion) {
                 segments: &mut circle_segments, trapezoids: &mut circle_trapezoids,
                 row_area: &mut circle_area, strip_offsets: &mut circle_offsets,
                 strip_indices: &mut circle_indices,
+            }, &mut sink).unwrap();
+        black_box((sink.runs, sink.pixels));
+    }));
+    mask_stages.bench_function("coverage/self_intersect_16", |b| b.iter(|| {
+        let mut sink = RunCounter::default();
+        rasterize_lines(&crossing_lines[..crossing_line_count], WIDTH, HEIGHT,
+            FillRule::EvenOdd, &mut Workspace {
+                segments: &mut crossing_segments, trapezoids: &mut crossing_trapezoids,
+                row_area: &mut crossing_area, strip_offsets: &mut crossing_offsets,
+                strip_indices: &mut crossing_indices,
             }, &mut sink).unwrap();
         black_box((sink.runs, sink.pixels));
     }));
