@@ -332,13 +332,17 @@ fn validate_ramp(ramp: &[PremulSRGBA8]) -> Result<(), GradientError> {
 fn ramp_index(parameter: i128, denominator: i128, ramp_len: usize,
     spread: SpreadMode) -> usize {
     debug_assert!(denominator > 0);
+    if spread == SpreadMode::Pad {
+        if parameter <= 0 { return 0; }
+        if parameter >= denominator { return ramp_len - 1; }
+    }
     if ramp_index_i64_supported(denominator, ramp_len, spread)
         && let (Ok(parameter), Ok(denominator)) =
             (i64::try_from(parameter), i64::try_from(denominator)) {
         return ramp_index_i64(parameter, denominator, ramp_len, spread);
     }
     let mapped = match spread {
-        SpreadMode::Pad => parameter.clamp(0, denominator),
+        SpreadMode::Pad => parameter,
         SpreadMode::Repeat => parameter.rem_euclid(denominator),
         SpreadMode::Reflect => {
             let period = parameter.rem_euclid(denominator * 2);
@@ -361,8 +365,12 @@ fn ramp_index_i64_supported(denominator: i128, ramp_len: usize,
 fn ramp_index_i64(parameter: i64, denominator: i64, ramp_len: usize,
     spread: SpreadMode) -> usize {
     debug_assert!(denominator > 0);
+    if spread == SpreadMode::Pad {
+        if parameter <= 0 { return 0; }
+        if parameter >= denominator { return ramp_len - 1; }
+    }
     let mapped = match spread {
-        SpreadMode::Pad => parameter.clamp(0, denominator),
+        SpreadMode::Pad => parameter,
         SpreadMode::Repeat => parameter.rem_euclid(denominator),
         SpreadMode::Reflect => {
             let period = parameter.rem_euclid(denominator * 2);
