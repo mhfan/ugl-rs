@@ -52,10 +52,20 @@ impl<E, F> CoverageSink for F where F: FnMut(u32, u32, u8) -> Result<(), E> {
 }
 
 /// Coverage adapter that intersects incoming spans with an antialiased rectangle.
-pub struct RectClipSink<'a, S> { rect: Rect, sink: &'a mut S }
+pub struct RectClipSink<'a, S> {
+    rect: Rect, integer_bounds: Option<[u32; 4]>, sink: &'a mut S,
+}
 
 impl<'a, S> RectClipSink<'a, S> {
-    pub fn new(rect: Rect, sink: &'a mut S) -> Self { Self { rect, sink } }
+    pub fn new(rect: Rect, sink: &'a mut S) -> Self {
+        let integer = |value: f32| value == floor(value);
+        let integer_bounds = [rect.left(), rect.top(), rect.right(), rect.bottom()]
+            .iter().all(|value| integer(*value)).then(|| [
+                rect.left().max(0.0) as _, rect.top().max(0.0) as _,
+                rect.right().max(0.0) as _, rect.bottom().max(0.0) as _,
+            ]);
+        Self { rect, integer_bounds, sink }
+    }
 }
 
 impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
@@ -63,15 +73,7 @@ impl<S> CoverageSink for RectClipSink<'_, S> where S: CoverageSink {
 
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
         Result<(), Self::Error> {
-        let integer = |value: f32| value == floor(value);
-        if integer(self.rect.left()) && integer(self.rect.top()) &&
-            integer(self.rect.right()) && integer(self.rect.bottom()) {
-            let (left, top, right, bottom) = (
-                self.rect.left().max(0.0) as u32,
-                self.rect.top().max(0.0) as u32,
-                self.rect.right().max(0.0) as u32,
-                self.rect.bottom().max(0.0) as u32,
-            );
+        if let Some([left, top, right, bottom]) = self.integer_bounds {
             if y < top || y >= bottom { return Ok(()); }
             let (start, end) = (x.max(left), x.saturating_add(len).min(right));
             if start < end { self.sink.span(start, y, end - start, coverage)?; }
