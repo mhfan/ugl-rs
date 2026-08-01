@@ -870,7 +870,7 @@ time-weighting constant.
 The circular-mask stage benchmark isolates initial construction. F32 edge
 building, row binning, and coverage integration measure about 1.44, 0.74, and
 13.60 µs; fixed edge building, line preparation, and coverage measure about
-1.29, 0.14, and 37.00 µs. Coverage owns roughly 88% of the visible f32 stages
+1.29, 0.14, and 34.82 µs. Coverage owns roughly 88% of the visible f32 stages
 and 96% of fixed. Single-span overlap specialization, single-pass internal
 trapezoid generation, event-driven active-edge sorting, and the same-cell
 closed-form edge integral reduce fixed coverage from about 41.60 to 37.00 µs
@@ -885,6 +885,13 @@ benchmarked and rejected because it duplicated the general integration work
 without improving the circular-mask result. Further path-mask work should
 target active/event processing and boundary integration, not curve flattening,
 binning, or run emission.
+
+Full-row trapezoids with a non-empty interior integrate only the left edge for
+their left boundary pixels and only the right edge for their right boundary
+pixels; the opposite edge is provably full or zero there. This reduces circular
+coverage from about 36.69 to 34.82 µs in a same-run A/B and the formal fixed
+mask build from 42.33 to 41.39 µs. Narrow trapezoids retain the general two-edge
+integral, and the self-intersecting stress scene remains near 99.2 µs.
 
 The sparse f32 cell emitter now jumps over zero cell ranges after applying a
 range delta instead of quantizing every full-interior pixel. Circular coverage

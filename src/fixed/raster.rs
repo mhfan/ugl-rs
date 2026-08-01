@@ -318,6 +318,21 @@ fn full_row_pixel_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u64 {
     right.saturating_sub(left).min(PIXEL_AREA_TWICE)
 }
 
+fn full_row_left_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u64 {
+    let pixel_left = x as i64 * SUBPIXEL_SCALE as i64;
+    let left = integrate_clamped_edge_twice(
+        trapezoid.left_top - pixel_left,
+        trapezoid.left_bottom - pixel_left, trapezoid.height);
+    PIXEL_AREA_TWICE.saturating_sub(left)
+}
+
+fn full_row_right_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u64 {
+    let pixel_left = x as i64 * SUBPIXEL_SCALE as i64;
+    integrate_clamped_edge_twice(
+        trapezoid.right_top - pixel_left,
+        trapezoid.right_bottom - pixel_left, trapezoid.height)
+}
+
 /// Maps a pixel-clipped doubled Q24.8 area to round-to-nearest 8-bit coverage.
 pub fn quantize_area_coverage(area_twice_raw: u64) -> u8 {
     let area = area_twice_raw.min(PIXEL_AREA_TWICE);
@@ -679,12 +694,12 @@ fn emit_disjoint_trapezoids<S>(trapezoids: &[Trapezoid], x_origin: u32,
         );
         if full_start < full_end {
             for x in first..full_start {
-                let area = full_row_pixel_area_twice(trapezoid, x);
+                let area = full_row_left_area_twice(trapezoid, x);
                 append(&mut run, x, 1, quantize_area_coverage(area), y, sink)?;
             }
             append(&mut run, full_start, full_end - full_start, u8::MAX, y, sink)?;
             for x in full_end..last {
-                let area = full_row_pixel_area_twice(trapezoid, x);
+                let area = full_row_right_area_twice(trapezoid, x);
                 append(&mut run, x, 1, quantize_area_coverage(area), y, sink)?;
             }
         } else {
