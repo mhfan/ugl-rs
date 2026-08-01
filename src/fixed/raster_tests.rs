@@ -481,6 +481,20 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(inverted.area_twice_raw(), Err(Error::InvalidTrapezoid));
 }
 
+#[test] fn clamped_edge_integral_is_exact_for_constant_ramp_and_crossing_cases() {
+    let (scale, height) = (SUBPIXEL_SCALE as i64, SUBPIXEL_SCALE);
+    assert_eq!(integrate_clamped_edge_twice(scale / 2, scale / 2, height),
+        PIXEL_AREA_TWICE / 2);
+    assert_eq!(integrate_clamped_edge_twice(0, scale, height), PIXEL_AREA_TWICE / 2);
+    assert_eq!(integrate_clamped_edge_twice(scale, 0, height), PIXEL_AREA_TWICE / 2);
+    assert_eq!(integrate_clamped_edge_twice(-scale, scale, height),
+        PIXEL_AREA_TWICE / 4);
+    assert_eq!(integrate_clamped_edge_twice(scale, -scale, height),
+        PIXEL_AREA_TWICE / 4);
+    assert_eq!(integrate_clamped_edge_twice(scale, scale * 2, height),
+        PIXEL_AREA_TWICE);
+}
+
 #[test] fn trapezoid_extracts_only_guaranteed_full_pixel_runs() {
     let segment = |top_y, bottom_y, top_x, bottom_x, winding| Segment {
         line_index: 0, top_y, bottom_y,

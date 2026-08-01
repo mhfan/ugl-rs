@@ -84,6 +84,7 @@ impl Intersection {
     pub fn round_raw(self) -> i64 { round_ratio(self.num, self.den as _) }
 
     pub fn cmp_x(&self, other: &Self) -> Ordering {
+        if self.den == other.den { return self.num.cmp(&other.num); }
         let (left_divisor, right_divisor) = (self.den as i64, other.den as i64);
         let (left_floor, right_floor) = (self.num.div_euclid(left_divisor),
                                         other.num.div_euclid(right_divisor));
@@ -254,6 +255,36 @@ fn round_ratio_i128(numerator: i128, denominator: i128) -> i128 {
         Ordering::Equal | Ordering::Less  => floor,
         Ordering::Greater => floor + 1,
     }
+}
+
+fn integrate_clamped_edge_twice(start: i64, end: i64, height: u32) -> u64 {
+    let scale = SUBPIXEL_SCALE as i128;
+    let primitive = |value: i128| {
+        if value <= 0 { 0 }
+        else if value < scale { value * value }
+        else { 2 * scale * value - scale * scale }
+    };
+    let (start, end) = (start as i128, end as i128);
+    if start == end {
+        return (2 * start.clamp(0, scale) * height as i128) as _;
+    }
+    let (mut numerator, mut denominator) = (
+        height as i128 * (primitive(end) - primitive(start)), end - start);
+    if denominator < 0 { numerator = -numerator; denominator = -denominator; }
+    round_ratio_i128(numerator, denominator)
+        .clamp(0, 2 * scale * height as i128) as _
+}
+
+fn full_row_pixel_area_twice(trapezoid: Trapezoid, x: u32) -> u64 {
+    let pixel_left = x as i64 * SUBPIXEL_SCALE as i64;
+    let height = trapezoid.left.height_raw();
+    let right = integrate_clamped_edge_twice(
+        trapezoid.right.top_x.round_raw() - pixel_left,
+        trapezoid.right.bottom_x.round_raw() - pixel_left, height);
+    let left = integrate_clamped_edge_twice(
+        trapezoid.left.top_x.round_raw() - pixel_left,
+        trapezoid.left.bottom_x.round_raw() - pixel_left, height);
+    right.saturating_sub(left).min(PIXEL_AREA_TWICE)
 }
 
 /// Maps a pixel-clipped doubled Q24.8 area to round-to-nearest 8-bit coverage.
@@ -461,7 +492,8 @@ pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
             active_count = 0;
             pending = 0;
         }
-        let row = &mut workspace.row_area[..width_usize];  row.fill(0);
+        let row = &mut workspace.row_area[..width_usize];
+        let (mut row_initialized, mut row_emitted_directly) = (false, false);
         let (mut top, bottom) = (Scalar::from_bits(extent(y)     as i32),
                                  Scalar::from_bits(extent(y + 1) as i32));
         while top < bottom {
@@ -499,13 +531,95 @@ pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
             } else {
                 collect_trapezoids(segments, fill_rule, workspace.trapezoids)
             }.map_err(RenderError::Raster)?;
+            if top.to_bits() == extent(y) as i32 && next == bottom &&
+                emit_disjoint_trapezoids(&workspace.trapezoids[..trapezoid_count],
+                    x0, x1, y, sink)? {
+                row_emitted_directly = true;
+                top = next;
+                continue;
+            }
+            if !row_initialized { row.fill(0); row_initialized = true; }
             for trapezoid in workspace.trapezoids[..trapezoid_count].iter().copied() {
                 accumulate_trapezoid_row_region(trapezoid, x0, x1, y, row)
                     .map_err(RenderError::Raster)?;
             }   top = next;
         }
-        emit_area_runs_offset(row, x0, y, sink).map_err(RenderError::Sink)?;
+        if row_initialized {
+            emit_area_runs_offset(row, x0, y, sink).map_err(RenderError::Sink)?;
+        } else { debug_assert!(row_emitted_directly || active_count == 0); }
     }   Ok(())
+}
+
+fn emit_disjoint_trapezoids<S>(trapezoids: &[Trapezoid], x_origin: u32,
+    x_end: u32, y: u32, sink: &mut S) -> Result<bool, RenderError<S::Error>>
+    where S: CoverageSink {
+    let scale = SUBPIXEL_SCALE as i64;
+    let bounds = |trapezoid: Trapezoid| {
+        let xs = [trapezoid.left.top_x.round_raw(),
+                  trapezoid.left.bottom_x.round_raw(),
+                  trapezoid.right.top_x.round_raw(),
+                  trapezoid.right.bottom_x.round_raw()];
+        let (minimum, maximum) = (*xs.iter().min().unwrap(), *xs.iter().max().unwrap());
+        let first = minimum.div_euclid(scale)
+            .clamp(x_origin as i64, x_end as i64) as u32;
+        let last = (maximum.div_euclid(scale) +
+            (maximum.rem_euclid(scale) != 0) as i64)
+            .clamp(x_origin as i64, x_end as i64) as u32;
+        (first, last)
+    };
+    let mut previous_end = x_origin;
+    for &trapezoid in trapezoids {
+        trapezoid.area_twice_raw().map_err(RenderError::Raster)?;
+        let (start, end) = bounds(trapezoid);
+        if start < previous_end { return Ok(false); }
+        previous_end = end;
+    }
+
+    fn flush<S>(run: &mut Option<(u32, u32, u8)>, y: u32, sink: &mut S) ->
+        Result<(), RenderError<S::Error>> where S: CoverageSink {
+        let Some((x, len, coverage)) = run.take() else { return Ok(()); };
+        if coverage != 0 {
+            sink.span(x, y, len, coverage).map_err(RenderError::Sink)?;
+        }
+        Ok(())
+    }
+    fn append<S>(run: &mut Option<(u32, u32, u8)>, x: u32, len: u32,
+        coverage: u8, y: u32, sink: &mut S) -> Result<(), RenderError<S::Error>>
+        where S: CoverageSink {
+        if len == 0 { return Ok(()); }
+        if let Some((run_x, run_len, run_coverage)) = run {
+            if *run_x + *run_len == x && *run_coverage == coverage {
+                *run_len += len;
+                return Ok(());
+            }
+            flush(run, y, sink)?;
+        }
+        *run = Some((x, len, coverage));
+        Ok(())
+    }
+
+    let mut run = None;
+    for &trapezoid in trapezoids {
+        let (first, last) = bounds(trapezoid);
+        let interior = trapezoid.interior_pixel_range(x_end);
+        let (full_start, full_end) = (
+            interior.start.max(first).max(x_origin),
+            interior.end.min(last).min(x_end),
+        );
+        for x in first..full_start {
+            let area = full_row_pixel_area_twice(trapezoid, x);
+            append(&mut run, x, 1, quantize_area_coverage(area), y, sink)?;
+        }
+        if full_start < full_end {
+            append(&mut run, full_start, full_end - full_start, u8::MAX, y, sink)?;
+        }
+        for x in full_end.max(first)..last {
+            let area = full_row_pixel_area_twice(trapezoid, x);
+            append(&mut run, x, 1, quantize_area_coverage(area), y, sink)?;
+        }
+    }
+    flush(&mut run, y, sink)?;
+    Ok(true)
 }
 
 /// Rasterizes into compact caller-owned sparse coverage strips.
@@ -761,7 +875,8 @@ fn next_crossing_boundary(lines: &[Line], segments: &mut [Segment],
     Result<(Scalar, bool, bool), Error> {
     let (top, bottom) = validate_slab(top, bottom)?;
     let (mut boundary, mut snap_top, mut snap_bottom) = (bottom, false, false);
-    order_segments(segments);
+    segments.sort_unstable_by(|left, right| left.top_x.cmp_x(&right.top_x)
+        .then_with(|| left.bottom_x.cmp_x(&right.bottom_x)));
     for pair in segments.windows(2) {
         if !pair[0].bottom_x.cmp_x(&pair[1].bottom_x).is_gt() { continue; }
         let (left, right) = (pair[0].line_index as usize, pair[1].line_index as usize);
@@ -846,22 +961,9 @@ pub fn collect_trapezoids(segments: &mut [Segment], fill_rule: FillRule,
         segment.top_y != first.top_y || segment.bottom_y != first.bottom_y) {
         return Err(Error::InvalidSlabPartition);
     }
-    order_segments(segments);
+    segments.sort_unstable_by(|left, right| left.top_x.cmp_x(&right.top_x)
+        .then_with(|| left.bottom_x.cmp_x(&right.bottom_x)));
     collect_ordered_trapezoids(segments, fill_rule, output)
-}
-
-fn order_segments(segments: &mut [Segment]) {
-    for index in 1..segments.len() {
-        let mut current = index;
-        while current != 0 {
-            let after = segments[current - 1].top_x.cmp_x(&segments[current].top_x)
-                .then_with(|| segments[current - 1].bottom_x
-                    .cmp_x(&segments[current].bottom_x)).is_gt();
-            if !after { break; }
-            segments.swap(current - 1, current);
-            current -= 1;
-        }
-    }
 }
 
 fn collect_ordered_trapezoids(segments: &[Segment], fill_rule: FillRule,

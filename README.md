@@ -332,9 +332,9 @@ frames produced:
 | large rectangle, sparse retained path mask | 5.44 µs | 10.64 µs | 30.36 µs¹ | 5.58× slower | 1.95× slower |
 | large rectangle, dense retained path mask | 22.14 µs | 93.36 µs | 29.98 µs¹ | 1.35× slower | 4.22× slower |
 | build circular path mask | 59.44 µs | 118.73 µs | 9.16 µs | 6.49× faster | 2.00× slower |
-| 64 triangles, fill | 66.48 µs | 262.74 µs | 33.31 µs | 2.00× faster | 3.95× slower |
-| 8 gentle cubic arches, fill | 13.47 µs | 31.46 µs | 8.21 µs | 1.64× faster | 2.34× slower |
-| cubic fill under rectangle clip | 11.99 µs | 24.98 µs | 3.56 µs | 3.37× faster | 2.08× slower |
+| 64 triangles, fill | 66.48 µs | 228.03 µs | 33.31 µs | 2.00× faster | 3.43× slower |
+| 8 gentle cubic arches, fill | 13.47 µs | 27.79 µs | 8.21 µs | 1.64× faster | 2.06× slower |
+| cubic fill under rectangle clip | 11.99 µs | 23.88 µs | 3.56 µs | 3.37× faster | 1.99× slower |
 | cubic arches, width-6 butt/miter stroke | 32.61 µs | 77.26 µs | 14.29 µs | 2.28× faster | 2.37× slower |
 | 32-segment polyline, butt/miter stroke | 78.46 µs | 196.81 µs | 25.75 µs | 3.05× faster | 2.51× slower |
 | 32-segment polyline, round stroke | 95.88 µs | 292.81 µs | 34.56 µs | 2.77× faster | 3.05× slower |
@@ -350,8 +350,8 @@ frames produced:
 | built path mask | 0.529% | 0.801% | 0.01152 / 4 |
 | rectangle grid | 2.246% | 0% | 0 / 0 |
 | triangles | 2.637% | 0.195% | 0.00147 / 1 |
-| cubic fill | 0.452% | 0.061% | 0.00024 / 1 |
-| clipped cubic fill | 0.301% | 0.015% | 0.00004 / 1 |
+| cubic fill | 0.452% | 0% | 0 / 0 |
+| clipped cubic fill | 0.301% | 0% | 0 / 0 |
 | cubic stroke | 1.321% | 0.311% | 0.00171 / 1 |
 | polyline stroke | 3.024% | 0.865% | 0.00442 / 1 |
 | round polyline stroke | 3.267% | 1.184% | 0.05475 / 37 |
@@ -417,7 +417,9 @@ Fixed vertical-trapezoid boundary area reduced its raster-only stage from
 with disjoint sloped spans now integrate their boundary cells directly and
 omit the empty gaps from cell clearing and prefix scanning; touching,
 crossing, or partial-height rows retain the general analytic-cell path. Fixed
-sloped edges retain their exact rational/polygon path.
+full rows use the analogous Q24.8 piecewise integral when trapezoid pixel
+envelopes are disjoint; overlapping, crossing, and partial-height slabs retain
+the exact rational/polygon accumulator.
 
 The matched horizontal linear gradient uses a 256-entry encoded ramp and black
 stops whose alpha changes from 32 to 224, avoiding ambiguity from different RGB

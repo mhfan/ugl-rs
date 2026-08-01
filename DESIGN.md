@@ -484,6 +484,11 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   the cell array: boundary cells are integrated analytically and full
   interiors are emitted directly. Preflight rejects touching, overlapping,
   crossing, and partial-height spans, which use the general accumulator.
+- Fixed full rows apply the same guarded direct-emission policy to ordered,
+  disjoint trapezoids. Boundary coverage is evaluated with the integer
+  piecewise primitive of `clamp(edge_x - pixel_x, 0, 256)`; no floating-point
+  operation or dense row buffer is required. Multi-slab, touching, overlapping,
+  or crossing geometry retains exact rational events and polygon accumulation.
 - Rejected analytic experiments remain explicit decisions: generic polygon
   clipping and a whole-row difference accumulator did not amortize their work;
   removing midpoint ordering broke self-intersections; hybrid introsort
