@@ -667,6 +667,23 @@ pub(crate) fn build_edges(path: &Path, transform: Affine, options: FlattenOption
     Ok(sink.len)
 }
 
+pub(crate) fn edge_region(edges: &[Edge], width: u32, height: u32) ->
+    (u32, u32, u32, u32) {
+    let Some(first) = edges.first() else { return (0, 0, 0, 0); };
+    let (mut left, mut top, mut right, mut bottom) =
+        (first.upper.x, first.upper.y, first.upper.x, first.lower.y);
+    for edge in edges {
+        left = left.min(edge.upper.x).min(edge.lower.x);
+        top = top.min(edge.upper.y);
+        right = right.max(edge.upper.x).max(edge.lower.x);
+        bottom = bottom.max(edge.lower.y);
+    }
+    if left >= right || top >= bottom { return (0, 0, 0, 0); }
+    let rect = Rect::from_ltrb(left, top, right, bottom)
+        .expect("valid edges have ordered finite bounds");
+    clip_region(rect, width, height)
+}
+
 pub(crate) struct StrokeUsage { points: usize, contours: usize, edges: usize }
 
 pub(crate) fn build_stroke_edges(path: &Path, transform: Affine,
@@ -750,6 +767,18 @@ fn rasterize_region<S>(edges: &[Edge], dimensions: (u32, u32),
     let bins = build_row_bins(edges, height, bin_workspace).map_err(map_bin_error)?;
     rasterize_edges_cells_region(edges, bins, (width, height), fill_rule, region,
         &mut workspace, sink).map_err(map_raster_error)
+}
+
+pub(crate) fn rasterize_built_region<S>(edge_count: usize, dimensions: (u32, u32),
+    region: (u32, u32, u32, u32), fill_rule: FillRule, sink: &mut S,
+    workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError>
+    where S: CoverageSink<Error = Infallible> {
+    rasterize_region(&workspace.edges[..edge_count], dimensions, region, fill_rule,
+        AnalyticWorkspace {
+            intersections: workspace.intersections, cells: workspace.cells,
+        }, AnalyticBinWorkspace {
+            row_offsets: workspace.row_offsets, edge_indices: workspace.edge_indices,
+        }, sink)
 }
 
 pub(crate) fn render_path_to<S>(path: &Path, transform: Affine,

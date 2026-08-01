@@ -1,13 +1,15 @@
 //! Stateful drawing facades over the allocation-free rendering pipelines.
 
 use alloc::{rc::Rc, vec::Vec};
+use core::convert::Infallible;
 use crate::{
     analytic::Intersection as AnalyticIntersection,
     canvas::{DashedStrokePathOptions, DashedStrokePlanningWorkspace,
         DashedStrokeRequirements, DashedStrokeWorkspace, RenderOptions,
         RenderRequirements, RenderWorkspace, StrokePathOptions, StrokePlanningWorkspace,
         StrokeRequirements, StrokeWorkspace, Pixmap, RenderError,
-        dashed_stroke_requirements as plan_dashed_stroke, rasterize_path_clip,
+        build_edges, dashed_stroke_requirements as plan_dashed_stroke, edge_region,
+        rasterize_built_region,
         render_paint, render_requirements,
         render_paint_clipped, render_paint_masked,
         render_stroke_paint_dashed, render_stroke_paint_dashed_clipped,
@@ -16,7 +18,7 @@ use crate::{
         render_stroke_paint_masked},
     color::SRGBA, dash::{DashContour, DashPattern}, edge::Edge, flatten::FlattenOptions,
     geometry::{Affine, Path, Point, Rect},
-    raster::{CoverageMask, CoverageMaskMut, FillRule}, sampler::{PaintSampler, SolidPaint},
+    raster::{CoverageMask, CoverageSink, FillRule}, sampler::{PaintSampler, SolidPaint},
     stroke::{StrokeContour, StrokeOptions},
 };
 
@@ -421,6 +423,27 @@ fn intersect_canvas_clip(current: &CanvasClip, next: &mut CanvasClip) {
     }
 }
 
+struct ClipMaskSink<'a> {
+    data: &'a mut [u8], left: u32, top: u32, width: u32, height: u32,
+}
+
+impl CoverageSink for ClipMaskSink<'_> {
+    type Error = Infallible;
+
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        if x < self.left || y < self.top || y >= self.top + self.height {
+            return Ok(());
+        }
+        let start_x = x - self.left;
+        if start_x >= self.width { return Ok(()); }
+        let len = len.min(self.width - start_x);
+        let start = (y - self.top) as usize * self.width as usize + start_x as usize;
+        self.data[start..start + len as usize].fill(coverage);
+        Ok(())
+    }
+}
+
 impl Canvas<'static> {
     /// Creates a zero-initialized tightly packed RGBA8888 canvas.
     pub fn new(width: u32, height: u32) -> Result<Self, crate::canvas::PixmapError> {
@@ -520,27 +543,40 @@ impl<'target> Canvas<'target> {
     pub fn set_clip_path(&mut self, path: &Path) -> Result<&mut Self, RenderError> {
         self.plan_fill(path)?;
         let (width, height) = (self.target.width(), self.target.height());
-        let length = usize::try_from(width).ok().and_then(|width|
-            usize::try_from(height).ok().and_then(|height| width.checked_mul(height)))
+        let options = RenderOptions {
+            fill_rule: self.state.fill_rule, flatten: self.state.flatten,
+        };
+        let (edge_count, region) = {
+            let mut context_workspace = self.storage.workspace();
+            let workspace = render_workspace(&mut context_workspace.stroke);
+            let edge_count = build_edges(path, self.state.transform,
+                options.flatten, workspace.edges)?;
+            (edge_count, edge_region(&workspace.edges[..edge_count], width, height))
+        };
+        let (left, top, right, bottom) = region;
+        let (region_width, region_height) = (right - left, bottom - top);
+        let length = usize::try_from(region_width).ok().and_then(|width|
+            usize::try_from(region_height).ok().and_then(|height| width.checked_mul(height)))
             .ok_or(RenderError::DimensionsOverflow)?;
         let mut data = alloc::vec![0; length];
-        let mut mask = CoverageMaskMut::new(&mut data, width, height, width)
+        if length != 0 {
+            let mut sink = ClipMaskSink { data: &mut data, left, top,
+                width: region_width, height: region_height };
+            let mut context_workspace = self.storage.workspace();
+            let mut workspace = render_workspace(&mut context_workspace.stroke);
+            rasterize_built_region(edge_count, (width, height), region,
+                options.fill_rule, &mut sink, &mut workspace)?;
+        }
+        let mask = CoverageMask::from_region(&data, (width, height), region, region_width)
             .map_err(|_| RenderError::DimensionsOverflow)?;
-        let mut context_workspace = self.storage.workspace();
-        let mut workspace = render_workspace(&mut context_workspace.stroke);
-        rasterize_path_clip(path, self.state.transform, RenderOptions {
-            fill_rule: self.state.fill_rule, flatten: self.state.flatten,
-        }, &mut mask, &mut workspace)?;
-        let bounds = mask.as_mask().non_zero_bounds();
-        let mut clip = if let Some((left, top, right, bottom)) = bounds {
-            let stride = right - left;
-            let mut compact = Vec::with_capacity((stride * (bottom - top)) as usize);
-            for y in top..bottom {
-                let start = (y * width + left) as usize;
-                compact.extend_from_slice(&data[start..start + stride as usize]);
+        let mut clip = if let Some((mask_left, mask_top, mask_right, mask_bottom)) =
+            mask.non_zero_bounds() {
+            if (mask_left, mask_top, mask_right, mask_bottom) == region {
+                CanvasClip::Path { data: data.into(), width, height, left, top,
+                    right, bottom, stride: region_width }
+            } else {
+                copy_canvas_mask(mask)
             }
-            CanvasClip::Path { data: compact.into(), width, height,
-                left, top, right, bottom, stride }
         } else { CanvasClip::Empty };
         intersect_canvas_clip(&self.clip, &mut clip);
         self.clip = clip;
