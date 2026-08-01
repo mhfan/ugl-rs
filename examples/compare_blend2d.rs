@@ -212,6 +212,9 @@ fn run_f32() -> Result<(), String> {
                 row_offsets: &mut row_offsets, edge_indices: &mut edge_indices,
             }).map_err(|error| format!("mask: {error:?}"))?;
     }
+    let retained_mask_data = mask_data.clone();
+    let retained_mask = CoverageMask::new(
+        &retained_mask_data, WIDTH, HEIGHT, WIDTH).unwrap();
 
     let mut timings = {
         let mut render = || -> Result<(), String> {
@@ -268,7 +271,7 @@ fn run_f32() -> Result<(), String> {
                 Operation::FillMasked | Operation::FillMaskedSparse =>
                     render_solid_masked(&path, Affine::identity(),
                     SRGBA::new(40, 120, 220, 192),
-                    CoverageMask::new(&mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
+                    retained_mask,
                     RenderOptions::default(), &mut target, &mut RenderWorkspace {
                         edges: &mut edges, intersections: &mut intersections,
                         cells: &mut cells, row_offsets: &mut row_offsets,
@@ -463,6 +466,9 @@ fn run_fixed() -> Result<(), String> {
             &mut CoverageMaskMut::new(&mut mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
             &mut geometry, &mut raster).map_err(|error| format!("mask: {error:?}"))?;
     }
+    let retained_mask_data = mask_data.clone();
+    let retained_mask = CoverageMask::new(
+        &retained_mask_data, WIDTH, HEIGHT, WIDTH).unwrap();
 
     let mut timings = {
         let mut render = || -> Result<(), String> {
@@ -500,7 +506,7 @@ fn run_fixed() -> Result<(), String> {
                     RenderOptions::default(), &mut target, &mut geometry, &mut raster),
                 Operation::FillMasked | Operation::FillMaskedSparse =>
                     render_path_masked(&path, &paint,
-                    CoverageMask::new(&mask_data, WIDTH, HEIGHT, WIDTH).unwrap(),
+                    retained_mask,
                     RenderOptions::default(), &mut target, &mut geometry, &mut raster),
                 Operation::BuildMask => unreachable!(),
                 Operation::Stroke { round } => render_stroke_path(&path, &paint,

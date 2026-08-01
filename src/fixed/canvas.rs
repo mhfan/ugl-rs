@@ -211,7 +211,8 @@ pub fn render_compat_paint_masked<S: CompatPaintSampler>(
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width(), target.height());
     let mut compositor = CompatPaintCompositor { target, sampler };
-    rasterize_lines(lines, width, height, fill_rule, workspace,
+    let region = mask.non_zero_bounds().unwrap_or_default();
+    rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
         &mut MaskClipSink::new(mask, &mut compositor)).map_err(map_render_error)
 }
 
@@ -400,7 +401,8 @@ pub fn render_paint_masked<
     validate_coverage_dimensions(mask.width(), mask.height(), target)?;
     let (width, height) = (target.width(), target.height());
     let mut compositor = PaintCompositor { target, sampler };
-    rasterize_lines(lines, width, height, fill_rule, workspace,
+    let region = mask.non_zero_bounds().unwrap_or_default();
+    rasterize_lines_region(lines, width, height, region, fill_rule, workspace,
         &mut MaskClipSink::new(mask, &mut compositor)).map_err(map_render_error)
 }
 
