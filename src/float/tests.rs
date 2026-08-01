@@ -1,10 +1,12 @@
 
 use super::*;
 use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection},
+    common::PixmapError,
     color::{PremulSRGBA8, SRGBA as RGBA},
     edge::Edge,
     geometry::{Affine, PathBuilder}, float::raster::Intersection,
-    sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient, SpreadMode},
+    sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient},
+    render::SpreadMode,
     stroke::{LineCap, LineJoin},
 };
 use alloc::vec;

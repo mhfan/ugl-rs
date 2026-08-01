@@ -5,7 +5,7 @@
 //! `render_*_sampled`.
 
 use core::convert::Infallible;
-use crate::{color::SRGBA,
+use crate::{color::SRGBA, common::{Pixmap, RenderError, SolidPaint},
     dash::{DashContour, DashWorkspace},
     float::{dash::{dash_polyline, DashPattern}, raster::{Intersection, RasterError,
         RasterOptions, RasterWorkspace, RectClipSink, clip_region, rect_is_integer,
@@ -15,7 +15,7 @@ use crate::{color::SRGBA,
         Cell as AnalyticCell, CellWorkspace as AnalyticWorkspace,
         Intersection as AnalyticIntersection, build_row_bins, rasterize_edges_cells,
         rasterize_edges_cells_region},
-    flatten::{FlattenError, FlattenOptions}, sampler::{PaintSampler, SolidPaint},
+    flatten::{FlattenError, FlattenOptions}, sampler::PaintSampler,
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink,
     }, geometry::{Affine, Path, Point, Rect},
     render::{BYTES_PER_PIXEL, EdgeCapacity, EdgeSliceSink, map_dash_error,
@@ -40,7 +40,6 @@ fn blend_sampled_pixel(pixel: &mut [u8], color: crate::color::PremulSRGBA8,
     pixel[3] = alpha.saturating_add(mul_div_255(pixel[3], inverse));
 }
 
-pub use crate::render::{Pixmap, PixmapError, RenderError};
 #[cfg(test)] use crate::render::blend_solid_bytes;
 
 impl Pixmap<'_> {
@@ -185,8 +184,8 @@ pub struct StrokePathOptions {
 /// with sufficient edge storage returns the complete exact requirements.
 ///
 /// ```
-/// use ugl_rs::{canvas::{RenderOptions, render_requirements},
-///     edge::Edge, geometry::{Affine, PathBuilder}};
+/// use ugl_rs::{common::{edge::Edge, geometry::{Affine, PathBuilder}},
+///     float::canvas::{RenderOptions, render_requirements}};
 ///
 /// let mut path = PathBuilder::new();
 /// path.move_to((0.5, 0.5)).line_to((3.5, 0.5))

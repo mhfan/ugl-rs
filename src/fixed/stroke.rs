@@ -14,8 +14,8 @@ use crate::{edge::{Edge, EdgeSink}, geometry::{Affine, Path, Point},
 /// Validated Q24.8 stroke parameters.
 ///
 /// ```
-/// use ugl_rs::{fixed::{Scalar, stroke::{Error, Options}},
-///     stroke::{LineCap, LineJoin}};
+/// use ugl_rs::{common::stroke::{LineCap, LineJoin},
+///     fixed::{Scalar, stroke::{Error, Options}}};
 ///
 /// let options = Options::new(Scalar::from_num(6)).unwrap()
 ///     .with_cap(LineCap::Round).with_join(LineJoin::Bevel)

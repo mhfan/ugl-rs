@@ -14,7 +14,8 @@ use crate::{edge::{Edge, EdgeSink}, float::{acos, atan2, ceil, cos, sin, sqrt},
 /// Validated device-space stroke parameters.
 ///
 /// ```
-/// use ugl_rs::{float::stroke::{StrokeError, StrokeOptions}, stroke::{LineCap, LineJoin}};
+/// use ugl_rs::{common::stroke::{LineCap, LineJoin},
+///     float::stroke::{StrokeError, StrokeOptions}};
 ///
 /// let options = StrokeOptions::new(6.0).unwrap()
 ///     .with_cap(LineCap::Round).with_join(LineJoin::Bevel)
@@ -414,4 +415,3 @@ impl<S: EdgeSink> EdgeContour<'_, S> {
         }   Ok(())
     }
 }
-

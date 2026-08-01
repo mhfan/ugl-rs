@@ -1,15 +1,17 @@
 
-use ugl_rs::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection},
-    color::{PremulSRGBA8, LinearPremulRGBA, PremulRGBA, SRGBA, SRGBA as RGBA},
+use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, PremulRGBA, SRGBA,
+        SRGBA as RGBA}, edge::Edge, geometry::{Affine, PathBuilder}, raster::FillRule,
+        stroke::{LineCap, LineJoin, StrokeContour}, Pixmap, SpreadMode},
+    float::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection},
     canvas::{RenderOptions, RenderWorkspace, StrokePathOptions,
-        StrokeWorkspace, Pixmap, render_paint as render_canvas_paint, render_solid,
+        StrokeWorkspace, render_paint as render_canvas_paint, render_solid,
         render_stroke_solid,
     }, linear::{LinearPixmap, render_paint as render_paint_linear,
         render_solid as render_solid_linear},
-    edge::Edge, geometry::{Affine, PathBuilder}, raster::FillRule,
-    stroke::{LineCap, LineJoin, StrokeContour}, float::stroke::StrokeOptions,
+    stroke::StrokeOptions,
     sampler::{ConicGradient, GradientStop, GradientStops, LinearGradient, LinearPaintSampler,
-        PaintSampler, RadialGradient, SpreadMode, TransformedPaint},
+        PaintSampler, RadialGradient, TransformedPaint},
+    },
 };
 
 const  WIDTH: u32 = 4;
@@ -274,7 +276,7 @@ fn render_linear_paint(builder: PathBuilder, sampler: &impl LinearPaintSampler) 
 #[test] fn fixed_triangles_track_the_pipeline() {
     use ugl_rs::{fixed::{canvas::render_solid, raster::{
             Line, Workspace, Segment, Trapezoid, prepare_lines, strip_requirements,
-        }}, fixed::Scalar, geometry::Point,
+        }}, fixed::Scalar, common::geometry::Point,
     };
 
     fn fixed_edge(from: Point<Scalar>, to: Point<Scalar>) ->

@@ -31,9 +31,9 @@ The implemented vertical slice covers allocation-free path filling, stroking,
 dashing, rectangular and arbitrary-path clipping, gradients, and source-over
 composition. Both main backends borrow destination and scratch storage:
 
-- unqualified `canvas::render_*` functions use exact-area analytic `f32`
+- `float::canvas::render_*` functions use exact-area analytic `f32`
   coverage with sparse row bins;
-- `canvas::render_*_sampled` is the slower supersampled reference used for
+- `float::canvas::render_*_sampled` is the slower supersampled reference used for
   differential testing;
 - `fixed::*` provides checked Q24.8 geometry, native fixed paint, sparse-strip
   rasterization, and optional retained strip/tile coverage.
@@ -107,7 +107,7 @@ The ordinary API owns and reuses scratch storage, planning any growth before a
 draw can modify the destination:
 
 ```rust
-use ugl_rs::{Canvas, color::SRGBA, geometry::PathBuilder};
+use ugl_rs::{Canvas, common::{color::SRGBA, geometry::PathBuilder}};
 
 const  WIDTH: u32 = 4;
 const HEIGHT: u32 = 4;
@@ -131,7 +131,7 @@ applies uniformly to solid and custom paints. Consecutive `set_clip_rect`,
 `clear_clip()` explicitly resets it.
 
 `CanvasRef` is the allocation-free facade for callers that provide bounded
-scratch explicitly. The lower-level `canvas::*` functions expose individual
+scratch explicitly. The lower-level `float::canvas::*` functions expose individual
 workspace arrays only for static-memory systems, custom allocators, retained
 coverage integration, and renderer development; they are not required for
 ordinary drawing.
@@ -203,7 +203,7 @@ The fixed execution contract is deliberately per entry point:
 | path-mask production and native mask composition | yes |
 | `fixed::Canvas` or `fixed::CanvasRef` with native paint and rectangle/mask clip | yes |
 | rectangle clipping | yes; API coordinates and antialiased coverage use Q24.8/integer arithmetic |
-| compatibility entry points accepting `sampler::PaintSampler` | no |
+| compatibility entry points accepting `float::sampler::PaintSampler` | no |
 
 “Fixed backend” therefore describes geometry and coverage representation; a
 complete no-FPU claim additionally requires a native fixed sampler and a clip
@@ -215,7 +215,7 @@ encoded `SRGBA<u8>`, while `Pixmap::pixel` returns only validated
 Pixmap construction intentionally validates layout without scanning the image;
 source-over callers are responsible for valid premultiplied destination data.
 
-`context::CanvasRef` and `fixed::context::CanvasRef` provide parallel bounded
+`float::context::CanvasRef` and `fixed::context::CanvasRef` provide parallel bounded
 drawing APIs for the exact-area f32 and Q24.8 pipelines. They retain transform,
 fill rule, flattening, stroke, solid color, and rectangle/mask clip state while
 borrowing the target and bounded scratch storage. `fill_with`, `stroke_with`, and
@@ -229,17 +229,17 @@ Choose the narrowest layer that owns the required state:
 - `Canvas` for ordinary f32 drawing with automatically managed scratch and
   retained path clips;
 - `fixed::Canvas` for ordinary Q24.8 drawing with automatically managed scratch;
-- `context::CanvasRef` or `fixed::context::CanvasRef` when scratch must be bounded
+- `float::context::CanvasRef` or `fixed::context::CanvasRef` when scratch must be bounded
   and supplied by the caller;
-- `canvas::render_*` for direct exact-area f32 rendering;
-- `canvas::render_*_sampled` only as the supersampled reference;
-- `linear` for a premultiplied linear-light working framebuffer;
+- `float::canvas::render_*` for direct exact-area f32 rendering;
+- `float::canvas::render_*_sampled` only as the supersampled reference;
+- `float::linear` for a premultiplied linear-light working framebuffer;
 - `fixed::canvas` for explicit Q24.8 streaming, retained strips, and tiles.
 
 `Canvas::new` allocates its destination, while `Canvas::from_buffer` borrows an
 existing one. It owns reusable raster scratch and grows it transactionally
 before drawing. `CanvasRef` construction takes a
-`context::Workspace` containing caller-owned slices; dash buffers may be empty
+`float::context::Workspace` containing caller-owned slices; dash buffers may be empty
 when dashed strokes are not used.
 
 `Pixmap` is the compact encoded-premultiplied RGBA8 compatibility target;
@@ -282,9 +282,9 @@ The bounded `CanvasRef` and low-level APIs deliberately use a two-stage operatio
 so image-sized storage and lifetime remain visible:
 
 1. Rasterize any path into caller-owned `CoverageMaskMut` with
-   `canvas::rasterize_path_clip` or
+   `float::canvas::rasterize_path_clip` or
    `fixed::canvas::rasterize_path_clip`.
-2. Borrow it with `as_mask()` and pass it to `context::CanvasRef::set_clip_mask`,
+2. Borrow it with `as_mask()` and pass it to `float::context::CanvasRef::set_clip_mask`,
    or to a low-level `render_*_masked` function.
 
 During rendering, shape and mask coverage are multiplied before paint

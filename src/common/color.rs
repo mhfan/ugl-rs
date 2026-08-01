@@ -60,7 +60,7 @@
 #[cfg(feature = "f32")] use crate::float::pow;
 
 /** ```
-    use ugl_rs::color::RGBA;
+    use ugl_rs::common::color::RGBA;
     let cha = [0x11, 0x22, 0x33, 0xFF];
     let rgba = RGBA::<u8>::new(cha[0], cha[1], cha[2], cha[3]);
     assert!(rgba.r == cha[0] && rgba.g == cha[1] && rgba.b == cha[2] && rgba.a == cha[3]);

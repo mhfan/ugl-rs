@@ -1,26 +1,25 @@
 
 use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ugl_rs::{analytic::{BinWorkspace as AnalyticBinWorkspace,
+use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RGBA},
+        dash::{DashContour, DashWorkspace}, edge::{Edge, build_fill_edges},
+        geometry::{Affine, Path, PathBuilder, Point}, raster::{CoverageSink, FillRule},
+        stroke::{LineCap, LineJoin, StrokeContour, StrokePathWorkspace}, Pixmap, SolidPaint,
+        SpreadMode},
+    float::{analytic::{BinWorkspace as AnalyticBinWorkspace,
         Cell as AnalyticCell, CellWorkspace as AnalyticCellWorkspace,
         Intersection as AnalyticIntersection, Workspace as AnalyticWorkspace,
         bin_requirements, build_row_bins, rasterize_edges_binned, rasterize_edges_cells},
-    color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RGBA},
-    dash::{DashContour, DashWorkspace}, float::{dash::{dash_polyline, DashPattern},
-        raster::Intersection},
-    edge::{Edge, build_fill_edges}, flatten::FlattenOptions,
-    raster::{CoverageSink, FillRule},
-    canvas::{RenderOptions, RenderWorkspace, SampledRenderOptions,
-        SampledRenderWorkspace, StrokePathOptions, StrokeWorkspace, Pixmap,
-        render_solid, render_solid_sampled, render_stroke_solid,
-    }, linear::{LinearPixmap, Srgb8Encoder, SRGB8_ENCODE_LUT_SIZE,
-        render_paint as render_paint_linear,
-        render_solid as render_solid_linear},
-    geometry::{Affine, Path, PathBuilder, Point},
-    sampler::{ConicAngleMode, ConicGradient, GradientStop, GradientStops, LinearGradient,
-        LinearPaintSampler, PaintSampler, RadialGradient, SolidPaint, SpreadMode},
-    stroke::{LineCap, LineJoin, StrokeContour, StrokePathWorkspace},
-    float::stroke::{StrokeOptions, flatten_stroke_path, stroke_polyline},
+        dash::{dash_polyline, DashPattern}, raster::Intersection,
+        canvas::{RenderOptions, RenderWorkspace, SampledRenderOptions,
+            SampledRenderWorkspace, StrokePathOptions, StrokeWorkspace,
+            render_solid, render_solid_sampled, render_stroke_solid},
+        linear::{LinearPixmap, Srgb8Encoder, SRGB8_ENCODE_LUT_SIZE,
+            render_paint as render_paint_linear, render_solid as render_solid_linear},
+        sampler::{ConicAngleMode, ConicGradient, GradientStop, GradientStops,
+            LinearGradient, LinearPaintSampler, PaintSampler, RadialGradient},
+        stroke::{StrokeOptions, flatten_stroke_path, stroke_polyline}},
+    flatten::FlattenOptions,
 };
 #[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
 #[derive(Default)] struct SpanStatistics {
@@ -1050,7 +1049,7 @@ fn benchmark_paint(c: &mut Criterion) {
             encode_coverage_tiles, requirements as tile_requirements,
             rasterize_lines_to_tiles},
         }, fixed::Scalar,
-        stroke::{StrokeContour, StrokePathWorkspace},
+        common::stroke::{StrokeContour, StrokePathWorkspace},
     };
 
     let stroke_points: Vec<_> = (0..64).map(|index|

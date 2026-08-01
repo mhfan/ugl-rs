@@ -1,6 +1,6 @@
 //! Linear-light premultiplied framebuffer and analytic compositing path.
 //!
-//! Unlike [`crate::Pixmap`], this target retains `f32` linear-light
+//! Unlike [`crate::common::Pixmap`], this target retains `f32` linear-light
 //! colors through source-over compositing. Encoding and RGBA8 quantization occur
 //! only when [`LinearPixmap::encode_into`] presents into the compatibility
 //! framebuffer.
@@ -8,15 +8,16 @@
 use alloc::vec::Vec;
 use core::convert::Infallible;
 use crate::{
+    common::{Pixmap, RenderError, SolidPaint},
     canvas::{DashedStrokePathOptions, DashedStrokeWorkspace,
         RenderOptions, RenderWorkspace, StrokePathOptions,
-        StrokeWorkspace, Pixmap, RenderError, render_path_to,
+        StrokeWorkspace, render_path_to,
         render_stroke_dashed_to, render_stroke_to},
     color::{LinearPremulRGBA, LinearRGBA, PremulSRGBA8, SRGBA},
     geometry::{Affine, Path, Rect},
     raster::{CoverageMask, CoverageSink, MaskClipSink},
     float::raster::RectClipSink,
-    sampler::{LinearPaintSampler, SolidPaint},
+    sampler::LinearPaintSampler,
 };
 
 pub const SRGB8_ENCODE_LUT_SIZE: usize = 4096;
@@ -93,7 +94,7 @@ impl LinearPixmapData<'_> {
 /// already satisfy the [`LinearPremulRGBA`] invariant.
 ///
 /// ```
-/// use ugl_rs::{linear::LinearPixmap, color::LinearPremulRGBA};
+/// use ugl_rs::{common::color::LinearPremulRGBA, float::linear::LinearPixmap};
 ///
 /// let owned = LinearPixmap::new(2, 1).unwrap();
 /// assert_eq!((owned.stride(), owned.as_pixels().len()), (2, 2));
@@ -691,8 +692,8 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
     }
 
     #[test] fn opaque_sampler_fast_path_matches_source_over_at_full_and_partial_coverage() {
-        use crate::{color::SRGBA as RGBA,
-            sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode}};
+        use crate::{color::SRGBA as RGBA, render::SpreadMode,
+            sampler::{GradientStop, GradientStops, LinearGradient}};
 
         struct Composite<'a, S>(&'a S);
         impl<S: LinearPaintSampler> LinearPaintSampler for Composite<'_, S> {

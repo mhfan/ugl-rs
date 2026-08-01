@@ -3,7 +3,7 @@ use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersectio
         RenderOptions as FloatRenderOptions, RenderWorkspace as FloatRenderWorkspace,
         rasterize_path_clip as rasterize_float_path_clip},
     color::{PremulRGBA, PremulSRGBA8, SRGBA as RGBA}, edge::Edge,
-    geometry::{Affine, PathBuilder}, sampler::SpreadMode};
+    geometry::{Affine, PathBuilder}, render::SpreadMode};
 
 #[test] fn planners_return_exact_capacities_for_fill_stroke_and_dash() {
     use crate::{fixed::{Scalar, dash::Pattern}, stroke::StrokeContour};

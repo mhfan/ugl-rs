@@ -157,9 +157,9 @@ strip IDs, and SIMD layouts do not enter the common `Edge` representation.
 - Compositing is source-over unless explicitly selected otherwise.
 - Coverage multiplies premultiplied source color and alpha.
 - `SRGBA`, `LinearRGBA`, and their premultiplied counterparts make transfer
-  state explicit. `linear::LinearPixmap` retains premultiplied
+  state explicit. `float::linear::LinearPixmap` retains premultiplied
   linear-light `f32` through source-over and encodes only when presenting into
-  RGBA8888. `canvas::Pixmap` remains the compact encoded-domain compatibility
+  RGBA8888. `common::Pixmap` remains the compact encoded-domain compatibility
   and performance path.
 - Linear presentation has two explicit modes: `encode_into` is the exact
   transfer-function reference, while `encode_into_with` uses a caller-owned
@@ -808,7 +808,7 @@ delegates to allocation-free functions. Those low-level functions remain
 public expert APIs for retained coverage, custom sinks, exact capacity
 planning, and applications that keep state elsewhere.
 
-`Canvas` (implemented by `context::Canvas` and re-exported at crate root) and
+`Canvas` (implemented by `float::context::Canvas` and re-exported at crate root) and
 `fixed::Canvas` are the ordinary allocation-backed facades. Each owns and reuses
 backend-specific scratch, performs
 exact planning and any growth before drawing, and then delegates to `CanvasRef`.
@@ -823,7 +823,7 @@ only layout and pixel bytes rather than a raster pipeline object.
 
 The facade uses two concrete, deliberately parallel entry points:
 
-- `context::CanvasRef` selects the analytic f32 geometry/raster path and the encoded
+- `float::context::CanvasRef` selects the analytic f32 geometry/raster path and the encoded
   compatibility compositor.
 - `fixed::context::CanvasRef` selects Q24.8 geometry/rasterization and fixed paint sampling.
   Compatibility `PaintSampler` entry points remain available explicitly but
@@ -849,7 +849,7 @@ The first stable method vocabulary is small:
   storing trait objects or allocating.
 - `stroke_dashed` and `stroke_dashed_with` accept a borrowed validated pattern
   rather than storing it in context state; their additional point/contour
-  buffers are explicit in `context::Workspace`.
+  buffers are explicit in `float::context::Workspace`.
 - clipping is context state, represented as no clip, one rectangle, or one
   borrowed coverage mask. The f32 `Canvas` additionally owns accumulated path
   clips; both owning facades scope their available clip state together with

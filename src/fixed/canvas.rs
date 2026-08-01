@@ -16,7 +16,7 @@ use crate::{
         tile::{CoverageTiles, DirectTileWorkspace, TileKind, rasterize_lines_to_tiles}},
     geometry::{Affine, Path, Point, Rect},
     raster::{CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
-    sampler::SolidPaint,
+    common::SolidPaint,
     stroke::{StrokePathWorkspace, StrokeWorkspaceError},
 };
 fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,

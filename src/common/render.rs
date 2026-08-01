@@ -64,7 +64,7 @@ pub(crate) const BYTES_PER_PIXEL: u32 = 4;
 /// Owned or borrowed premultiplied sRGBA8 pixel storage.
 ///
 /// ```
-/// use ugl_rs::Pixmap;
+/// use ugl_rs::common::Pixmap;
 ///
 /// let owned = Pixmap::new(2, 1).unwrap();
 /// assert_eq!((owned.stride(), owned.as_bytes().len()), (8, 8));

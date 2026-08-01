@@ -30,7 +30,7 @@ impl<T> From<(T, T)> for Point<T> { fn from((x, y): (T, T)) -> Self { Self::new(
 /// Axis-aligned rectangle with ordered, finite-or-orderable boundaries.
 ///
 /// ```
-/// use ugl_rs::geometry::Rect;
+/// use ugl_rs::common::geometry::Rect;
 ///
 /// let rect = Rect::from_ltrb(1.0, 2.0, 3.0, 4.0).unwrap();
 /// assert_eq!((rect.min(), rect.max()), ((1.0, 2.0).into(), (3.0, 4.0).into()));
@@ -60,7 +60,7 @@ impl<T> Rect<T> where T: Copy + PartialOrd {
 /// `x' = a*x + c*y + e`, `y' = b*x + d*y + f`.
 ///
 /// ```
-/// use ugl_rs::geometry::Affine;
+/// use ugl_rs::common::geometry::Affine;
 ///
 /// let transform = Affine::new(2.0, 0.5, -1.0, 3.0, 4.0, -2.0);
 /// assert_eq!(transform.transform_point((3.0, 2.0).into()), (8.0, 5.5).into());
@@ -192,7 +192,7 @@ impl core::fmt::Display for PathError {
 /// repeated [`close`](Self::close) calls are idempotent:
 ///
 /// ```
-/// use ugl_rs::geometry::{PathBuilder, PathSegment};
+/// use ugl_rs::common::geometry::{PathBuilder, PathSegment};
 ///
 /// let mut path = PathBuilder::<f32>::new();
 /// path.close().line_to((1.0, 2.0));

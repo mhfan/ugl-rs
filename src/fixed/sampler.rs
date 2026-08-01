@@ -1,9 +1,10 @@
 //! Paint sampling contracts for the fixed-point rendering backend.
 
 use crate::{color::PremulSRGBA8, fixed::{DEVICE_RAW_LIMIT, Scalar}, geometry::Point,
-    render::GlobalAlphaPaint, sampler::{GradientError, SolidPaint, SpreadMode}};
+    render::GlobalAlphaPaint};
 use super::math::{cordic_turn, integer_sqrt_u64, scaled_integer_sqrt};
 
+use crate::common::{GradientError, SolidPaint, SpreadMode};
 pub use super::math::Angle;
 
 /// Produces encoded premultiplied sRGB at integer device-pixel coordinates.

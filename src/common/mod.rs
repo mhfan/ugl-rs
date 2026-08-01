@@ -8,3 +8,4 @@ pub mod raster;
 pub mod stroke;
 
 pub(crate) mod render;
+pub use render::{GradientError, Pixmap, PixmapError, RenderError, SolidPaint, SpreadMode};

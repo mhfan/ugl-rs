@@ -3,22 +3,17 @@
 
 extern crate alloc;
 
-#[cfg(feature = "f32")] pub mod float;
 pub mod common;
-
-pub use common::{color, dash, edge, geometry, raster, stroke};
-pub(crate) use common::render;
-
-#[cfg(feature = "f32")] pub use float::sampler;
-#[cfg(not(feature = "f32"))] pub mod sampler {
-    pub use crate::render::{GradientError, SolidPaint, SpreadMode};
-}
 pub mod shader;     // reserved for a future optional 3D layer
-
 pub mod flatten;
-#[cfg(feature = "f32")] pub use float::{analytic, canvas, context, linear};
 
-pub use render::{Pixmap, PixmapError, RenderError};
-#[cfg(feature = "f32")] pub use float::Canvas;
-
+#[cfg(feature = "f32")]   pub mod float;
 #[cfg(feature = "fixed")] pub mod fixed;
+
+pub(crate) use common::{color, dash, edge, geometry, raster, render, stroke};
+#[cfg(feature = "f32")] pub(crate) use float::{analytic, canvas, sampler};
+pub(crate) use render::PixmapError;
+
+/// Canvas for the default enabled backend (`f32` takes precedence when both exist).
+#[cfg(feature = "f32")] pub use float::Canvas;
+#[cfg(all(feature = "fixed", not(feature = "f32")))] pub use fixed::Canvas;

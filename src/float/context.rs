@@ -3,11 +3,12 @@
 use alloc::{rc::Rc, vec::Vec};
 use core::convert::Infallible;
 use crate::{
+    common::{Pixmap, RenderError, SolidPaint},
     analytic::Intersection as AnalyticIntersection,
     canvas::{DashedStrokePathOptions, DashedStrokePlanningWorkspace,
         DashedStrokeRequirements, DashedStrokeWorkspace, RenderOptions,
         RenderRequirements, RenderWorkspace, StrokePathOptions, StrokePlanningWorkspace,
-        StrokeRequirements, StrokeWorkspace, Pixmap, RenderError,
+        StrokeRequirements, StrokeWorkspace,
         build_edges, dashed_stroke_requirements as plan_dashed_stroke, edge_region,
         rasterize_built_region,
         render_paint, render_requirements,
@@ -19,7 +20,7 @@ use crate::{
     color::SRGBA, dash::DashContour, edge::Edge, flatten::FlattenOptions,
     float::{dash::DashPattern, stroke::StrokeOptions},
     geometry::{Affine, Path, Point, Rect},
-    raster::{CoverageMask, CoverageSink, FillRule}, sampler::{PaintSampler, SolidPaint},
+    raster::{CoverageMask, CoverageSink, FillRule}, sampler::PaintSampler,
     render::{Clip, DrawState, GlobalAlphaPaint},
     stroke::StrokeContour,
 };
@@ -648,7 +649,7 @@ impl<'target> Canvas<'target> {
     use crate::{analytic::Intersection as AnalyticIntersection,
         edge::Edge, float::dash::DashPattern, geometry::{PathBuilder, Point},
         raster::CoverageMask,
-        sampler::{GradientStop, GradientStops, LinearGradient, SpreadMode},
+        sampler::{GradientStop, GradientStops, LinearGradient}, render::SpreadMode,
         stroke::StrokeContour,
     };
 

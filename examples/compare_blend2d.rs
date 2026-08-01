@@ -3,17 +3,17 @@
 
 use std::{env, fs, hint::black_box, process::ExitCode, time::Instant};
 use ugl_rs::{
-    analytic::{Cell, Intersection},
-    canvas::{Pixmap, RenderOptions, RenderWorkspace, StrokePathOptions, StrokeWorkspace,
+    common::{color::{PremulSRGBA8, SRGBA}, edge::Edge,
+        geometry::{Affine, Path, PathBuilder, Rect},
+        raster::{CoverageMask, CoverageMaskMut},
+        stroke::{LineCap, LineJoin, StrokeContour}, Pixmap, SpreadMode},
+    float::{analytic::{Cell, Intersection},
+    canvas::{RenderOptions, RenderWorkspace, StrokePathOptions, StrokeWorkspace,
         rasterize_path_clip, render_paint, render_solid, render_solid_clipped,
         render_solid_masked, render_stroke_solid},
-    color::{PremulSRGBA8, SRGBA},
-    edge::Edge,
-    geometry::{Affine, Path, PathBuilder, Rect},
-    raster::{CoverageMask, CoverageMaskMut},
     sampler::{ConicAngleMode, ConicGradient, GradientStop, GradientStops,
-        LinearGradient, RadialGradient, SpreadMode},
-    stroke::{LineCap, LineJoin, StrokeContour}, float::stroke::StrokeOptions,
+        LinearGradient, RadialGradient},
+    stroke::StrokeOptions},
 };
 
 const WIDTH: u32 = 256;
@@ -413,8 +413,7 @@ fn run_fixed() -> Result<(), String> {
                 RadialGradient as FixedRadialGradient},
             stroke::Options as FixedStrokeOptions,
         },
-        sampler::SolidPaint,
-        stroke::{StrokeContour, StrokePathWorkspace},
+        common::{SolidPaint, stroke::{StrokeContour, StrokePathWorkspace}},
     };
 
     let warmup = argument("--warmup", 500)?;

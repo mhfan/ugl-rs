@@ -17,7 +17,7 @@ use crate::{
             Trapezoid, Workspace as RasterWorkspace, WorkspaceKind},
         sampler::PaintSampler, stroke::Options as StrokeOptions},
     geometry::{Affine, Path, Point, Rect}, raster::{CoverageMask, FillRule},
-    sampler::SolidPaint, render::{Clip, DrawState, GlobalAlphaPaint},
+    common::SolidPaint, render::{Clip, DrawState, GlobalAlphaPaint},
     stroke::StrokePathWorkspace,
 };
 
