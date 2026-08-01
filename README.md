@@ -313,18 +313,18 @@ benches/blend2d/run.sh /absolute/path/to/blend2d
 
 See [`benches/blend2d/README.md`](benches/blend2d/README.md) for the exact
 scene, timing boundary, sampling protocol, image normalization, and required
-version metadata. The current three-backend baseline was measured on 2026-07-31
-after ugl-rs `3024946`, using Blend2D
+version metadata. The current three-backend baseline was measured on 2026-08-01
+after ugl-rs `d14cdeb`, using Blend2D
 `6dbc2cefbc996379e07104e34519a440b49b15d7`, and AsmJit
 `0bd5787b54b575ed94bf32ac452153b34385c514`, built with Apple Clang 17 and
-rustc 1.97.1 on macOS 15.6 arm64. Nine 2,000-frame samples after 200 warm-up
+rustc 1.97.1 on macOS 15.6 arm64. Nine 5,000-frame samples after 500 warm-up
 frames produced:
 
 | Scene | f32 median | fixed median | Blend2D median | Blend2D vs f32 | fixed vs f32 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 64 fractional rectangles, fill | 117.62 µs | 231.55 µs | 33.87 µs | 3.47× faster | 1.97× slower |
-| 8 gentle cubic arches, fill | 23.30 µs | 30.26 µs | 7.44 µs | 3.13× faster | 1.30× slower |
-| 8 gentle cubic arches, width-6 stroke | 233.70 µs | 285.32 µs | 14.11 µs | 16.56× faster | 1.22× slower |
+| 64 fractional rectangles, fill | 117.97 µs | 235.38 µs | 33.66 µs | 3.50× faster | 2.00× slower |
+| 8 gentle cubic arches, fill | 19.06 µs | 30.79 µs | 8.32 µs | 2.29× faster | 1.62× slower |
+| 8 gentle cubic arches, width-6 stroke | 34.66 µs | 284.75 µs | 14.55 µs | 2.38× faster | 8.22× slower |
 
 | Scene | f32 pixels changed from Blend2D | fixed pixels changed from f32 | fixed mean/max error from f32 |
 | --- | ---: | ---: | ---: |
@@ -343,16 +343,17 @@ The harness explicitly aligns butt caps, miter-bevel joins, and miter limit 4,
 since Blend2D's default miter-clip join does not match ugl-rs. More strongly
 inflected cubic strokes currently make the fixed backend return
 `CrossingEdges`; they remain a production-reliability task rather than being
-timed as if all backends supported the same input. The stroke result still
-identifies the largest whole-pipeline performance gap: ugl-rs flattens curves
-and constructs a polygonal outline on every draw, while Blend2D uses its
-production stroker and JIT raster pipeline. Gradients, clipping, memory, and
-cold-start/JIT cost require separate matched scenes.
+timed as if all backends supported the same input. Stroke still includes curve
+flattening and outline construction on every draw, while Blend2D uses its
+production stroker and JIT raster pipeline, but compact outline emission has
+moved this scene within 2.38×. The repeated-rectangle fill is now the largest
+matched gap. Gradients, clipping, memory, and cold-start/JIT cost require
+separate matched scenes.
 
 #### f32 stroke stage profile
 
 The matched gentle cubic stroke expands to 65 centerline points, one contour,
-and 480 directed outline edges. Run its internal stage profile with:
+and 130 directed outline edges. Run its internal stage profile with:
 
 ```text
 cargo bench --bench raster --all-features -- stroke_stages_f32
@@ -363,16 +364,16 @@ measurement produced these central estimates:
 
 | Stage | Time |
 | --- | ---: |
-| centerline curve flatten | 1.72 µs |
-| stroke outline expansion | 1.77 µs |
-| sparse row bin construction | 6.88 µs |
-| analytic coverage integration and run emission | 320.32 µs initial; 221.18 µs integer-slab; about 97 µs sparse cells |
-| complete clear + stroke + encoded composite | about 113 µs with sparse cells |
+| centerline curve flatten | 1.83 µs |
+| stroke outline expansion | 0.96 µs |
+| sparse row bin construction | 1.16 µs |
+| analytic coverage integration and run emission | 22.52 µs sparse cells |
+| analytic coverage plus encoded blending | 29.91 µs |
+| complete clear + flatten + stroke + encoded composite | 34.66 µs |
 
 The independently measured stages are not strictly additive, but they locate
-the dominant cost: flatten, outline, and binning total only about 10.4 µs,
-whereas the former integer-slab coverage consumed roughly 87% of the complete
-draw. A prepared-stroke
+the dominant cost: flatten, outline, and binning total about 4 µs, while
+coverage plus encoded blending remains about 30 µs. A prepared-stroke
 API can still remove repeated geometry work for retained content, but it cannot
 close the measured Blend2D gap by itself. Active-edge processing, slab event
 handling, area integration, and emitted-run cost therefore take priority;
@@ -428,6 +429,19 @@ Newly activated edges are now inserted only from the appended suffix because
 the retained active prefix is already ordered. This leaves short-edge churn
 near 41 µs while reducing representative stroke coverage to about 89 µs and
 coverage plus encoded blending to about 95 µs.
+
+The next structural change removed the largest stroke-specific multiplier.
+Previously every centerline segment body and join was emitted as an independent
+closed polygon, producing 480 overlapping edges for the matched scene. Open
+non-degenerate strokes now emit their two sides, joins, and caps as one boundary
+contour, including butt, square, round, bevel, and miter variants. The scene now
+uses 130 edges; row binning fell to about 1.16 µs, sparse-cell coverage to about
+22.52 µs, and the complete draw to 34.66 µs. The same-host Blend2D gap therefore
+fell from 7.4× immediately before this change to 2.38×. A fresh Time Profiler
+trace attributes about 79% of the remaining samples to analytic rasterization,
+6% to solid blending, 3.5% to curve flattening, 2.5% to outline construction,
+and roughly 1% to row-bin sorting. Further work should target coverage math and
+batching rather than more row-bin sorting special cases.
 
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the

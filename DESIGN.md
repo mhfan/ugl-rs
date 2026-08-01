@@ -393,11 +393,14 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   equivalent semantics and proven code generation. Platform-specific
   acceleration must not change the ABI or silently enable incompatible rustc
   target features.
-- The matched 8-cubic stroke expands to 65 centerline points and 480 edges.
-  Stage benchmarks put flatten, outline expansion, and row binning near 10 µs
-  combined versus roughly 320 µs for coverage and 367 µs end to end. Prepared
-  stroke remains useful for retained content, but active-edge/slab integration
-  is the first optimization target for the measured desktop gap.
+- Open non-degenerate strokes emit one boundary contour instead of independent
+  overlapping segment and join polygons. The matched 8-cubic stroke therefore
+  expands to 65 centerline points and 130 rather than 480 edges. Current stage
+  measurements put flatten, outline expansion, and row binning near 4 µs
+  combined, sparse-cell coverage near 22.5 µs, coverage plus encoded blending
+  near 29.9 µs, and the complete draw near 34.7 µs. Blend2D measures 14.6 µs
+  on the same harness. Prepared stroke remains useful for retained content,
+  but analytic coverage math and batching dominate the remaining desktop gap.
 - An independent analytic-cell prototype now stops slabs only at edge starts,
   ends, and real crossings; clips each boundary trapezoid analytically; records
   guaranteed-full intervals with two range deltas; and combines the prefix scan
@@ -408,7 +411,7 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   16-edge rows from about 148 us to 109 us, versus 105 us for the primary path.
   Churning short vertical edges are statistically even, while a 32-edge
   crossing scene fell from about 1.97 ms to 283 us and the representative
-  480-edge stroke coverage stage from about 218 us to 97 us. End-to-end solid
+  former 480-edge stroke coverage stage from about 218 us to 97 us. End-to-end solid
   compositing retained the gain, and the f32 Canvas now uses this path with an
   explicit one-`Cell`-per-column workspace. That doubles row scratch from four
   to eight bytes per target column. Per-row dirty x bounds now restrict later
@@ -419,7 +422,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   access. The production path now preserves ordering across rows and slabs,
   sorting only after activation, a real crossing, or a linear check detects a
   numerically coalesced crossing; representative stroke coverage fell again
-  from about 97 us to 90 us without changing output.
+  from about 97 us to 90 us without changing output. Compact single-contour
+  stroke expansion subsequently reduced that scene to 130 edges, about 22.5 us
+  of coverage, and about 34.7 us end to end; row-bin sorting is now only about
+  1% of the sampled draw.
   Coalesced pairs that still reverse within a slab use a cold split-integral
   path so `|right - left|` is integrated correctly for self-intersections;
   ordinary spans retain the compact fast loop (about 96 us after this guard).
