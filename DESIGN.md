@@ -501,6 +501,11 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   fill-span traversal through a closure helper regressed current end-to-end
   rectangle and stroke diagnostics by roughly 2–3%. These hot loops stay
   specialized until code-generation evidence changes.
+- A fixed conic `sample_span` that hoisted coordinate checks and incremented
+  raw x regressed the synchronized draw from 386.78 to 424.40 µs. Isolated
+  Fast-angle span traversal was also slower than the fully inlined point loop.
+  The callback-shaped specialization is therefore rejected; future conic work
+  must fuse sampling with composition or prove a batch representation first.
 
 ## Implementation rules
 
