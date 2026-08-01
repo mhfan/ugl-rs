@@ -7,5 +7,4 @@ pub mod geometry;
 pub mod raster;
 pub mod stroke;
 
-pub(crate) mod paint;
 pub(crate) mod render;

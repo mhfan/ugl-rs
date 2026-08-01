@@ -17,7 +17,7 @@
 
 use crate::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA},
     float::{atan2, floor, sqrt}, geometry::{Affine, Point}};
-pub use crate::paint::{GradientError, SolidPaint, SpreadMode};
+pub use crate::render::{GradientError, SolidPaint, SpreadMode};
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
 /// Implementations should be small values borrowed by the compositor. Calls are

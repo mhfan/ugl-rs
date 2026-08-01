@@ -7,13 +7,13 @@ extern crate alloc;
 pub mod common;
 
 pub use common::{color, dash, edge, geometry, raster, stroke};
-pub(crate) use common::{paint, render};
+pub(crate) use common::render;
 
 #[cfg(feature = "f32")] pub mod blend; // color blending & alpha compositing
 
 #[cfg(feature = "f32")] pub use float::sampler;
 #[cfg(not(feature = "f32"))] pub mod sampler {
-    pub use crate::paint::{GradientError, SolidPaint, SpreadMode};
+    pub use crate::render::{GradientError, SolidPaint, SpreadMode};
 }
 pub mod shader;     // reserved for a future optional 3D layer
 
