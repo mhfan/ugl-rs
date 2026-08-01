@@ -474,7 +474,7 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
     fn from(color: RGBA<f32>) -> Self { color.premul() }
 }
 
-#[cfg(all(test, feature = "f32"))] mod tests { use super::*;
+#[cfg(test)] mod tests { use super::*;
     #[test] fn slice_conversion_checks_length() {
         assert!(RGBA::<u8>::try_from(&[][..]).is_err());
         assert!(RGBA::<u8>::try_from(&[1, 2][..]).is_err());
@@ -489,8 +489,6 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
         assert_eq!(RGBA::<u8>::from(white16), white8);
         assert_eq!(RGBA::<u8>::from(RGBA::new(128_u16, 255, 32_768, 65_535)),
                    RGBA::new(0, 1, 128, 255));
-        assert_eq!(RGBA::<u8>::from(RGBA::new(-1.0, 0.5, 2.0, f32::NAN)),
-                   RGBA::new(0, 128, 255, 0));
     }
 
     #[test] fn premultiplication_preserves_opaque_channels() {
@@ -519,8 +517,6 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
 
         let transparent: PremulRGBA<u8> = (200, 100, 50, 0).into();
         assert_eq!(transparent.unpremul(), RGBA::zeroed());
-        assert_eq!(RGBA::<f32>::new(0.4, 0.2, 0.1, 0.5).premul().unpremul(),
-                          RGBA::new(0.4, 0.2, 0.1, 0.5));
     }
 
     #[test] fn packed_values_are_numeric_and_endian_independent() {
@@ -541,48 +537,57 @@ impl From<RGBA<f32>> for PremulRGBA<f32> {
         assert_eq!(PremulSRGBA8::new(101, 50, 25, 100), None);
         let clamped: PremulRGBA<u8> = (200, 100, 50, 80).into();
         assert_eq!(clamped.to_array(), [80, 80, 50, 80]);
-        assert_eq!(PremulRGBA::new(f32::NAN, 0.0, 0.0, 1.0), None);
     }
 
-    #[test] fn explicit_srgb_boundaries_use_the_standard_transfer_function() {
-        assert!((srgb_decode(0.5) - 0.214_041_14).abs() < 1e-6);
-        assert!((srgb_decode(0.04045) - 0.003_130_805).abs() < 1e-7);
-        assert!((srgb_encode(0.003_130_8) - 0.040_449_936).abs() < 1e-7);
+    #[cfg(feature = "f32")] mod float_tests { use super::*;
+        #[test] fn conversions_clamp_non_finite_and_out_of_range_channels() {
+            assert_eq!(RGBA::<u8>::from(RGBA::new(-1.0, 0.5, 2.0, f32::NAN)),
+                       RGBA::new(0, 128, 255, 0));
+            assert_eq!(RGBA::<f32>::new(0.4, 0.2, 0.1, 0.5).premul().unpremul(),
+                       RGBA::new(0.4, 0.2, 0.1, 0.5));
+            assert_eq!(PremulRGBA::new(f32::NAN, 0.0, 0.0, 1.0), None);
+        }
 
-        let encoded = SRGBA::new(128, 64, 32, 96);
-        let linear = encoded.to_linear();
-        assert!((linear.to_array()[3] - 96.0 / 255.0).abs() < f32::EPSILON);
-        let restored = linear.to_srgba8();
-        assert_eq!(restored, encoded);
-        assert_eq!(encoded.premul_encoded().to_array(), [48, 24, 12, 96]);
-        let linear_premul = linear.premul();
-        assert_eq!(linear_premul.unpremul().to_srgba8(), encoded);
+        #[test] fn explicit_srgb_boundaries_use_the_standard_transfer_function() {
+            assert!((srgb_decode(0.5) - 0.214_041_14).abs() < 1e-6);
+            assert!((srgb_decode(0.04045) - 0.003_130_805).abs() < 1e-7);
+            assert!((srgb_encode(0.003_130_8) - 0.040_449_936).abs() < 1e-7);
 
-        let half_linear = LinearRGBA::new(0.5, 0.5, 0.5, 1.0).to_srgba8();
-        assert_eq!(half_linear.to_array(), [188, 188, 188, 255]);
-    }
+            let encoded = SRGBA::new(128, 64, 32, 96);
+            let linear = encoded.to_linear();
+            assert!((linear.to_array()[3] - 96.0 / 255.0).abs() < f32::EPSILON);
+            let restored = linear.to_srgba8();
+            assert_eq!(restored, encoded);
+            assert_eq!(encoded.premul_encoded().to_array(), [48, 24, 12, 96]);
+            let linear_premul = linear.premul();
+            assert_eq!(linear_premul.unpremul().to_srgba8(), encoded);
 
-    #[test] fn linear_premultiplied_arithmetic_preserves_its_invariant() {
-        let mut state = 0x243F_6A88_u32;
-        let mut next = || {
-            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            (state >> 8) as f32 / 0x00FF_FFFF_u32 as f32
-        };
-        let valid = |color: LinearPremulRGBA<f32>| {
-            let [r, g, b, a] = color.to_array();
-            [r, g, b, a].into_iter().all(|channel|
-                channel.is_finite() && (0.0..=1.0).contains(&channel))
-                && r <= a && g <= a && b <= a
-        };
+            let half_linear = LinearRGBA::new(0.5, 0.5, 0.5, 1.0).to_srgba8();
+            assert_eq!(half_linear.to_array(), [188, 188, 188, 255]);
+        }
 
-        for _ in 0..4096 {
-            let (a, b) = (next(), next());
-            let lhs = LinearPremulRGBA::new(next() * a, next() * a, next() * a, a).unwrap();
-            let rhs = LinearPremulRGBA::new(next() * b, next() * b, next() * b, b).unwrap();
-            let (factor, t) = (next(), next());
-            assert!(valid(lhs.scale(factor)));
-            assert!(valid(lhs.src_over(rhs)));
-            assert!(valid(lhs.lerp(rhs, t)));
+        #[test] fn linear_premultiplied_arithmetic_preserves_its_invariant() {
+            let mut state = 0x243F_6A88_u32;
+            let mut next = || {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 8) as f32 / 0x00FF_FFFF_u32 as f32
+            };
+            let valid = |color: LinearPremulRGBA<f32>| {
+                let [r, g, b, a] = color.to_array();
+                [r, g, b, a].into_iter().all(|channel|
+                    channel.is_finite() && (0.0..=1.0).contains(&channel))
+                    && r <= a && g <= a && b <= a
+            };
+
+            for _ in 0..4096 {
+                let (a, b) = (next(), next());
+                let lhs = LinearPremulRGBA::new(next() * a, next() * a, next() * a, a).unwrap();
+                let rhs = LinearPremulRGBA::new(next() * b, next() * b, next() * b, b).unwrap();
+                let (factor, t) = (next(), next());
+                assert!(valid(lhs.scale(factor)));
+                assert!(valid(lhs.src_over(rhs)));
+                assert!(valid(lhs.lerp(rhs, t)));
+            }
         }
     }
 

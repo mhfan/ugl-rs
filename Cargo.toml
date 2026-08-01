@@ -34,6 +34,15 @@ criterion = "0.8"
 [[bench]]
 name = "raster"
 harness = false
+required-features = [ "f32" ]
+
+[[example]]
+name = "compare_blend2d"
+required-features = [ "f32" ]
+
+[[test]]
+name = "render_baseline"
+required-features = [ "f32" ]
 
 [profile.dev]
 #debug = 'none'
