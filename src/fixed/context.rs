@@ -5,8 +5,8 @@ use crate::{
     common::{color::SRGBA, dash::DashContour,
         geometry::{Affine, Edge, Path, Point, Rect},
         raster::{CoverageMask, FillRule, MaskKind, SparseCoverageSink, SparseStorage,
-            finish_sparse_coverage, intersect_sparse_masks, multiply_sparse_mask,
-            push_sparse_run},
+            clip_sparse_bounds, finish_sparse_coverage, intersect_sparse_masks,
+            multiply_sparse_mask},
         render::{Clip, DrawState, GlobalAlphaPaint},
         stroke::{StrokeContour, StrokePathWorkspace},
         Pixmap, PixmapError, RenderError, SolidPaint},
@@ -289,31 +289,11 @@ fn clip_sparse_rect(strips: &[CoverageStrip], runs: &[CoverageRun],
         (raw.div_euclid(SCALE) + (raw.rem_euclid(SCALE) != 0) as i64)
             .clamp(0, i64::from(limit)) as u32
     };
-    let (x0, y0, x1, y1) = (lower(rect.left(), width), lower(rect.top(), height),
+    let bounds = (lower(rect.left(), width), lower(rect.top(), height),
         upper(rect.right(), width), upper(rect.bottom(), height));
-    let (mut clipped_strips, mut clipped_runs) = (
-        Vec::with_capacity(strips.len()), Vec::<CoverageRun>::with_capacity(runs.len()));
-    for strip in strips {
-        let start = strip.run_start as usize;
-        for run in &runs[start..start + strip.run_count as usize] {
-            let y = strip.y + u32::from(run.row);
-            if y < y0 || y >= y1 { continue; }
-            let (start, end) = (run.x.max(x0), (run.x + run.len).min(x1));
-            if start >= end { continue; }
-            let clipped = |x| ((u64::from(run.coverage) * rect_pixel_area(rect, x, y) +
-                32_768) / 65_536) as u8;
-            push_sparse_run(&mut clipped_strips, &mut clipped_runs,
-                y, start, 1, clipped(start));
-            if end > start + 2 {
-                push_sparse_run(&mut clipped_strips, &mut clipped_runs,
-                    y, start + 1, end - start - 2, clipped(start + 1));
-            }
-            if end > start + 1 {
-                push_sparse_run(&mut clipped_strips, &mut clipped_runs,
-                    y, end - 1, 1, clipped(end - 1));
-            }
-        }
-    }
+    let (clipped_strips, clipped_runs) = clip_sparse_bounds(
+        strips, runs, bounds, |coverage, x, y|
+            ((u64::from(coverage) * rect_pixel_area(rect, x, y) + 32_768) / 65_536) as _);
     if clipped_runs.is_empty() { CanvasClip::Empty } else { CanvasClip::Sparse {
         strips: Rc::new(clipped_strips), runs: Rc::new(clipped_runs), width, height,
     } }

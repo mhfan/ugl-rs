@@ -168,6 +168,35 @@ pub(crate) fn intersect_sparse_masks(left_strips: &[CoverageStrip],
     (strips, runs)
 }
 
+pub(crate) fn clip_sparse_bounds(strips: &[CoverageStrip], runs: &[CoverageRun],
+    bounds: (u32, u32, u32, u32), coverage: impl Fn(u8, u32, u32) -> u8) ->
+    (Vec<CoverageStrip>, Vec<CoverageRun>) {
+    let (x0, y0, x1, y1) = bounds;
+    let (mut clipped_strips, mut clipped_runs) =
+        (Vec::with_capacity(strips.len()), Vec::with_capacity(runs.len()));
+    for strip in strips {
+        let start = strip.run_start as usize;
+        for run in &runs[start..start + strip.run_count as usize] {
+            let y = strip.y + u32::from(run.row);
+            if y < y0 || y >= y1 { continue; }
+            let (start, end) = (run.x.max(x0), (run.x + run.len).min(x1));
+            if start >= end { continue; }
+            push_sparse_run(&mut clipped_strips, &mut clipped_runs,
+                y, start, 1, coverage(run.coverage, start, y));
+            if end > start + 2 {
+                push_sparse_run(&mut clipped_strips, &mut clipped_runs,
+                    y, start + 1, end - start - 2,
+                    coverage(run.coverage, start + 1, y));
+            }
+            if end > start + 1 {
+                push_sparse_run(&mut clipped_strips, &mut clipped_runs,
+                    y, end - 1, 1, coverage(run.coverage, end - 1, y));
+            }
+        }
+    }
+    (clipped_strips, clipped_runs)
+}
+
 pub(crate) fn multiply_sparse_mask(data: &mut [u8],
     region: (u32, u32, u32, u32), stride: u32,
     strips: &[CoverageStrip], runs: &[CoverageRun]) {
