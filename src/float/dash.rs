@@ -13,7 +13,7 @@ use crate::float::{fmod, sqrt};
 /// negative phases are normalized into the resulting cycle:
 ///
 /// ```
-/// use ugl_rs::dash::{DashPattern, DashPatternError};
+/// use ugl_rs::float::dash::{DashPattern, DashPatternError};
 ///
 /// let pattern = DashPattern::new(&[2.0, 1.0, 3.0], -1.0).unwrap();
 /// assert_eq!((pattern.cycle(), pattern.phase()), (12.0, 11.0));

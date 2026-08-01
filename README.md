@@ -181,6 +181,13 @@ modules use concise names such as `fixed::raster::Workspace`,
 `fixed::stroke::Options`, `fixed::Canvas`, and `fixed::CanvasRef`; no legacy crate-root
 backend aliases are retained.
 
+Source ownership follows backend boundaries: `src/common/` contains generic
+geometry and backend-neutral color, coverage, target, and workspace protocols;
+`src/float/` owns f32 math, edges, dash/stroke expansion, rasterization,
+sampling, and facades; `src/fixed/` owns the corresponding Q24.8 pipeline.
+Feature gates therefore live primarily at backend module boundaries instead of
+being repeated around individual f32 functions in shared files.
+
 Both exact-area f32 and Q24.8 fixed paths rasterize arbitrary path clips into
 caller-owned `CoverageMaskMut` storage. A borrowed `CoverageMask` can then be
 reused by fill, stroke, dash, streaming, retained-strip, or retained-tile
@@ -194,8 +201,8 @@ The fixed execution contract is deliberately per entry point:
 | geometry, flattening, stroke, dash, raster, strip/tile encoding | yes |
 | `fixed::sampler::*` solid/linear/radial/conic paint | yes |
 | path-mask production and native mask composition | yes |
-| `fixed::Canvas` or `fixed::CanvasRef` with native paint and no clip/mask clip | yes |
-| rectangle clipping | no; the shared antialiased rectangle adapter uses `f32` |
+| `fixed::Canvas` or `fixed::CanvasRef` with native paint and rectangle/mask clip | yes |
+| rectangle clipping | yes; API coordinates and antialiased coverage use Q24.8/integer arithmetic |
 | compatibility entry points accepting `sampler::PaintSampler` | no |
 
 “Fixed backend” therefore describes geometry and coverage representation; a

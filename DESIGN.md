@@ -185,9 +185,9 @@ strip IDs, and SIMD layouts do not enter the common `Edge` representation.
   functional backend parity without claiming FPU-free paint evaluation:
   existing gradient samplers remain `f32`.
 - `fixed::sampler::PaintSampler` is the explicit no-FPU contract.
-  A complete no-FPU draw additionally requires no clip or a native fixed path
-  mask. The shared antialiased rectangle adapter remains an explicitly
-  documented f32 compatibility path.
+  Fixed rectangle clips accept `Rect<fixed::Scalar>`, restrict rasterization to
+  conservative integer bounds, and multiply boundary coverage in Q24.8/integer
+  arithmetic. Native fixed path masks are also no-FPU.
   `fixed::sampler::LinearGradient` accepts Q24.8 endpoints and a caller-owned
   encoded ramp. It uses `i64`
   coordinate deltas and exact `i128` projection, spread mapping, and nearest
@@ -736,6 +736,12 @@ and consumption remain allocation-free and no-FPU.
 
 The explicit backend split is implemented with these contracts:
 
+- `src/common/` owns generic geometry plus backend-neutral color, target,
+  coverage, and workspace protocols; it must not contain nested backend
+  implementations;
+- `src/float/` owns f32 math, edge preparation, dash/stroke expansion,
+  rectangle clipping, rasterization, paint, and facades; `src/fixed/` owns the
+  Q24.8 equivalents;
 - an f32 feature gates the analytic rasterizer, floating stroke/dash/paint
   implementations, their public entry points, tests, examples, and benchmarks;
 - `fixed` alone provides a complete renderer and compiles without floating
