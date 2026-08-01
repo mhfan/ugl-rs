@@ -524,11 +524,10 @@ pub(crate) fn rasterize_lines_region<S>(lines: &[Line], width: u32, height: u32,
                     &mut workspace.segments[..active_count], false);
             }
             let segments = &mut workspace.segments[..active_count];
-            let trapezoid_count = if next == vertex_boundary && !snap_top && !snap_bottom {
-                collect_ordered_trapezoids(segments, fill_rule, workspace.trapezoids)
-            } else {
-                collect_trapezoids(segments, fill_rule, workspace.trapezoids)
-            }.map_err(RenderError::Raster)?;
+            let ordered = next == vertex_boundary && !snap_top && !snap_bottom;
+            let trapezoid_count = collect_raster_trapezoids(
+                segments, fill_rule, workspace.trapezoids, ordered)
+                .map_err(RenderError::Raster)?;
             if top.to_bits() == extent(y) as i32 && next == bottom &&
                 emit_disjoint_trapezoids(&workspace.trapezoids[..trapezoid_count],
                     x0, x1, y, sink)? {
@@ -1021,6 +1020,29 @@ fn collect_ordered_trapezoids(segments: &[Segment], fill_rule: FillRule,
     walk_trapezoids(segments, fill_rule, |left, right| {
         output[count] = Trapezoid { left, right };  count += 1;
     });     Ok(count)
+}
+
+/// Single-pass variant for the raster loop, whose workspace validation has
+/// already reserved at least `segments.len().div_ceil(2)` trapezoids.
+fn collect_raster_trapezoids(segments: &mut [Segment], fill_rule: FillRule,
+    output: &mut [Trapezoid], ordered: bool) -> Result<usize, Error> {
+    if !ordered {
+        segments.sort_unstable_by(|left, right| left.top_x.cmp_x(&right.top_x)
+            .then_with(|| left.bottom_x.cmp_x(&right.bottom_x)));
+    }
+    if segments.windows(2).any(|pair|
+        pair[0].bottom_x.cmp_x(&pair[1].bottom_x).is_gt()) {
+        return Err(Error::CrossingEdges);
+    }
+
+    debug_assert!(output.len() >= segments.len().div_ceil(2));
+    let mut count = 0;
+    let winding = walk_trapezoids(segments, fill_rule, |left, right| {
+        output[count] = Trapezoid { left, right };
+        count += 1;
+    });
+    if winding != 0 { return Err(Error::UnbalancedWinding); }
+    Ok(count)
 }
 
 fn walk_trapezoids<F>(segments: &[Segment], fill_rule: FillRule, mut emit: F) -> i32
