@@ -104,7 +104,7 @@ use crate::float::{floor, sqrt};
 }
 
 pub type CompOp = BlendMode;
-pub use crate::color::{PremulRGBA, RGBA};
+use crate::color::{PremulRGBA, RGBA};
 
 /* impl RGBA<u8> {
     /// Composite: ao x Co = αs x Fa x Cs + αb x Fb x Cb, ao = αs x Fa + αb x Fb;
@@ -130,7 +130,7 @@ pub use crate::color::{PremulRGBA, RGBA};
 } */
 
 /** ```
-    use ugl_rs::float::blend::RGBA;
+    use ugl_rs::common::color::RGBA;
     let draw = RGBA::<f32>::new(0.3, 0.2, 0.1, 1.0).premul();
     let back = RGBA::<f32>::new(0.2, 0.4, 0.7, 1.0).premul();
 

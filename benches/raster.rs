@@ -2,7 +2,7 @@
 use std::hint::black_box;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RGBA},
-        dash::{DashContour, DashWorkspace}, edge::{Edge, build_fill_edges},
+        dash::{DashContour, DashWorkspace}, edge::Edge,
         geometry::{Affine, Path, PathBuilder, Point}, raster::{CoverageSink, FillRule},
         stroke::{LineCap, LineJoin, StrokeContour, StrokePathWorkspace}, Pixmap, SolidPaint,
         SpreadMode},
@@ -10,7 +10,8 @@ use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RG
         Cell as AnalyticCell, CellWorkspace as AnalyticCellWorkspace,
         Intersection as AnalyticIntersection, Workspace as AnalyticWorkspace,
         bin_requirements, build_row_bins, rasterize_edges_binned, rasterize_edges_cells},
-        dash::{dash_polyline, DashPattern}, raster::Intersection,
+        dash::{dash_polyline, DashPattern}, flatten::{FlattenOptions, build_fill_edges},
+        raster::Intersection,
         canvas::{RenderOptions, RenderWorkspace, SampledRenderOptions,
             SampledRenderWorkspace, StrokePathOptions, StrokeWorkspace,
             render_solid, render_solid_sampled, render_stroke_solid},
@@ -19,7 +20,6 @@ use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RG
         sampler::{ConicAngleMode, ConicGradient, GradientStop, GradientStops,
             LinearGradient, LinearPaintSampler, PaintSampler, RadialGradient},
         stroke::{StrokeOptions, flatten_stroke_path, stroke_polyline}},
-    flatten::FlattenOptions,
 };
 #[derive(Default)] struct RunCounter { runs: u32, pixels: u32 }
 #[derive(Default)] struct SpanStatistics {

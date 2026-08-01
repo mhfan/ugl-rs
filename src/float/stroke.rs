@@ -2,7 +2,7 @@
 
 use core::f32::consts::{FRAC_PI_2, PI};
 use crate::{edge::{Edge, EdgeSink}, float::{acos, atan2, ceil, cos, sin, sqrt},
-    geometry::{Affine, Path, Point}, flatten::{flatten_path, FlattenError, FlattenOptions},
+    geometry::{Affine, Path, Point}, float::flatten::{flatten_path, FlattenError, FlattenOptions},
     stroke::{FlattenedStrokePath, LineCap, LineJoin, StrokePathWorkspace,
         StrokeWorkspaceError, flatten_stroke_path_with}};
 

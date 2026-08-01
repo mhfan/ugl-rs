@@ -1,6 +1,7 @@
 //! Allocation-free curve flattening for the `f32` reference backend.
 
-use crate::geometry::{Affine, Path, PathError, PathSegment, Point, Scalar};
+use crate::{common::edge::{EdgeSink, FillEdgeBuilder, LineSink},
+    geometry::{Affine, Path, PathError, PathSegment, Point}};
 
 const STACK_CAPACITY: usize = 32;
 
@@ -16,25 +17,6 @@ impl Default for FlattenOptions {
     fn default() -> Self { Self { tolerance: 0.25, max_depth: 16 } }
 }
 
-pub trait LineSink<T = Scalar> { type Error;
-    fn begin_subpath(&mut self, _: Point<T>) -> Result<(), Self::Error> { Ok(()) }
-
-    fn line(&mut self, from: Point<T>, to: Point<T>) -> Result<(), Self::Error>;
-
-    /// Reports an explicit path close after its closing line has been emitted.
-    fn close_subpath(&mut self) -> Result<(), Self::Error> { Ok(()) }
-
-    fn end_subpath(&mut self) -> Result<(), Self::Error> { Ok(()) }
-}
-
-impl<T, E, F> LineSink<T> for F where F: FnMut(Point<T>, Point<T>) -> Result<(), E> {
-    type Error = E;
-
-    fn line(&mut self, from: Point<T>, to: Point<T>) -> Result<(), Self::Error> {
-        self(from, to)
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FlattenError<E> {
     InvalidTolerance,
@@ -43,6 +25,12 @@ pub enum FlattenError<E> {
     DepthLimit,
     InvalidPath(PathError),
     Sink(E),
+}
+
+/// Flattens an f32 path and emits normalized fill edges.
+pub fn build_fill_edges<S>(path: &Path, transform: Affine, options: FlattenOptions,
+    sink: &mut S) -> Result<(), FlattenError<S::Error>> where S: EdgeSink {
+    flatten_path(path, transform, options, &mut FillEdgeBuilder::new(sink))
 }
 
 pub fn flatten_path<S>(path: &Path, transform: Affine, options: FlattenOptions,

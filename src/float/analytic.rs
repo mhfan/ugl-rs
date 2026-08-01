@@ -924,10 +924,11 @@ fn integrate_partial_span(left: &Intersection, right: &Intersection,
 #[cfg(test)] mod tests { use super::*;
     use alloc::{vec, vec::Vec};
     use core::convert::Infallible;
-    use crate::{flatten::FlattenOptions, geometry::{Affine, PathBuilder},
+    use crate::{float::flatten::{FlattenOptions, build_fill_edges},
+        geometry::{Affine, PathBuilder},
         raster::FillRule, float::raster::{rasterize_edges as rasterize_edges_sampled,
             Intersection as SampledIntersection, RasterOptions, RasterWorkspace},
-        edge::{build_fill_edges, Edge},
+        edge::Edge,
     };
 
     fn edges(builder: PathBuilder) -> Vec<Edge> {

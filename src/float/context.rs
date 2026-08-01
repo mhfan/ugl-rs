@@ -17,7 +17,7 @@ use crate::{
         render_stroke_paint_dashed_masked,
         render_stroke_paint, render_stroke_paint_clipped,
         render_stroke_paint_masked},
-    color::SRGBA, dash::DashContour, edge::Edge, flatten::FlattenOptions,
+    color::SRGBA, dash::DashContour, edge::Edge, float::flatten::FlattenOptions,
     float::{dash::DashPattern, stroke::StrokeOptions},
     geometry::{Affine, Path, Point, Rect},
     raster::{CoverageMask, CoverageSink, FillRule}, sampler::PaintSampler,

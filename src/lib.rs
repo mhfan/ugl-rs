@@ -5,7 +5,6 @@ extern crate alloc;
 
 pub mod common;
 pub mod shader;     // reserved for a future optional 3D layer
-pub mod flatten;
 
 #[cfg(feature = "f32")]   pub mod float;
 #[cfg(feature = "fixed")] pub mod fixed;

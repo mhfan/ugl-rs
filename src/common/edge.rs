@@ -1,8 +1,26 @@
 //! Directed fill edges produced from flattened paths.
 
 use core::cmp::Ordering;
-use crate::{geometry::{Affine, Path, Point, Scalar},
-    flatten::{flatten_path, FlattenError, FlattenOptions, LineSink}};
+use crate::geometry::{Point, Scalar};
+
+pub trait LineSink<T = Scalar> { type Error;
+    fn begin_subpath(&mut self, _: Point<T>) -> Result<(), Self::Error> { Ok(()) }
+
+    fn line(&mut self, from: Point<T>, to: Point<T>) -> Result<(), Self::Error>;
+
+    /// Reports an explicit path close after its closing line has been emitted.
+    fn close_subpath(&mut self) -> Result<(), Self::Error> { Ok(()) }
+
+    fn end_subpath(&mut self) -> Result<(), Self::Error> { Ok(()) }
+}
+
+impl<T, E, F> LineSink<T> for F where F: FnMut(Point<T>, Point<T>) -> Result<(), E> {
+    type Error = E;
+
+    fn line(&mut self, from: Point<T>, to: Point<T>) -> Result<(), Self::Error> {
+        self(from, to)
+    }
+}
 
 /// A non-horizontal edge normalized to increasing device-space `y`.
 ///
@@ -30,15 +48,6 @@ pub trait EdgeSink<T = Scalar> {    type Error;
 impl<T, E, F> EdgeSink<T> for F where F: FnMut(Edge<T>) -> Result<(), E> {
     fn edge(&mut self, edge: Edge<T>) -> Result<(), Self::Error> { self(edge) }
     type Error = E;
-}
-
-/// Flattens a path and emits edges suitable for filling.
-///
-/// Every subpath is implicitly closed. Explicitly closed subpaths produce the
-/// same edges because zero-length closing lines are ignored.
-pub fn build_fill_edges<S>(path: &Path, transform: Affine, options: FlattenOptions,
-    sink: &mut S) -> Result<(), FlattenError<S::Error>> where S: EdgeSink {
-    flatten_path(path, transform, options, &mut FillEdgeBuilder::new(sink))
 }
 
 pub(crate) struct FillEdgeBuilder<'a, S, T = Scalar> {
@@ -80,8 +89,8 @@ impl<S, T> FillEdgeBuilder<'_, S, T> where S: EdgeSink<T>, T: Copy + PartialOrd 
     }
 }
 
-#[cfg(test)] mod tests { use super::*;
-    use crate::{flatten::{FlattenError, FlattenOptions},
+#[cfg(all(test, feature = "f32"))] mod tests { use super::*;
+    use crate::{float::flatten::{build_fill_edges, FlattenError, FlattenOptions},
         geometry::{Affine, PathBuilder, Path}};
     use core::convert::Infallible;
     use alloc::vec::Vec;

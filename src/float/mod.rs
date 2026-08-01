@@ -3,6 +3,7 @@
 mod math;
 pub mod blend;
 pub mod dash;
+pub mod flatten;
 pub mod raster;
 pub mod stroke;
 pub(crate) use math::*;

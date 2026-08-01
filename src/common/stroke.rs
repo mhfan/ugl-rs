@@ -1,6 +1,6 @@
 //! Shared stroke storage and floating-point reference expansion.
 
-use crate::{geometry::{Point, Scalar}, flatten::LineSink};
+use crate::{edge::LineSink, geometry::{Point, Scalar}};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum LineCap { #[default] Butt, Round, Square, }
@@ -123,7 +123,7 @@ use crate::float::stroke::{StrokeError, StrokeExpandError, StrokeOptions,
 #[cfg(all(test, feature = "f32"))] mod tests { use super::*;
     use alloc::vec::Vec;
     use core::convert::Infallible;
-    use crate::{edge::Edge, flatten::{FlattenError, FlattenOptions},
+    use crate::{edge::Edge, float::flatten::{FlattenError, FlattenOptions},
         geometry::{Affine, PathBuilder}};
 
     fn collect_line(from: impl Into<Point>,
