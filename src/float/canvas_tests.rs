@@ -3,7 +3,7 @@ use super::*;
 use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection},
     color::{PremulSRGBA8, SRGBA as RGBA},
     edge::Edge,
-    geometry::{Affine, PathBuilder}, raster::Intersection,
+    geometry::{Affine, PathBuilder}, float::raster::Intersection,
     sampler::{GradientStop, GradientStops, LinearGradient, RadialGradient, SpreadMode},
     stroke::{LineCap, LineJoin},
 };
