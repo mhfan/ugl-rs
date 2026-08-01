@@ -356,6 +356,22 @@ frames produced:
 | polyline stroke | 3.024% | 0.865% | 0.00442 / 1 |
 | round polyline stroke | 3.267% | 1.184% | 0.05475 / 37 |
 
+Cold first-frame latency uses nine independent processes per scene with zero
+warm-up and one timed draw. It retains first-use pipeline JIT in Blend2D while
+path/image/context construction and ugl-rs scratch allocation remain outside
+the timer:
+
+| Scene | f32 median | fixed median | Blend2D median |
+| --- | ---: | ---: | ---: |
+| large fractional rectangle | 47.38 µs | 144.25 µs | 365.88 µs |
+| 8 gentle cubic arches | 49.21 µs | 68.92 µs | 371.54 µs |
+| linear-gradient rectangle | 96.25 µs | 284.29 µs | 381.04 µs |
+
+These process-level samples describe latency, not steady-state throughput.
+Blend2D's first pipeline compilation makes its median roughly 4–8× the f32
+draw, while ugl-rs has no JIT warm-up. OS scheduling and code-page state make
+the cold range noisier; warmed 9×5,000 medians remain the throughput baseline.
+
 The fixed results are reported separately: f32 versus Blend2D measures desktop
 competitiveness, while fixed versus f32 measures the Q24.8 cost and output
 delta. Same-host fixed versus Blend2D numbers are not evidence about an MCU or

@@ -419,6 +419,12 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   interiors; full-coverage runs contain about 83% of covered pixels. Future
   batching should leave boundary runs scalar and convert layouts only for
   measured long interior work.
+- Cold first-frame latency is sampled through nine independent processes with
+  zero warm-up and one timed draw. Large solid/cubic/linear-gradient medians are
+  47.38/49.21/96.25 µs for f32, 144.25/68.92/284.29 µs for fixed, and
+  365.88/371.54/381.04 µs for Blend2D. This intentionally includes Blend2D's
+  first pipeline JIT but excludes resource construction for every backend; it
+  is a latency diagnostic and must not replace warmed throughput results.
 - A separate translucent full-coverage closure intended to omit `scale(1.0)`
   regressed both solid and gradient diagnostics. LLVM already removes the
   trivial scale from the compact general expression; that specialization stays

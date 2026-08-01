@@ -46,6 +46,9 @@ Third-party source and build products are intentionally not vendored.
   path. Stroke flattening/expansion is included by both renderers.
 - Sampling: 500 warm-up frames, then 9 samples of 5,000 frames; compare the
   median and retain min/max as a noise check.
+- Cold latency: run nine independent processes with
+  `--warmup 0 --iterations 1 --samples 1`; report the median first draw
+  separately from warmed throughput.
 - Output: each runner emits CSV, an FNV-1a checksum, and optionally normalized
   premultiplied RGBA bytes. The Rust runner reports exact-pixel rate, mean
   absolute channel error, and maximum channel error against Blend2D.
