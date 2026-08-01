@@ -284,6 +284,61 @@ pub(crate) fn finish_sparse_coverage(strips: Vec<CoverageStrip>, runs: Vec<Cover
     Some(SparseStorage::Dense { data, left, top, right, bottom, stride })
 }
 
+fn for_each_mask_run(mask: CoverageMask<'_>, bounds: (u32, u32, u32, u32),
+    mut visit: impl FnMut(u32, u32, u32, u8)) {
+    let (left, top, right, bottom) = bounds;
+    let (storage_left, storage_top, _, _) = mask.storage_region();
+    for y in top..bottom {
+        let row_start = (y - storage_top) as usize * mask.stride() as usize +
+            (left - storage_left) as usize;
+        let row = &mask.as_bytes()[row_start..row_start + (right - left) as usize];
+        let mut x = 0;
+        while x < row.len() {
+            if row[x] == 0 { x += 1; continue; }
+            let coverage = row[x];
+            let len = row[x..].iter().position(|&value| value != coverage)
+                .unwrap_or(row.len() - x);
+            visit(y, left + x as u32, len as _, coverage);
+            x += len;
+        }
+    }
+}
+
+pub(crate) fn sparse_mask_parts(mask: CoverageMask<'_>) ->
+    Option<(Vec<CoverageStrip>, Vec<CoverageRun>)> {
+    let (left, top, right, bottom) = mask.non_zero_bounds()?;
+    let bounds = (left, top, right, bottom);
+    let dense_bytes = usize::try_from(right - left).ok()?
+        .checked_mul(usize::try_from(bottom - top).ok()?)?;
+    let maximum_runs = usize::try_from(mask.non_zero_count()).ok()?;
+    let maximum_strips = usize::try_from(bottom.div_ceil(16) - top / 16).ok()?;
+    let maximum_sparse_bytes = maximum_strips
+        .checked_mul(core::mem::size_of::<CoverageStrip>())?
+        .checked_add(maximum_runs.checked_mul(core::mem::size_of::<CoverageRun>())?)?;
+    let (strip_count, run_count) = if maximum_sparse_bytes < dense_bytes {
+        (maximum_strips, maximum_runs)
+    } else {
+        let (mut strip_count, mut run_count) = (0, 0);
+        let mut previous_strip = None;
+        for_each_mask_run(mask, bounds, |y, _, _, _| {
+            run_count += 1;
+            let strip_y = y / 16 * 16;
+            if previous_strip != Some(strip_y) {
+                strip_count += 1; previous_strip = Some(strip_y);
+            }
+        });
+        (strip_count, run_count)
+    };
+    let sparse_bytes = strip_count.checked_mul(core::mem::size_of::<CoverageStrip>())?
+        .checked_add(run_count.checked_mul(core::mem::size_of::<CoverageRun>())?)?;
+    if sparse_bytes >= dense_bytes { return None; }
+    let (mut strips, mut runs) = (
+        Vec::with_capacity(strip_count), Vec::with_capacity(run_count));
+    for_each_mask_run(mask, bounds, |y, x, len, coverage|
+        push_sparse_run(&mut strips, &mut runs, y, x, len, coverage));
+    Some((strips, runs))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum CoverageMaskError {
     StrideTooSmall { minimum: u32, actual: u32 },
     BufferTooSmall { minimum: usize, actual: usize },

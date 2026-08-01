@@ -7,7 +7,7 @@ use crate::{
         raster::{CoverageMask, CoverageRun, CoverageStrip, CoverageStrips,
             FillRule, MaskKind, SparseCoverageSink, SparseStorage,
             clip_sparse_bounds, finish_sparse_coverage, intersect_sparse_masks,
-            multiply_sparse_mask},
+            multiply_sparse_mask, sparse_mask_parts},
         render::{Clip, DrawState, GlobalAlphaPaint}, stroke::StrokeContour,
         Pixmap, PixmapError, RenderError, SolidPaint},
     float::{analytic::{Cell, Intersection},
@@ -400,6 +400,14 @@ fn copy_canvas_mask(mask: CoverageMask<'_>) -> CanvasClip {
         left, top, right, bottom, stride }
 }
 
+fn sparse_canvas_mask(mask: CoverageMask<'_>) -> Option<CanvasClip> {
+    let (strips, runs) = sparse_mask_parts(mask)?;
+    Some(CanvasClip::Sparse {
+        strips: Rc::new(strips), runs: Rc::new(runs),
+        width: mask.width(), height: mask.height(),
+    })
+}
+
 fn normalize_canvas_clip(clip: &mut CanvasClip) {
     let replacement = {
         let CanvasClip::Path { data, width, height, left, top, right, bottom, stride } = clip
@@ -411,8 +419,8 @@ fn normalize_canvas_clip(clip: &mut CanvasClip) {
             MaskKind::Empty => Some(CanvasClip::Empty),
             MaskKind::OpaqueRect(bounds) => Some(CanvasClip::Rect(mask_rect(bounds))),
             MaskKind::Coverage(bounds) if bounds != (*left, *top, *right, *bottom) =>
-                Some(copy_canvas_mask(mask)),
-            MaskKind::Coverage(_) => None,
+                sparse_canvas_mask(mask).or_else(|| Some(copy_canvas_mask(mask))),
+            MaskKind::Coverage(_) => sparse_canvas_mask(mask),
         }
     };
     if let Some(replacement) = replacement { *clip = replacement; }
@@ -641,7 +649,8 @@ impl<'target> Canvas<'target> {
                 MaskKind::Coverage(_) => {}
             }
         }
-        let mut clip = copy_canvas_mask(value);
+        let mut clip = sparse_canvas_mask(value).unwrap_or_else(|| copy_canvas_mask(value));
+        normalize_canvas_clip(&mut clip);
         intersect_canvas_clip(&self.clip, &mut clip);
         self.clip = clip; self
     }
@@ -848,6 +857,16 @@ impl<'target> Canvas<'target> {
 
         canvas.set_clip_rect(Rect::from_ltrb(16.5, 16.5, 48.5, 48.5).unwrap());
         assert!(matches!(canvas.clip, CanvasClip::Sparse { .. }));
+    }
+
+    #[test] fn owning_canvas_retains_sparse_external_masks() {
+        let mut coverage = alloc::vec![0; 64 * 64];
+        for y in 0..64 { coverage[y * 64 + y] = 128; }
+        let mut canvas = Canvas::new(64, 64).unwrap();
+        canvas.set_clip_mask(CoverageMask::new(&coverage, 64, 64, 64).unwrap());
+        let CanvasClip::Sparse { strips, runs, .. } = &canvas.clip
+            else { panic!("sparse external mask was retained densely") };
+        assert_eq!((strips.len(), runs.len()), (4, 64));
     }
 
     #[test] fn canvas_manages_fill_stroke_and_dash_scratch_internally() {
