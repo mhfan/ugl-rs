@@ -202,10 +202,7 @@ pub(crate) fn rasterize_edges_cells_region<S>(edges: &[Edge], bins: RowBins<'_>,
         let active = &workspace.intersections[..active_count];
         if row_edges.is_empty() && reusable_vertical_count == Some(active_count) &&
             vertical_edges_span_row(active, y) {
-            if !previous_dirty.is_empty() {
-                emit_cell_runs(&cells[previous_dirty.start..previous_dirty.end],
-                    x0 as usize + previous_dirty.start, y, sink)?;
-            }
+            emit_vertical_runs(active, fill_rule, x0, region_width as _, y, sink)?;
             continue;
         }
         if initialized {
@@ -235,6 +232,70 @@ pub(crate) fn rasterize_edges_cells_region<S>(edges: &[Edge], bins: RowBins<'_>,
 fn vertical_edges_span_row(active: &[Intersection], y: u32) -> bool {
     !active.is_empty() && active.iter().all(|edge|
         edge.slope == 0.0 && edge.y_end >= y as f32 + 1.0)
+}
+
+fn emit_vertical_runs<S>(intersections: &[Intersection], fill_rule: FillRule,
+    x_origin: u32, width: u32, y: u32, sink: &mut S) ->
+    Result<(), RasterError<S::Error>> where S: CoverageSink {
+    fn emit_pending<S>(pending: &mut Option<(u32, f32)>, x_origin: u32, y: u32,
+        sink: &mut S) -> Result<(), RasterError<S::Error>> where S: CoverageSink {
+        let Some((x, coverage)) = pending.take() else { return Ok(()); };
+        let coverage = (coverage.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        if coverage != 0 {
+            sink.span(x_origin + x, y, 1, coverage).map_err(RasterError::Sink)?;
+        }
+        Ok(())
+    }
+
+    fn add_partial<S>(pending: &mut Option<(u32, f32)>, x: u32, coverage: f32,
+        x_origin: u32, y: u32, sink: &mut S) ->
+        Result<(), RasterError<S::Error>> where S: CoverageSink {
+        if let Some((pending_x, pending_coverage)) = pending {
+            if *pending_x == x {
+                *pending_coverage += coverage;
+                return Ok(());
+            }
+            emit_pending(pending, x_origin, y, sink)?;
+        }
+        *pending = Some((x, coverage));
+        Ok(())
+    }
+
+    let (mut winding, mut left, mut pending) =
+        (0_i32, None::<&Intersection>, None);
+    for right in intersections {
+        if let Some(left) = left && fill_rule.contains(winding) {
+            let (left, right) = (
+                (left.x0 - x_origin as f32).clamp(0.0, width as _),
+                (right.x0 - x_origin as f32).clamp(0.0, width as _),
+            );
+            if left < right {
+                let (start, end) = (floor(left) as u32, ceil(right) as u32);
+                if end - start <= 1 {
+                    add_partial(&mut pending, start, right - left,
+                        x_origin, y, sink)?;
+                } else {
+                    let (full_start, full_end) = (ceil(left) as u32, floor(right) as u32);
+                    if left < full_start as f32 {
+                        add_partial(&mut pending, full_start - 1,
+                            full_start as f32 - left, x_origin, y, sink)?;
+                    }
+                    emit_pending(&mut pending, x_origin, y, sink)?;
+                    if full_start < full_end {
+                        sink.span(x_origin + full_start, y, full_end - full_start, u8::MAX)
+                            .map_err(RasterError::Sink)?;
+                    }
+                    if (full_end as f32) < right {
+                        add_partial(&mut pending, full_end, right - full_end as f32,
+                            x_origin, y, sink)?;
+                    }
+                }
+            }
+        }
+        winding += right.winding as i32;
+        left = Some(right);
+    }
+    emit_pending(&mut pending, x_origin, y, sink)
 }
 
 fn integrate_binned_row_cells(edges: &[Edge], row_edges: &[u32], row_y: f32,
@@ -888,6 +949,18 @@ fn integrate_partial_span(left: &Intersection, right: &Intersection,
         builder.move_to((0.25, 0.0)).line_to((1.75, 0.0))
                .line_to((1.75, 1.0)).line_to((0.25, 1.0));
         assert_eq!(render_analytic(&edges(builder), 2, 1, FillRule::NonZero), [191, 191]);
+    }
+
+    #[test] fn repeated_vertical_rows_merge_disjoint_intervals_in_one_pixel() {
+        let mut builder = PathBuilder::new();
+        for (left, right) in [(0.1, 0.3), (0.6, 0.9)] {
+            builder.move_to((left, 0.0)).line_to((right, 0.0))
+                .line_to((right, 3.0)).line_to((left, 3.0));
+        }
+        let edges = edges(builder);
+        for fill_rule in [FillRule::NonZero, FillRule::EvenOdd] {
+            assert_eq!(render_cells(&edges, 1, 3, fill_rule), [127, 127, 127]);
+        }
     }
 
     #[test] fn local_region_matches_full_raster_with_spanning_edges() {
