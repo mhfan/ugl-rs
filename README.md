@@ -418,6 +418,12 @@ the crossing instead of clamping the final signed area. This fixes complex
 EvenOdd self-intersections while keeping the ordinary coverage stage near
 96 µs on the representative stroke benchmark.
 
+Crossing search rejects separating and out-of-slab edge pairs with multiplication
+before paying for a floating-point division. The adversarial `crossing_32_cells`
+scene consequently fell from roughly 215 µs to 201 µs; the ordinary stroke
+remained around 96 µs. Sparse-cell differential coverage now exercises 128
+deterministic randomized paths against an 8192-sample reference.
+
 The stripped example executables were 448,176 bytes for ugl-rs and 1,965,280
 bytes for statically linked Blend2D on this build. Those numbers describe the
 complete harness binaries, not the incremental library contribution, and must

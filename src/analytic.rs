@@ -253,12 +253,14 @@ fn prepare_cell_slab(y0: f32, limit: f32,
     let mut crossing = false;
     for pair in active.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
-        if a.slope == b.slope { continue; }
-        let y = y0 + (b.x0 - a.x0) / (a.slope - b.slope);
-        if is_distinct_event(y, y0) && y <= next {
-            next = next.min(y);
-            crossing = true;
-        }
+        let relative = a.slope - b.slope;
+        if relative <= 0.0 { continue; }
+        let separation = b.x0 - a.x0;
+        let epsilon = f32::EPSILON * y0.abs().max(1.0) * 4.0;
+        if separation <= relative * epsilon
+            || separation > relative * (next - y0) { continue; }
+        next = y0 + separation / relative;
+        crossing = true;
     }
     let height = next - y0;
     for edge in &mut *active { edge.x1 = edge.x0 + edge.slope * height; }
@@ -927,7 +929,7 @@ fn integrate_partial_span(left: &Intersection, right: &Intersection,
 
     #[test] fn analytic_polygons_match_high_sample_reference() {
         let mut state = 0x7a31_4f29_u32;
-        for case in 0..32 {
+        for case in 0..128 {
             let mut builder = PathBuilder::new();
             let mut point = || {
                 state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -942,20 +944,30 @@ fn integrate_partial_span(left: &Intersection, right: &Intersection,
                     render_analytic(&edges, 8, 8, fill_rule),
                     render_sampled(&edges, 8, 8, fill_rule),
                 );
-                assert_eq!(render_binned(&edges, 8, 8, fill_rule), analytic,
-                    "binned mismatch in case {case}, {fill_rule:?}, points {points:?}");
-                for (pixel, (&cell, &reference)) in render_cells(
-                    &edges, 8, 8, fill_rule).iter().zip(&analytic).enumerate() {
+                let cells = render_cells(&edges, 8, 8, fill_rule);
+                if case < 32 {
+                    assert_eq!(render_binned(&edges, 8, 8, fill_rule), analytic,
+                        "binned mismatch in case {case}, {fill_rule:?}, points {points:?}");
+                }
+                for (pixel, (&cell, &reference)) in cells.iter().zip(&sampled).enumerate() {
                     assert!(cell.abs_diff(reference) <= 1,
                         "cell mismatch in case {case}, pixel {pixel}, {fill_rule:?}, \
-                         points {points:?}: cell={cell}, analytic={reference}, \
-                         sampled={}", sampled[pixel]);
+                         points {points:?}: cell={cell}, sampled={reference}, \
+                         analytic={}", analytic[pixel]);
+                    if case < 32 {
+                        assert!(cell.abs_diff(analytic[pixel]) <= 1,
+                            "cell/dense mismatch in case {case}, pixel {pixel}, \
+                             {fill_rule:?}, points {points:?}: cell={cell}, \
+                             analytic={}", analytic[pixel]);
+                    }
                 }
-                for (pixel, (&actual, &reference)) in
-                    analytic.iter().zip(&sampled).enumerate() {
-                    assert!(actual.abs_diff(reference) <= 1,
-                        "case {case}, pixel {pixel}, {fill_rule:?}, points {points:?}: \
-                         analytic={actual}, sampled={reference}");
+                if case < 32 {
+                    for (pixel, (&actual, &reference)) in
+                        analytic.iter().zip(&sampled).enumerate() {
+                        assert!(actual.abs_diff(reference) <= 1,
+                            "case {case}, pixel {pixel}, {fill_rule:?}, points {points:?}: \
+                             analytic={actual}, sampled={reference}");
+                    }
                 }
             }
         }
