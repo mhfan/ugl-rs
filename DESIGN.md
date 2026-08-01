@@ -493,6 +493,11 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   from the Blend2D matrix. The locked Blend2D revision retains dash state yet
   does not consume it in the raster stroker, so its apparent dashed timing is
   actually an undashed path and cannot support a valid comparison claim.
+  Separate 64-point Criterion cases distinguish decomposition (2.324 µs f32,
+  6.578 µs fixed) from decomposition plus outline expansion (5.017 µs f32,
+  16.546 µs fixed). Fixed preserves exact integer length, rational endpoint
+  interpolation, and a complete capacity preflight; replacing that contract
+  with partial writes is not an acceptable benchmark-only optimization.
 - The production analytic-cell path stops slabs only at edge starts, ends, and
   real crossings. It integrates boundary cells with the closed-form primitive
   of `clamp(edge_x - cell_x, 0, 1)`, records full intervals with two range

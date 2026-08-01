@@ -392,6 +392,10 @@ Dashed stroke remains an internal f32/fixed Criterion comparison rather than a
 Blend2D row. The synchronized Blend2D revision stores dash options but its
 raster stroker does not apply them, so timing that API would silently compare
 ugl-rs dashes against an undashed Blend2D path.
+The isolated 64-point decomposition measures 2.324 µs for f32 and 6.578 µs
+for fixed; decomposition plus outline expansion measures 5.017 and 16.546 µs.
+The fixed cost buys deterministic integer length and rational interpolation,
+plus exact capacity preflight before caller-owned output is modified.
 
 The harness explicitly aligns butt caps, miter-bevel joins, and miter limit 4,
 since Blend2D's default miter-clip join does not match ugl-rs. More strongly

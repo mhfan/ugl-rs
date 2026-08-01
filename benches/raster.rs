@@ -830,6 +830,13 @@ fn benchmark_stroke(c: &mut Criterion) {
         (vec![Point::default(); 512], vec![DashContour::default(); 256]);
     let mut dash_group = c.benchmark_group("stroke_dash");
     dash_group.throughput(Throughput::Elements(dash_points.len() as _));
+    dash_group.bench_function("polyline_64_decompose", |b| b.iter(|| {
+        let mut workspace = DashWorkspace {
+            points: &mut output, contours: &mut contours,
+        };
+        let dashed = dash_polyline(&dash_points, false, pattern, &mut workspace).unwrap();
+        black_box((dashed.point_count(), dashed.contour_count()));
+    }));
     dash_group.bench_function("polyline_64", |b| b.iter(|| {
         let mut workspace = DashWorkspace {
             points: &mut output, contours: &mut contours,
@@ -1123,6 +1130,14 @@ fn benchmark_paint(c: &mut Criterion) {
     );
     let mut dash_group = c.benchmark_group("stroke_dash_fixed");
     dash_group.throughput(Throughput::Elements(stroke_points.len() as _));
+    dash_group.bench_function("polyline_64_decompose", |b| b.iter(|| {
+        let mut workspace = DashWorkspace {
+            points: &mut fixed_dash_points, contours: &mut fixed_dash_contours,
+        };
+        let dashed = dash_polyline(&stroke_points, false, fixed_dash,
+            &mut workspace).unwrap();
+        black_box((dashed.point_count(), dashed.contour_count()));
+    }));
     dash_group.bench_function("polyline_64", |b| b.iter(|| {
         stroke_edges.clear();
         let mut workspace = DashWorkspace {
