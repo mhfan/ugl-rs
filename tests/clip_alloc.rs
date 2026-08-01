@@ -1,14 +1,15 @@
-#![cfg(feature = "fixed")]
-
-use std::{alloc::{GlobalAlloc, Layout, System}, sync::atomic::{AtomicUsize, Ordering}};
-use ugl_rs::{common::{color::SRGBA, geometry::PathBuilder, raster::CoverageMask},
-    fixed::{Canvas, Scalar}};
+use std::{alloc::{GlobalAlloc, Layout, System},
+    sync::{Mutex, atomic::{AtomicUsize, Ordering}}};
+use ugl_rs::common::{color::SRGBA, geometry::{PathBuilder, Rect}, raster::CoverageMask};
+#[cfg(feature = "fixed")] use ugl_rs::fixed::{Canvas as FixedCanvas, Scalar};
+#[cfg(feature = "f32")] use ugl_rs::float::Canvas as FloatCanvas;
 
 struct CountingAllocator;
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
 static PEAK: AtomicUsize = AtomicUsize::new(0);
 static CALLS: AtomicUsize = AtomicUsize::new(0);
 static BYTES: AtomicUsize = AtomicUsize::new(0);
+static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn record_allocation(size: usize) {
     CALLS.fetch_add(1, Ordering::Relaxed);
@@ -72,12 +73,14 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, AllocationStats) {
     (result, stats)
 }
 
-#[test] fn retained_sparse_clip_has_bounded_peak_and_zero_allocation_warm_draws() {
+#[cfg(feature = "fixed")]
+#[test] fn fixed_sparse_clip_has_bounded_peak_and_zero_allocation_warm_draws() {
+    let _guard = TEST_LOCK.lock().unwrap();
     const SIZE: usize = 512;
     let mut coverage = vec![0; SIZE * SIZE];
     for y in 0..SIZE { coverage[y * SIZE + y] = 128; }
     let mask = CoverageMask::new(&coverage, SIZE as _, SIZE as _, SIZE as _).unwrap();
-    let mut canvas = Canvas::new(SIZE as _, SIZE as _).unwrap();
+    let mut canvas = FixedCanvas::new(SIZE as _, SIZE as _).unwrap();
     let (_, retain) = measure(|| { canvas.set_clip_mask(mask); });
 
     let fixed = Scalar::from_num;
@@ -93,7 +96,7 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, AllocationStats) {
 
     canvas.save(); assert!(canvas.restore());
     let (_, saved_state) = measure(|| { canvas.save(); assert!(canvas.restore()); });
-    let rect = ugl_rs::common::geometry::Rect::from_ltrb(
+    let rect = Rect::from_ltrb(
         Scalar::from_num(128.5), Scalar::from_num(128.5),
         Scalar::from_num(383.5), Scalar::from_num(383.5)).unwrap();
     let (_, intersection) = measure(|| { canvas.set_clip_rect(rect); });
@@ -103,11 +106,11 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, AllocationStats) {
     for y in 0..DENSE_SIZE { for x in 0..DENSE_SIZE {
         dense[y * DENSE_SIZE + x] = if (x + y) & 1 == 0 { 96 } else { 192 };
     } }
-    let mut dense_canvas = Canvas::new(DENSE_SIZE as _, DENSE_SIZE as _).unwrap();
+    let mut dense_canvas = FixedCanvas::new(DENSE_SIZE as _, DENSE_SIZE as _).unwrap();
     dense_canvas.set_clip_mask(CoverageMask::new(
         &dense, DENSE_SIZE as _, DENSE_SIZE as _, DENSE_SIZE as _).unwrap());
     dense_canvas.save();
-    let dense_rect = ugl_rs::common::geometry::Rect::from_ltrb(
+    let dense_rect = Rect::from_ltrb(
         Scalar::from_num(8.5), Scalar::from_num(8.5),
         Scalar::from_num(55.5), Scalar::from_num(55.5)).unwrap();
     let (_, dense_cow) = measure(|| { dense_canvas.set_clip_rect(dense_rect); });
@@ -117,7 +120,7 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, AllocationStats) {
     slender.move_to((fixed(0), fixed(8))).line_to((fixed(504), fixed(512)))
         .line_to((fixed(512), fixed(504))).line_to((fixed(8), fixed(0)));
     let slender = slender.build();
-    let mut path_canvas = Canvas::new(SIZE as _, SIZE as _).unwrap();
+    let mut path_canvas = FixedCanvas::new(SIZE as _, SIZE as _).unwrap();
     let (_, cold_path) = measure(|| { path_canvas.set_clip_path(&slender).unwrap(); });
     path_canvas.clear_clip();
     let (_, warm_path) = measure(|| { path_canvas.set_clip_path(&slender).unwrap(); });
@@ -130,6 +133,52 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, AllocationStats) {
     assert_eq!((saved_state.calls, saved_state.bytes, saved_state.peak_bytes), (0, 0, 0));
     assert!(intersection.peak_bytes < SIZE * SIZE);
     assert!(dense_cow.peak_bytes <= DENSE_SIZE * DENSE_SIZE * 3);
+    assert!(cold_path.peak_bytes < SIZE * SIZE);
+    assert!(warm_path.peak_bytes < cold_path.peak_bytes);
+}
+
+#[cfg(feature = "f32")]
+#[test] fn f32_sparse_clip_has_bounded_peak_and_zero_allocation_warm_draws() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    const SIZE: usize = 512;
+    let mut coverage = vec![0; SIZE * SIZE];
+    for y in 0..SIZE { coverage[y * SIZE + y] = 128; }
+    let mask = CoverageMask::new(&coverage, SIZE as _, SIZE as _, SIZE as _).unwrap();
+    let mut canvas = FloatCanvas::new(SIZE as _, SIZE as _).unwrap();
+    let (_, retain) = measure(|| { canvas.set_clip_mask(mask); });
+
+    let mut shape = PathBuilder::new();
+    shape.move_to((0.0, 0.0)).line_to((SIZE as _, 0.0))
+        .line_to((SIZE as _, SIZE as _)).line_to((0.0, SIZE as _));
+    let shape = shape.build();
+    canvas.set_color(SRGBA::red()).fill(&shape).unwrap();
+    let (_, warm_draw) = measure(|| {
+        canvas.target_mut().as_bytes_mut().fill(0);
+        canvas.fill(&shape).unwrap();
+    });
+
+    canvas.save(); assert!(canvas.restore());
+    let (_, saved_state) = measure(|| { canvas.save(); assert!(canvas.restore()); });
+    let (_, intersection) = measure(|| {
+        canvas.set_clip_rect(Rect::from_ltrb(128.5, 128.5, 383.5, 383.5).unwrap());
+    });
+
+    let mut slender = PathBuilder::new();
+    slender.move_to((0.0, 8.0)).line_to((504.0, 512.0))
+        .line_to((512.0, 504.0)).line_to((8.0, 0.0));
+    let slender = slender.build();
+    let mut path_canvas = FloatCanvas::new(SIZE as _, SIZE as _).unwrap();
+    let (_, cold_path) = measure(|| { path_canvas.set_clip_path(&slender).unwrap(); });
+    path_canvas.clear_clip();
+    let (_, warm_path) = measure(|| { path_canvas.set_clip_path(&slender).unwrap(); });
+
+    eprintln!("f32 clip allocation stats: retain={retain:?}, warm_draw={warm_draw:?}, \
+        save_restore={saved_state:?}, sparse_rect={intersection:?}, \
+        cold_sparse_path={cold_path:?}, warm_sparse_path={warm_path:?}");
+    assert!(retain.peak_bytes < SIZE * SIZE);
+    assert_eq!((warm_draw.calls, warm_draw.bytes, warm_draw.peak_bytes), (0, 0, 0));
+    assert_eq!((saved_state.calls, saved_state.bytes, saved_state.peak_bytes), (0, 0, 0));
+    assert!(intersection.peak_bytes < SIZE * SIZE);
     assert!(cold_path.peak_bytes < SIZE * SIZE);
     assert!(warm_path.peak_bytes < cold_path.peak_bytes);
 }
