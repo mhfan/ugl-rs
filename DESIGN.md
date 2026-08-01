@@ -371,10 +371,10 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   full-coverage writes over transparent destinations avoid redundant coverage
   multiplication. Together these changes reduced the matched large-gradient
   draw from 381.33 to 192.50 µs for f32 and 446.92 to 221.24 µs for fixed.
-  Direct Pad-ramp traversal plus vertical-run emission reduced f32 to 64.41 µs.
+  Direct Pad-ramp traversal plus vertical-run emission reduced f32 to 63.81 µs.
   Fixed span projection narrows parameter, step, denominator, and terminal value
   together before entering its i64 ramp mapper, reducing the fixed draw from
-  187.13 to 151.25 µs. Both backends remain byte-identical. Blend2D is still
+  187.13 to 149.07 µs. Both backends remain byte-identical. Blend2D is still
   2.02× faster than f32, so future work should batch ramp lookup/output rather
   than further tune path coverage for this scene.
 - Concentric radial samplers advance squared distance with a second-order
@@ -382,14 +382,14 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   per pixel. Scheduling four recurrence values together, while preserving the
   scalar update order, lets the compiler overlap independent square roots. The
   output checksum is unchanged; the matched f32 median fell from 202.22 through
-  123.98 to 115.97 µs, and fixed from 542.18 to 353.59 µs. Blend2D measures
+  123.98 to 115.82 µs, and fixed from 542.18 to 345.51 µs. Blend2D measures
   41.44 µs, leaving SIMD square-root throughput and encoded ramp/compositor
   batching as the measured paint costs.
 - The matched conic scene explicitly uses the opt-in `Fast` angle policy while
   `Exact` remains the default. f32 uses the documented seventh-degree unit-angle
   approximation; fixed evaluates the same polynomial in widened integer turns
   instead of 16 CORDIC steps. Encoded span traversal reuses coordinates and
-  direct ramp indexing. Formal medians are 184.70 µs f32, 361.90 µs fixed,
+  direct ramp indexing. Formal medians are 184.31 µs f32, 356.96 µs fixed,
   and 68.38 µs Blend2D. Fixed differs from f32 at 2 of 65,536 pixels, each by one
   code value; the fixed fast path is about 77% faster than the Exact CORDIC
   diagnostic without adding allocation or floating-point work.
@@ -397,25 +397,25 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   forwarding spans. `CoverageMask` caches non-zero bounds at retained-resource
   construction, and both rasterizers constrain coverage work to that region;
   the f32 sink continues word-wise filtering inside it. Radius-24/radius-100
-  density scenes measure 6.20/23.59 µs for f32, 7.48/31.60 µs for fixed,
+  density scenes measure 5.80/23.39 µs for f32, 7.46/31.81 µs for fixed,
   and roughly 30 µs for Blend2D. This preserves the generic coverage-sink
   contract and fixed memory. Blend2D has
   no public free-path clip; its 29.98 µs comparison is a retained PRGB32 `DST_IN`
   emulation and must remain labeled as such.
-- Building the circular mask separately measures 21.58 µs for f32, 45.36 µs
+- Building the circular mask separately measures 21.09 µs for f32, 46.41 µs
   for fixed, and 9.55 µs for Blend2D. RGBA normalization is excluded. Direct
   disjoint-row emission closed much of the former gap; the remainder belongs
   to curve flattening and coverage rasterization, not retained-mask lookup or
   source-over composition.
 - Nested-prefix 1/16/64-rectangle scenes separate fixed frame overhead from
-  edge-count slope. Current f32 medians are 4.09/17.50/59.45 µs versus
+  edge-count slope. Current f32 medians are 4.03/17.31/59.31 µs versus
   Blend2D's 3.97/11.53/34.13 µs. The widening fill gap belongs to repeated edge,
   coverage-run, and composition work rather than clear or runner overhead.
   Direct vertical-run emission removes dense cell scans for unchanged vertical
   active sets. Fixed initially measured 9.43/60.31/238.70 µs. Coverage attribution
   showed 203.61 µs in its raster stage; direct vertical-trapezoid boundary area
   reduced that to 144.04 µs; guarded direct trapezoid emission brings the
-  current 1/16/64 draws to 4.41/28.44/107.95 µs. Sloped edges retain polygon
+  current 1/16/64 draws to 4.38/28.42/108.87 µs. Sloped edges retain polygon
   clipping and exact rational
   crossings, while axis-aligned rectangles no longer pay that general cost.
 - The benchmark harness reports span distributions when `UGL_SPAN_STATS=1`.
@@ -443,7 +443,7 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   winding-aware emitter reconstructs boundary pixels and full spans directly;
   a pending boundary cell merges disjoint intervals that share one pixel.
   This avoids both reintegration and dense-cell rescans, reducing the matched
-  64-rectangle draw from 83.67 to the current 59.45 µs without changing output.
+  64-rectangle draw from 83.67 to the current 59.31 µs without changing output.
 - The core remains `no_std` capable, while default desktop builds enable
   `std`. Floating-point capability is independent: `std` uses platform
   floor/ceil, Arm `eabihf` targets select a hardware-friendly no_std
@@ -472,7 +472,7 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   the previous polygon-union path retained for repeated/reversing degeneracy.
   On the synchronized host benchmark this reduced the eight-cubic fixed stroke
   from 284.75 to 64.89 µs; butt/miter and round 32-segment polylines measure
-  132.73 and 181.16 µs respectively. Full-height overlapping trapezoids now
+  133.42 and 181.42 µs respectively. Full-height overlapping trapezoids now
   accumulate through the same integer clamp primitive as disjoint direct rows,
   retaining the caller-owned area row while avoiding per-pixel polygon
   clipping; partial-height and crossing slabs retain the general clipper. The
@@ -508,7 +508,7 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   than recomputed for validation, bounds, interiors, and boundary pixels; the
   narrowing the proven single-row integral from i128 to i64 and using the same
   integral for full-row overlap reduced the matched fixed triangle draw to
-  128.29 µs while retaining its previous checksum.
+  130.68 µs while retaining its previous checksum.
 - Rejected analytic experiments remain explicit decisions: generic polygon
   clipping and a whole-row difference accumulator did not amortize their work;
   removing midpoint ordering broke self-intersections; hybrid introsort
