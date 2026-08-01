@@ -891,7 +891,10 @@ their left boundary pixels and only the right edge for their right boundary
 pixels; the opposite edge is provably full or zero there. This reduces circular
 coverage from about 36.69 to 34.82 µs in a same-run A/B and the formal fixed
 mask build from 42.33 to 41.39 µs. Narrow trapezoids retain the general two-edge
-integral, and the self-intersecting stress scene remains near 99.2 µs.
+integral, and the self-intersecting stress scene remains near 99.2 µs. Reusing
+the previous slab's exact `bottom_x` as the next `top_x` was correct but slowed
+circular coverage from 34.82 back to 36.69 µs; the added loop-carried state
+outweighed one avoided intersection division and remains rejected.
 
 The sparse f32 cell emitter now jumps over zero cell ranges after applying a
 range delta instead of quantizing every full-interior pixel. Circular coverage
