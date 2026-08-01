@@ -165,12 +165,21 @@ pub fn rasterize_edges_cells<S>(edges: &[Edge], bins: RowBins<'_>, width: u32,
         });
     }
     let (mut active_count, mut previous) = (0, CellRange::EMPTY);
+    let mut reusable_vertical_count = 0;
     let mut initialized = false;
     for y in 0..height {
         active_count = retain_active(workspace.intersections, active_count, y as _);
         let row_edges = bins.indices(y);
         if active_count == 0 && row_edges.is_empty() { continue; }
         let cells = &mut workspace.cells[..width];
+        if row_edges.is_empty() && active_count == reusable_vertical_count &&
+            workspace.intersections[..active_count].iter().all(|edge|
+                edge.slope == 0.0 && edge.y_end >= y as f32 + 1.0) {
+            if !previous.is_empty() {
+                emit_cell_runs(&cells[previous.start..previous.end], previous.start, y, sink)?;
+            }
+            continue;
+        }
         if initialized {
             if !previous.is_empty() {
                 cells[previous.start..previous.end].fill(Cell::default());
@@ -186,6 +195,11 @@ pub fn rasterize_edges_cells<S>(edges: &[Edge], bins: RowBins<'_>, width: u32,
         if !dirty.is_empty() {
             emit_cell_runs(&cells[dirty.start..dirty.end], dirty.start, y, sink)?;
         }
+        reusable_vertical_count = if row_edges.is_empty() && active_count != 0 &&
+            workspace.intersections[..active_count].iter().all(|edge|
+                edge.slope == 0.0 && edge.y_end >= y as f32 + 1.0) {
+            active_count
+        } else { 0 };
         previous = dirty;
     }
     Ok(())
