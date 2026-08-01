@@ -258,21 +258,22 @@ fn round_ratio_i128(numerator: i128, denominator: i128) -> i128 {
 }
 
 fn integrate_clamped_edge_twice(start: i64, end: i64, height: u32) -> u64 {
-    let scale = SUBPIXEL_SCALE as i128;
-    let primitive = |value: i128| {
+    // |start| and |end| are at most twice DEVICE_RAW_LIMIT after subtracting
+    // the target pixel origin. The primitive is below 2^39 and multiplying by
+    // a one-row height (<= 256) remains safely inside i64.
+    let scale = SUBPIXEL_SCALE as i64;
+    let primitive = |value: i64| {
         if value <= 0 { 0 }
         else if value < scale { value * value }
         else { 2 * scale * value - scale * scale }
     };
-    let (start, end) = (start as i128, end as i128);
     if start == end {
-        return (2 * start.clamp(0, scale) * height as i128) as _;
+        return (2 * start.clamp(0, scale) * height as i64) as _;
     }
     let (mut numerator, mut denominator) = (
-        height as i128 * (primitive(end) - primitive(start)), end - start);
+        height as i64 * (primitive(end) - primitive(start)), end - start);
     if denominator < 0 { numerator = -numerator; denominator = -denominator; }
-    round_ratio_i128(numerator, denominator)
-        .clamp(0, 2 * scale * height as i128) as _
+    round_ratio(numerator, denominator).clamp(0, 2 * scale * height as i64) as _
 }
 
 #[derive(Clone, Copy)]

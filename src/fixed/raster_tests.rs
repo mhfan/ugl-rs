@@ -493,6 +493,30 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
         PIXEL_AREA_TWICE / 4);
     assert_eq!(integrate_clamped_edge_twice(scale, scale * 2, height),
         PIXEL_AREA_TWICE);
+
+    let reference = |start: i64, end: i64, height: u32| {
+        let scale = SUBPIXEL_SCALE as i128;
+        let primitive = |value: i128| if value <= 0 { 0 }
+            else if value < scale { value * value }
+            else { 2 * scale * value - scale * scale };
+        if start == end {
+            return (2 * i128::from(start).clamp(0, scale) * i128::from(height)) as u64;
+        }
+        let (mut numerator, mut denominator) = (i128::from(height) *
+            (primitive(end as _) - primitive(start as _)), i128::from(end - start));
+        if denominator < 0 { numerator = -numerator; denominator = -denominator; }
+        round_ratio_i128(numerator, denominator)
+            .clamp(0, 2 * scale * i128::from(height)) as u64
+    };
+    let limit = i64::from(DEVICE_RAW_LIMIT) * 2;
+    for (start, end) in [(-limit, limit), (limit, -limit),
+        (-limit, scale / 3), (scale * 2 / 3, limit),
+        (limit - 1, limit), (-limit, -limit + 1)] {
+        for height in [1, SUBPIXEL_SCALE] {
+            assert_eq!(integrate_clamped_edge_twice(start, end, height),
+                reference(start, end, height));
+        }
+    }
 }
 
 #[test] fn trapezoid_extracts_only_guaranteed_full_pixel_runs() {
