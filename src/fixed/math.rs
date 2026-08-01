@@ -9,8 +9,6 @@
 //  https://en.wikipedia.org/wiki/Q_(number_format)
 //  https://johnmcfarlane.github.io/cnl/
 //  https://gitlab.com/tspiteri/fixed
-pub use fixed::traits::Fixed;
-
 /// Unsigned binary angle where the complete `u32` range represents one turn.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub struct Angle(u32);
 

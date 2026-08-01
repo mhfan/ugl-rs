@@ -8,24 +8,16 @@ use crate::common::{color::{PremulSRGBA8, SRGBA}, dash::DashError,
 
 #[derive(Clone, Copy, Debug, PartialEq)] pub struct SolidPaint {
     encoded: PremulSRGBA8,
-    #[cfg(feature = "f32")]
-    linear: crate::common::color::LinearPremulRGBA<f32>,
 }
 
 impl SolidPaint {
-    pub fn new(color: SRGBA<u8>) -> Self { Self {
-        encoded: color.premul_encoded(),
-        #[cfg(feature = "f32")]
-        linear: color.to_linear().premul(),
-    } }
-    pub fn premultiplied(color: PremulSRGBA8) -> Self { Self {
-        encoded: color,
-        #[cfg(feature = "f32")]
-        linear: color.to_linear(),
-    } }
+    pub fn new(color: SRGBA<u8>) -> Self { Self { encoded: color.premul_encoded() } }
+    pub fn premultiplied(color: PremulSRGBA8) -> Self { Self { encoded: color } }
     pub fn color(&self) -> PremulSRGBA8 { self.encoded }
     #[cfg(feature = "f32")]
-    pub fn linear_color(&self) -> crate::common::color::LinearPremulRGBA<f32> { self.linear }
+    pub fn linear_color(&self) -> crate::common::color::LinearPremulRGBA<f32> {
+        self.encoded.to_linear()
+    }
 }
 
 impl From<SRGBA<u8>> for SolidPaint { fn from(color: SRGBA<u8>) -> Self { Self::new(color) } }
@@ -217,8 +209,10 @@ pub(crate) fn blend_solid_bytes(bytes: &mut [u8],
 }
 
 
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RenderError {
-    InvalidTolerance, InvalidDepth, NonFiniteCoordinate, FlattenDepthLimit,
+    InvalidTolerance, InvalidDepth, NonFiniteCoordinate, CoordinateOutOfRange,
+    FlattenDepthLimit,
     DimensionsOverflow, InvalidEdge, InvalidEdgeBins, InvalidSampleCount, InvalidPath(PathError),
     StrokeIndexOverflow, EdgeCapacity { needed_at_least: usize },
     StrokePointCapacity { needed_at_least: usize },
@@ -255,9 +249,7 @@ pub(crate) fn map_dash_error(error: DashError) -> RenderError {
     match error {
         DashError::NonFinitePoint => RenderError::NonFiniteCoordinate,
         DashError::PrecisionExhausted => RenderError::DashPrecisionExhausted,
-        #[cfg(feature = "fixed")]
-        DashError::CoordinateOutOfRange =>
-            RenderError::FixedRaster(FixedRasterError::CoordinateOutOfRange),
+        DashError::CoordinateOutOfRange => RenderError::CoordinateOutOfRange,
         DashError::PointCapacity { needed_at_least } =>
             RenderError::DashPointCapacity { needed_at_least },
         DashError::ContourCapacity { needed_at_least } =>

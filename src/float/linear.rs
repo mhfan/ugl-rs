@@ -10,7 +10,7 @@ use core::convert::Infallible;
 use crate::{
     common::{color::{LinearPremulRGBA, LinearRGBA, PremulSRGBA8, SRGBA},
         geometry::{Affine, Path, Rect}, raster::{CoverageMask, CoverageSink, MaskClipSink},
-        Pixmap, RenderError, SolidPaint},
+        Pixmap, RenderError},
     float::canvas::{DashedStrokePathOptions, DashedStrokeWorkspace,
         RenderOptions, RenderWorkspace, StrokePathOptions,
         StrokeWorkspace, render_path_to,
@@ -20,6 +20,20 @@ use crate::{
 };
 
 pub const SRGB8_ENCODE_LUT_SIZE: usize = 4096;
+
+#[derive(Clone, Copy)] struct LinearSolidPaint {
+    color: LinearPremulRGBA<f32>,
+}
+
+impl LinearSolidPaint {
+    fn new(color: SRGBA<u8>) -> Self { Self { color: color.to_linear().premul() } }
+}
+
+impl LinearPaintSampler for LinearSolidPaint {
+    fn sample_linear(&self, _x: f32, _y: f32) -> LinearPremulRGBA<f32> { self.color }
+    fn solid_color_linear(&self) -> Option<LinearPremulRGBA<f32>> { Some(self.color) }
+    fn is_opaque_linear(&self) -> bool { self.color.alpha() == 1.0 }
+}
 
 /// Caller-owned linear-to-sRGB8 lookup table for framebuffer presentation.
 #[derive(Clone, Copy, Debug)] pub struct Srgb8Encoder<'a> { table: &'a [u8] }
@@ -348,7 +362,7 @@ impl<'a> LinearPixmap<'a> {
 pub fn render_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
     options: RenderOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint(path, transform, &SolidPaint::new(color),
+    render_paint(path, transform, &LinearSolidPaint::new(color),
         options, target, workspace)
 }
 
@@ -365,7 +379,7 @@ pub fn render_paint<S: LinearPaintSampler>(path: &Path, transform: Affine,
 pub fn render_solid_clipped(path: &Path, transform: Affine, color: SRGBA<u8>,
     clip: Rect, options: RenderOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint_clipped(path, transform, &SolidPaint::new(color),
+    render_paint_clipped(path, transform, &LinearSolidPaint::new(color),
         clip, options, target, workspace)
 }
 
@@ -381,7 +395,7 @@ pub fn render_paint_clipped<S: LinearPaintSampler>(path: &Path, transform: Affin
 pub fn render_solid_masked(path: &Path, transform: Affine, color: SRGBA<u8>,
     mask: CoverageMask<'_>, options: RenderOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
-    render_paint_masked(path, transform, &SolidPaint::new(color),
+    render_paint_masked(path, transform, &LinearSolidPaint::new(color),
         mask, options, target, workspace)
 }
 
@@ -399,7 +413,7 @@ pub fn render_paint_masked<S: LinearPaintSampler>(path: &Path,
 pub fn render_stroke_solid(path: &Path, transform: Affine, color: SRGBA<u8>,
     options: StrokePathOptions, target: &mut LinearPixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
-    render_stroke_paint(path, transform, &SolidPaint::new(color),
+    render_stroke_paint(path, transform, &LinearSolidPaint::new(color),
         options, target, workspace)
 }
 
@@ -416,7 +430,7 @@ pub fn render_stroke_solid_dashed(path: &Path, transform: Affine,
     color: SRGBA<u8>, options: DashedStrokePathOptions<'_>,
     target: &mut LinearPixmap<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
-    render_stroke_paint_dashed(path, transform, &SolidPaint::new(color),
+    render_stroke_paint_dashed(path, transform, &LinearSolidPaint::new(color),
         options, target, workspace)
 }
 
@@ -434,7 +448,7 @@ pub fn render_stroke_solid_clipped(path: &Path, transform: Affine,
     color: SRGBA<u8>, clip: Rect, options: StrokePathOptions,
     target: &mut LinearPixmap<'_>, workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> {
-    render_stroke_paint_clipped(path, transform, &SolidPaint::new(color),
+    render_stroke_paint_clipped(path, transform, &LinearSolidPaint::new(color),
         clip, options, target, workspace)
 }
 
@@ -452,7 +466,7 @@ pub fn render_stroke_solid_masked(path: &Path, transform: Affine,
     color: SRGBA<u8>, mask: CoverageMask<'_>, options: StrokePathOptions,
     target: &mut LinearPixmap<'_>, workspace: &mut StrokeWorkspace<'_>) ->
     Result<(), RenderError> {
-    render_stroke_paint_masked(path, transform, &SolidPaint::new(color),
+    render_stroke_paint_masked(path, transform, &LinearSolidPaint::new(color),
         mask, options, target, workspace)
 }
 
@@ -490,6 +504,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
 }
 
 #[cfg(test)] mod tests { use super::*;
+    use crate::common::SolidPaint;
     use crate::{float::analytic::{Cell as AnalyticCell,
             Intersection as AnalyticIntersection},
         common::{edge::Edge, geometry::{PathBuilder, Point},

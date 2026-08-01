@@ -18,8 +18,7 @@ pub struct DashWorkspace<'a, T = Scalar> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum DashError {
-    NonFinitePoint, PrecisionExhausted,
-    #[cfg(feature = "fixed")] CoordinateOutOfRange,
+    NonFinitePoint, PrecisionExhausted, CoordinateOutOfRange,
     PointCapacity { needed_at_least: usize },
     ContourCapacity { needed_at_least: usize },
     IndexOverflow,

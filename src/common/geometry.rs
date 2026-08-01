@@ -16,11 +16,6 @@ pub type Scalar = f32;
 pub trait ScalarConstants { const ZERO: Self; const ONE: Self; }
 impl ScalarConstants for f32 { const ZERO: Self = 0.0; const ONE: Self = 1.0; }
 
-#[cfg(feature = "fixed")] impl ScalarConstants for crate::fixed::Scalar {
-    const ZERO: Self = Self::ZERO;
-    const  ONE: Self = Self::ONE;
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Point<T = Scalar> { pub x: T, pub y: T, }
 
@@ -115,33 +110,6 @@ impl Affine<f32> {
         };
         [inverse.a, inverse.b, inverse.c, inverse.d, inverse.e, inverse.f]
             .into_iter().all(f32::is_finite).then_some(inverse)
-    }
-}
-
-#[cfg(feature = "fixed")] impl Affine<crate::fixed::Scalar> {
-    /// Transforms a Q24.8 point with widened multiply-add and checked conversion.
-    ///
-    /// The result is rounded to the nearest Q24.8 value, with exact half units
-    /// rounded away from zero. Renderer-specific device limits are checked by
-    /// the consuming backend.
-    pub fn try_transform_point(&self, point: Point<crate::fixed::Scalar>) ->
-        Result<Point<crate::fixed::Scalar>, crate::fixed::TransformError> {
-        let transform = |first: crate::fixed::Scalar, x: crate::fixed::Scalar,
-            second: crate::fixed::Scalar, y: crate::fixed::Scalar,
-            translation: crate::fixed::Scalar| {
-            const FRACTION_BITS: u32 = 8;
-            const SCALE: i128 = 1 << FRACTION_BITS;
-            let value = first.to_bits() as i128 * x.to_bits() as i128
-                + second.to_bits() as i128 * y.to_bits() as i128
-                + ((translation.to_bits() as i128) << FRACTION_BITS);
-            let rounded = if value < 0 {
-                (value - SCALE / 2) / SCALE
-            } else { (value + SCALE / 2) / SCALE };
-            i32::try_from(rounded).map(crate::fixed::Scalar::from_bits)
-                .map_err(|_| crate::fixed::TransformError::Overflow)
-        };
-        Ok((transform(self.a, point.x, self.c, point.y, self.e)?,
-            transform(self.b, point.x, self.d, point.y, self.f)?).into())
     }
 }
 

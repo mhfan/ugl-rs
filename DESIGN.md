@@ -893,8 +893,10 @@ src/fixed/
     tile.rs
 ```
 
-Shared `geometry`, `edge`, coverage, color, sampler traits, and compositor
-adapters remain outside that directory. The canonical public paths are rooted
+The f32 counterpart, including its adaptive curve flattener, lives under
+`src/float/`. Shared generic geometry, edge/line sinks, coverage, encoded color,
+target storage, and paint values remain under `src/common/`; sampler traits stay
+backend-specific. The canonical public paths are rooted
 at `fixed::*`; redundant crate-root aliases and `Fixed`/`_fixed` affixes are
 omitted inside that namespace. Cross-backend call sites add local import aliases
 only where names collide.

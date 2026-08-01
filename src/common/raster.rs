@@ -83,8 +83,8 @@ impl<'a> CoverageMask<'a> {
             data_width: width, data_height: height, non_zero_bounds })
     }
 
-    #[cfg(feature = "f32")]
-    pub(crate) fn from_region(data: &'a [u8], dimensions: (u32, u32),
+    /// Wraps storage for a local subregion while retaining full-target coordinates.
+    pub fn from_region(data: &'a [u8], dimensions: (u32, u32),
         region: (u32, u32, u32, u32), stride: u32) -> Result<Self, CoverageMaskError> {
         let (width, height) = dimensions;
         let (origin_x, origin_y, right, bottom) = region;
@@ -337,7 +337,6 @@ use crate::float::raster::{Intersection, RasterError, RasterOptions, RasterWorks
             .span(u32::MAX, 0, u32::MAX, 255).unwrap();
     }
 
-    #[cfg(feature = "fixed")]
     #[test] fn coverage_mask_bounds_ignore_zero_rows_and_stride_padding() {
         let data = [0, 0, 0, 9, 0, 7, 8, 9, 0, 0, 0, 9];
         let mask = CoverageMask::new(&data, 3, 3, 4).unwrap();
