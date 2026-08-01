@@ -16,7 +16,7 @@
  */
 
 use crate::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA},
-    float::{atan2, floor, sqrt}, geometry::{Affine, Point}};
+    float::{atan2, floor, sqrt}, geometry::{Affine, Point}, render::GlobalAlphaPaint};
 pub use crate::render::{GradientError, SolidPaint, SpreadMode};
 /// Produces explicitly encoded premultiplied sRGB at device-space positions.
 ///
@@ -34,6 +34,15 @@ pub trait PaintSampler {
         for offset in 0..len {
             emit(self.sample(x + offset as f32 * dx, y + offset as f32 * dy));
         }
+    }
+}
+
+impl<S: PaintSampler> PaintSampler for GlobalAlphaPaint<'_, S> {
+    fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
+        self.sampler.sample(x, y).scale_alpha(self.alpha)
+    }
+    fn solid_color(&self) -> Option<PremulSRGBA8> {
+        self.sampler.solid_color().map(|color| color.scale_alpha(self.alpha))
     }
 }
 

@@ -12,11 +12,57 @@ use crate::{
         RenderOptions, RenderWorkspace, StrokePathOptions,
         StrokeWorkspace, Pixmap, RenderError, render_path_to,
         render_stroke_dashed_to, render_stroke_to},
-    color::{LinearPremulRGBA, SRGBA}, geometry::{Affine, Path, Rect},
+    color::{LinearPremulRGBA, LinearRGBA, PremulSRGBA8, SRGBA},
+    geometry::{Affine, Path, Rect},
     raster::{CoverageMask, CoverageSink, MaskClipSink},
-    float::{color::Srgb8Encoder, raster::RectClipSink},
+    float::raster::RectClipSink,
     sampler::{LinearPaintSampler, SolidPaint},
 };
+
+pub const SRGB8_ENCODE_LUT_SIZE: usize = 4096;
+
+/// Caller-owned linear-to-sRGB8 lookup table for framebuffer presentation.
+#[derive(Clone, Copy, Debug)] pub struct Srgb8Encoder<'a> { table: &'a [u8] }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)] pub struct Srgb8EncoderError {
+    pub minimum: usize, pub actual: usize,
+}
+
+impl<'a> Srgb8Encoder<'a> {
+    pub fn new(table: &'a mut [u8]) -> Result<Self, Srgb8EncoderError> {
+        if table.len() < SRGB8_ENCODE_LUT_SIZE {
+            return Err(Srgb8EncoderError {
+                minimum: SRGB8_ENCODE_LUT_SIZE, actual: table.len(),
+            });
+        }
+        let table = &mut table[..SRGB8_ENCODE_LUT_SIZE];
+        let scale = (table.len() - 1) as f32;
+        for (index, encoded) in table.iter_mut().enumerate() {
+            *encoded = LinearRGBA::new(index as f32 / scale, 0.0, 0.0, 1.0)
+                .to_srgba8().to_array()[0];
+        }
+        Ok(Self { table })
+    }
+
+    pub fn encode(self, color: LinearPremulRGBA<f32>) -> PremulSRGBA8 {
+        let [r, g, b, a] = color.to_array();
+        if a <= 0.0 { return PremulSRGBA8::zeroed(); }
+        let scale = (self.table.len() - 1) as f32;
+        let channel = |value: f32| {
+            let index = ((value / a).clamp(0.0, 1.0) * scale + 0.5) as usize;
+            self.table[index]
+        };
+        let alpha = (a.clamp(0.0, 1.0) * u8::MAX as f32 + 0.5) as u8;
+        SRGBA::new(channel(r), channel(g), channel(b), alpha).premul_encoded()
+    }
+}
+
+impl Pixmap<'_> {
+    fn write_encoded_pixel(&mut self, x: u32, y: u32, color: PremulSRGBA8) {
+        let offset = y as usize * self.stride as usize + x as usize * 4;
+        self.as_bytes_mut()[offset..offset + 4].copy_from_slice(&color.to_array());
+    }
+}
 
 pub const LINEAR_DIRTY_TILE_SIZE: u32 = 16;
 
@@ -517,7 +563,7 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
         assert_ne!(bytes, [128, 0, 127, 255]);
 
         let (mut lut, mut approximate) =
-            ([0; crate::float::color::SRGB8_ENCODE_LUT_SIZE], [0; 4]);
+            ([0; SRGB8_ENCODE_LUT_SIZE], [0; 4]);
         target.encode_into_with(
             &mut Pixmap::from_buffer(&mut approximate, 1, 1, 4).unwrap(),
             Srgb8Encoder::new(&mut lut).unwrap()).unwrap();
@@ -672,6 +718,33 @@ impl<S: LinearPaintSampler> CoverageSink for LinearPaintCompositor<'_, '_, S> {
             LinearPixmap::from_buffer(&mut reference, 8, 1, 8).unwrap()
                 .blend_sampled_span(0, 0, 8, &Composite(&gradient), coverage);
             assert_eq!(fast, reference);
+        }
+    }
+
+    #[test] fn encoder_lut_tracks_the_exact_transfer_boundary() {
+        assert_eq!(Srgb8Encoder::new(&mut [0; 16]).unwrap_err(),
+            Srgb8EncoderError { minimum: SRGB8_ENCODE_LUT_SIZE, actual: 16 });
+        let mut table = [0; SRGB8_ENCODE_LUT_SIZE];
+        let encoder = Srgb8Encoder::new(&mut table).unwrap();
+        for step in 0..=u16::MAX {
+            let value = step as f32 / u16::MAX as f32;
+            let color = LinearRGBA::new(value, value, value, 1.0).premul();
+            let (actual, exact) =
+                (encoder.encode(color).to_array(), color.to_encoded_srgba8().to_array());
+            assert!(actual[0].abs_diff(exact[0]) <= 1,
+                "value={value}, actual={actual:?}, exact={exact:?}");
+        }
+        for alpha in [0.0, 0.01, 0.25, 0.5, 1.0] {
+            for value in [0.0, 0.001, 0.003_130_8, 0.01, 0.18, 0.5, 1.0] {
+                let color = LinearRGBA::new(value, value * 0.5, value * 0.25, alpha)
+                    .premul();
+                let (actual, exact) =
+                    (encoder.encode(color).to_array(), color.to_encoded_srgba8().to_array());
+                for channel in 0..4 {
+                    assert!(actual[channel].abs_diff(exact[channel]) <= 1,
+                        "actual={actual:?}, exact={exact:?}");
+                }
+            }
         }
     }
 }
