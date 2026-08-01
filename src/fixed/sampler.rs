@@ -220,6 +220,24 @@ impl<'a> RadialGradient<'a> {
         ramp_index_i64(parameter, denominator, self.ramp.len(), self.spread)
     }
 
+    fn sample_concentric_span(&self, x: i64, y: i64, len: u32,
+        emit: &mut impl FnMut(PremulSRGBA8)) {
+        const SUBPIXEL_SCALE: i64 = 1 << 8;
+        let (mut squared, mut step) = (
+            x * x + y * y,
+            2 * x * SUBPIXEL_SCALE + SUBPIXEL_SCALE * SUBPIXEL_SCALE,
+        );
+        let second_difference = 2 * SUBPIXEL_SCALE * SUBPIXEL_SCALE;
+        let mut floor = integer_sqrt_u64(squared as _);
+        for index in 0..len {
+            emit(self.ramp[self.concentric_ramp_index_with_floor(squared as _, floor)]);
+            if index + 1 == len { break; }
+            squared += step;
+            step += second_difference;
+            floor = nearby_integer_sqrt(squared as _, floor);
+        }
+    }
+
     fn parameter(&self, x: u32, y: u32) -> Option<(i128, i128)> {
         const HALF_PIXEL_RAW: i64 = 1 << 7;
         const SUBPIXEL_SCALE: u64 = 1 << 8;
@@ -291,18 +309,31 @@ impl PaintSampler for RadialGradient<'_> {
         let (half, scale) = (HALF_PIXEL_RAW as i64, SUBPIXEL_SCALE as i64);
         let (x, y) = (x as i64 * scale + half - self.start[0] as i64,
                       y as i64 * scale + half - self.start[1] as i64);
-        let (mut squared, mut step) = (
-            x * x + y * y, 2 * x * scale + scale * scale,
-        );
-        let second_difference = 2 * scale * scale;
-        let mut floor = integer_sqrt_u64(squared as _);
-        for index in 0..len {
-            emit(self.ramp[self.concentric_ramp_index_with_floor(squared as _, floor)]);
-            if index + 1 == len { break; }
-            squared += step;
-            step += second_difference;
-            floor = nearby_integer_sqrt(squared as _, floor);
+        if self.spread == SpreadMode::Pad && self.start_radius == 0 &&
+            self.radius_delta > 0 {
+            let radius = self.radius_delta as u64;
+            // Nearest-integer sqrt reaches `radius` iff squared > radius * (radius - 1).
+            let threshold = radius * (radius - 1);
+            let y_squared = (y * y) as u64;
+            let outer = self.ramp[self.ramp.len() - 1];
+            if y_squared > threshold {
+                for _ in 0..len { emit(outer); }
+                return;
+            }
+            let limit = integer_sqrt_u64(threshold - y_squared) as i64;
+            let first = (-(limit + x).div_euclid(scale))
+                .clamp(0, len as i64) as u32;
+            let end = ((limit - x).div_euclid(scale) + 1)
+                .clamp(0, len as i64) as u32;
+            for _ in 0..first { emit(outer); }
+            if first < end {
+                let x = x + first as i64 * scale;
+                self.sample_concentric_span(x, y, end - first, &mut emit);
+            }
+            for _ in end..len { emit(outer); }
+            return;
         }
+        self.sample_concentric_span(x, y, len, &mut emit);
     }
 }
 
@@ -542,6 +573,25 @@ impl PaintSampler for ConicGradient<'_> {
             let root = integer_sqrt(value);
             assert!(root * root <= value);
             if root < u64::MAX as u128 { assert!((root + 1) * (root + 1) > value); }
+        }
+
+        for radius in [Scalar::from_bits(1), Scalar::from_num(7.25),
+                       Scalar::from_num(40)] {
+            let gradient = RadialGradient::new(
+                (Scalar::from_num(12.5), Scalar::from_num(9.5)), radius,
+                &ramp, SpreadMode::Pad).unwrap();
+            for y in [0, 9, 24] {
+                let mut span = [PremulSRGBA8::zeroed(); 33];
+                let mut count = 0;
+                gradient.sample_span(3, y, span.len() as _, |color| {
+                    span[count] = color;
+                    count += 1;
+                });
+                assert_eq!(count, span.len());
+                for (offset, color) in span.into_iter().enumerate() {
+                    assert_eq!(color, gradient.sample(3 + offset as u32, y));
+                }
+            }
         }
     }
 

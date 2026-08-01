@@ -323,7 +323,7 @@ the publication settings: 500 warm-ups, 5,000 timed frames, and nine samples on
 | 1 fractional rectangle | 3.98 µs | 4.27 µs | 3.69 µs |
 | 64 fractional rectangles | 60.02 µs | 99.76 µs | 33.58 µs |
 | large linear gradient | 63.53 µs | 121.65 µs | 31.81 µs |
-| large radial gradient | 115.47 µs | 338.54 µs | 41.41 µs |
+| large radial gradient | 115.47 µs | 274.17 µs | 41.41 µs |
 | large conic gradient, Fast | 184.07 µs | 379.91 µs | 67.71 µs |
 | sparse retained path mask | 5.68 µs | 6.44 µs | 30.03 µs¹ |
 | build circular path mask | 18.58 µs | 42.33 µs | 9.21 µs |
@@ -340,7 +340,7 @@ The important conclusions are:
   2.0–2.8×. Coverage integration and scalar paint/composition remain the main
   desktop gaps.
 - Fixed is generally 1.1–2.3× slower than f32 on this Apple CPU; the
-  square-root-heavy radial sampler is about 2.9×. Desktop ratios measure widened
+  square-root-heavy radial sampler is about 2.4×. Desktop ratios measure widened
   deterministic integer arithmetic and do not predict MCU throughput.
 - f32 and fixed are byte-identical for the rectangle grid, linear gradient, and
   cubic fill. Other fixed scenes differ only near boundaries: the reported

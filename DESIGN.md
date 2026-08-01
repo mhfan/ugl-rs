@@ -387,12 +387,13 @@ configurations. The declared MSRV is Rust 1.93; CI also checks stable Rust,
   per pixel. Scheduling four recurrence values together, while preserving the
   scalar update order, lets the compiler overlap independent square roots. The
   output checksum is unchanged; the matched f32 median fell from 202.22 through
-  123.98 to 115.47 µs, and fixed from 542.18 to 338.54 µs. The latest fixed
+  123.98 to 115.47 µs, and fixed from 542.18 through 338.54 to 274.17 µs. Fixed
   reduction comes from returning Pad endpoints before the invariant ramp-index
-  division once the rounded distance is outside the gradient interval. A
-  per-pixel squared-distance endpoint classifier was rejected: it helped the
-  radius-112 matched scene but nearly doubled the radius-180 sampler cost by
-  adding a branch to its predominantly interior loop. Blend2D measures
+  division, then dividing a concentric Pad row into constant left/right regions
+  and one branch-free interior recurrence. A per-pixel squared-distance endpoint
+  classifier was rejected because it nearly doubled the predominantly interior
+  radius-180 sampler; geometric row partitioning keeps that diagnostic near
+  441 µs while accelerating the radius-112 matched scene. Blend2D measures
   41.41 µs, leaving SIMD square-root throughput and encoded ramp/compositor
   batching as the measured paint costs.
 - The matched conic scene explicitly uses the opt-in `Fast` angle policy while
