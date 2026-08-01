@@ -73,6 +73,36 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert_eq!(target.pixel_bytes(0, 0), before);
 }
 
+#[test] fn packed_solid_source_over_matches_scalar_arithmetic() {
+    let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
+    let mut state = 0x9e37_79b9_u32;
+    for _ in 0..10_000 {
+        let mut next = || { state = state.wrapping_mul(1_664_525)
+            .wrapping_add(1_013_904_223); state as u8 };
+        let (source_alpha, coverage) = (next(), next());
+        let source = GenericRGBA::<u8>::new(
+            next().min(source_alpha), next().min(source_alpha),
+            next().min(source_alpha), source_alpha).premul();
+        let terms = solid_blend_terms(source, coverage);
+        let mut actual = [0_u8; 12];
+        for pixel in actual.chunks_exact_mut(4) {
+            let alpha = next();
+            pixel.copy_from_slice(&[
+                next().min(alpha), next().min(alpha), next().min(alpha), alpha]);
+        }
+        let mut expected = actual;
+        for pixel in expected.chunks_exact_mut(4) {
+            for (destination, source) in pixel[..3].iter_mut().zip(terms.0) {
+                *destination = source.saturating_add(
+                    mul_div_255(*destination, terms.2));
+            }
+            pixel[3] = terms.1.saturating_add(mul_div_255(pixel[3], terms.2));
+        }
+        blend_solid_bytes(&mut actual, terms);
+        assert_eq!(actual, expected);
+    }
+}
+
 #[test] fn solid_rectangle_renders_end_to_end_without_allocation() {
     let path = rectangle(1.0, 1.0, 3.0, 3.0);
     let mut pixels = vec![0; 4 * 4 * 4];

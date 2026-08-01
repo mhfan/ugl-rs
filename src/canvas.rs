@@ -172,12 +172,29 @@ fn solid_blend_terms(color: PremulRGBA<u8>, coverage: u8) -> ([u8; 3], u8, u8) {
 }
 
 fn blend_solid_bytes(bytes: &mut [u8], (source, alpha, inverse): ([u8; 3], u8, u8)) {
-    let mul_div_255 = |a, b| (a as u16 * b as u16 + 127).div_euclid(255) as u8;
-    for pixel in bytes.chunks_exact_mut(BYTES_PER_PIXEL as _) {
-        for (channel, source) in pixel[..3].iter_mut().zip(source) {
-            *channel = source.saturating_add(mul_div_255(*channel, inverse));
-        }
-        pixel[3] = alpha.saturating_add(mul_div_255(pixel[3], inverse));
+    let source = u32::from_le_bytes([source[0], source[1], source[2], alpha]) as u64;
+    let source_pair = source | source << 32;
+    let scale_lanes = |lanes: u64| {
+        let product = lanes * inverse as u64 + 0x0080_0080_0080_0080;
+        (product + ((product >> 8) & 0x00ff_00ff_00ff_00ff)) >> 8 &
+            0x00ff_00ff_00ff_00ff
+    };
+    let mut pairs = bytes.chunks_exact_mut(8);
+    for pair in &mut pairs {
+        let destination = u64::from_le_bytes(pair.try_into().unwrap());
+        let result = if destination == 0 { source_pair } else {
+            let rb = scale_lanes(destination & 0x00ff_00ff_00ff_00ff);
+            let ag = scale_lanes((destination >> 8) & 0x00ff_00ff_00ff_00ff) << 8;
+            source_pair + rb + ag
+        };
+        pair.copy_from_slice(&result.to_le_bytes());
+    }
+    let remainder = pairs.into_remainder();
+    if remainder.len() == 4 {
+        let destination = u32::from_le_bytes(remainder.try_into().unwrap()) as u64;
+        let rb = scale_lanes(destination & 0x00ff_00ff);
+        let ag = scale_lanes((destination >> 8) & 0x00ff_00ff) << 8;
+        remainder.copy_from_slice(&(source + rb + ag).to_le_bytes()[..4]);
     }
 }
 
