@@ -607,25 +607,16 @@ fn integrate_clamped_line(start: f32, end: f32, height: f32) -> f32 {
 fn emit_cell_runs<S>(cells: &[Cell], x_offset: usize, y: u32,
     sink: &mut S) -> Result<(), RasterError<S::Error>> where S: CoverageSink {
     let quantize = |coverage: f32| (coverage.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
-    let (mut accumulated, mut run_start, mut run_coverage, mut x) = (0.0, 0, 0, 0);
-    while x < cells.len() {
-        const EMPTY_BLOCK: usize = 4;
-        if accumulated == 0.0 && run_coverage == 0 && x + EMPTY_BLOCK <= cells.len() &&
-            cells[x..x + EMPTY_BLOCK].iter().all(|cell|
-                cell.coverage == 0.0 && cell.delta == 0.0) {
-            x += EMPTY_BLOCK;
-            continue;
-        }
-        let cell = cells[x];
+    let (mut accumulated, mut run_start, mut run_coverage) = (0.0, 0, 0);
+    for (x, cell) in cells.iter().enumerate() {
         accumulated += cell.delta;
         let coverage = quantize(accumulated + cell.coverage);
-        if coverage == run_coverage { x += 1; continue; }
+        if coverage == run_coverage { continue; }
         if run_coverage != 0 {
             sink.span((x_offset + run_start) as _, y, (x - run_start) as _, run_coverage)
                 .map_err(RasterError::Sink)?;
         }
         run_start = x;  run_coverage = coverage;
-        x += 1;
     }
     if run_coverage != 0 {
         sink.span((x_offset + run_start) as _, y,
