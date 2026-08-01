@@ -130,7 +130,7 @@ pub use crate::color::{PremulRGBA, RGBA};
 } */
 
 /** ```
-    use ugl_rs::blend::RGBA;
+    use ugl_rs::float::blend::RGBA;
     let draw = RGBA::<f32>::new(0.3, 0.2, 0.1, 1.0).premul();
     let back = RGBA::<f32>::new(0.2, 0.4, 0.7, 1.0).premul();
 

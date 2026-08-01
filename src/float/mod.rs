@@ -1,6 +1,7 @@
 //! Floating-point vector rendering backend.
 
 mod math;
+pub mod blend;
 pub mod dash;
 pub mod raster;
 pub mod stroke;

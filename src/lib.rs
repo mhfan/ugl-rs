@@ -9,8 +9,6 @@ pub mod common;
 pub use common::{color, dash, edge, geometry, raster, stroke};
 pub(crate) use common::render;
 
-#[cfg(feature = "f32")] pub mod blend; // color blending & alpha compositing
-
 #[cfg(feature = "f32")] pub use float::sampler;
 #[cfg(not(feature = "f32"))] pub mod sampler {
     pub use crate::render::{GradientError, SolidPaint, SpreadMode};
