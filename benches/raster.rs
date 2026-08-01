@@ -1139,10 +1139,15 @@ fn benchmark_clip_masks(c: &mut Criterion) {
                              ("complex_grid", &grid)] {
             let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
             canvas.set_clip_path(clip).unwrap();
-            path_build.bench_function(name, |b| b.iter(|| {
+            path_build.bench_function(BenchmarkId::new("warm", name), |b| b.iter(|| {
                 canvas.clear_clip().set_clip_path(black_box(clip)).unwrap();
                 black_box(canvas.target());
             }));
+            path_build.bench_function(BenchmarkId::new("cold", name), |b| b.iter_batched(||
+                ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap(), |mut canvas| {
+                    canvas.set_clip_path(black_box(clip)).unwrap();
+                    black_box(canvas.target());
+                }, BatchSize::SmallInput));
         }
         path_build.finish();
 
@@ -1172,6 +1177,58 @@ fn benchmark_clip_masks(c: &mut Criterion) {
             black_box(canvas.target());
         }, BatchSize::SmallInput));
         intersection.finish();
+
+        let mut path_intersection = c.benchmark_group("clip_path_intersect_fixed");
+        path_intersection.bench_function("path_rect", |b| b.iter_batched(|| {
+            let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
+            canvas.set_clip_path(&slender).unwrap(); canvas
+        }, |mut canvas| {
+            canvas.set_clip_rect(rect); black_box(canvas.target());
+        }, BatchSize::SmallInput));
+        path_intersection.bench_function("path_mask", |b| b.iter_batched(|| {
+            let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
+            canvas.set_clip_path(&slender).unwrap(); canvas
+        }, |mut canvas| {
+            canvas.set_clip_mask(CoverageMask::new(
+                &dense_local, SIZE, SIZE, SIZE).unwrap());
+            black_box(canvas.target());
+        }, BatchSize::SmallInput));
+        path_intersection.bench_function("path_path", |b| b.iter_batched(|| {
+            let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
+            canvas.set_clip_path(&slender).unwrap(); canvas
+        }, |mut canvas| {
+            canvas.set_clip_path(&polygon).unwrap(); black_box(canvas.target());
+        }, BatchSize::SmallInput));
+        let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
+        canvas.set_clip_path(&slender).unwrap();
+        canvas.save().set_clip_path(&polygon).unwrap(); assert!(canvas.restore());
+        path_intersection.bench_function("save_path_restore", |b| b.iter(|| {
+            canvas.save().set_clip_path(&polygon).unwrap();
+            assert!(canvas.restore()); black_box(canvas.target());
+        }));
+        path_intersection.finish();
+
+        let mut path_draw = c.benchmark_group("clip_path_draw_fixed");
+        path_draw.throughput(Throughput::Elements(SIZE as u64 * SIZE as u64));
+        for mode in ["none", "rect", "sparse_path", "nested_paths"] {
+            path_draw.bench_function(mode, |b| b.iter_batched(|| {
+                let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
+                canvas.set_color(SRGBA::new(40, 120, 220, 192));
+                match mode {
+                    "rect" => { canvas.set_clip_rect(rect); }
+                    "sparse_path" => { canvas.set_clip_path(&slender).unwrap(); }
+                    "nested_paths" => {
+                        canvas.set_clip_path(&slender).unwrap()
+                            .set_clip_path(&polygon).unwrap();
+                    }
+                    _ => {}
+                }
+                canvas
+            }, |mut canvas| {
+                canvas.fill(&path).unwrap(); black_box(canvas.target());
+            }, BatchSize::SmallInput));
+        }
+        path_draw.finish();
     }
 }
 

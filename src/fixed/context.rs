@@ -49,7 +49,7 @@ impl<'a> Workspace<'a> {
     dash_points: Vec<Point<Scalar>>, dash_contours: Vec<DashContour>,
     edges: Vec<Edge<Scalar>>, lines: Vec<Line>, segments: Vec<Segment>,
     trapezoids: Vec<Trapezoid>, row_area: Vec<u64>, strip_offsets: Vec<u32>,
-    strip_indices: Vec<u32>,
+    strip_indices: Vec<u32>, clip_strips: Vec<CoverageStrip>, clip_runs: Vec<CoverageRun>,
 }
 
 impl CanvasStorage {
@@ -342,12 +342,13 @@ struct OwnedSparseSink {
 }
 
 impl OwnedSparseSink {
-    fn new(region: (u32, u32, u32, u32)) -> Self {
+    fn new(region: (u32, u32, u32, u32), mut strips: Vec<CoverageStrip>,
+        mut runs: Vec<CoverageRun>) -> Self {
         let (_, top, _, bottom) = region;
-        Self {
-            strips: Vec::with_capacity((bottom.div_ceil(16) - top / 16) as _),
-            runs: Vec::with_capacity((bottom - top).saturating_mul(3) as _),
-        }
+        strips.clear(); runs.clear();
+        strips.reserve((bottom.div_ceil(16) - top / 16) as _);
+        runs.reserve((bottom - top).saturating_mul(3) as _);
+        Self { strips, runs }
     }
 }
 
@@ -392,9 +393,12 @@ impl Iterator for SparseRuns<'_> {
 }
 
 fn finish_sparse_clip(strips: Vec<CoverageStrip>, runs: Vec<CoverageRun>,
-    width: u32, height: u32) -> Result<CanvasClip, RenderError> {
-    let Some((first_y, first_run)) = SparseRuns::new(&strips, &runs).next()
-        else { return Ok(CanvasClip::Empty); };
+    width: u32, height: u32, storage: &mut CanvasStorage) ->
+    Result<CanvasClip, RenderError> {
+    let Some((first_y, first_run)) = SparseRuns::new(&strips, &runs).next() else {
+        (storage.clip_strips, storage.clip_runs) = (strips, runs);
+        return Ok(CanvasClip::Empty);
+    };
     let opaque_rect = {
         let mut expected_y = first_y;
         let mut iter = SparseRuns::new(&strips, &runs);
@@ -406,6 +410,7 @@ fn finish_sparse_clip(strips: Vec<CoverageStrip>, runs: Vec<CoverageRun>,
         }).then_some((first_run.x, first_y, first_run.x + first_run.len, expected_y))
     };
     if let Some(bounds) = opaque_rect.and_then(mask_rect) {
+        (storage.clip_strips, storage.clip_runs) = (strips, runs);
         return Ok(CanvasClip::Rect(bounds));
     }
 
@@ -421,6 +426,9 @@ fn finish_sparse_clip(strips: Vec<CoverageStrip>, runs: Vec<CoverageRun>,
         .and_then(|bytes| runs.len().checked_mul(core::mem::size_of::<CoverageRun>())
             .and_then(|runs| bytes.checked_add(runs)))
         .ok_or(RenderError::DimensionsOverflow)?;
+    // Encoded bytes also proxy replay cost: fragmented coverage pays one full
+    // CoverageRun per short span. Capacity is retained either here or as Canvas
+    // scratch, so charging it again would make the choice history-dependent.
     if sparse_bytes < dense_len {
         return Ok(CanvasClip::Sparse {
             strips: Rc::new(strips), runs: Rc::new(runs), width, height,
@@ -433,6 +441,7 @@ fn finish_sparse_clip(strips: Vec<CoverageStrip>, runs: Vec<CoverageRun>,
         let start = (y - top) as usize * stride as usize + (run.x - left) as usize;
         data[start..start + run.len as usize].fill(run.coverage);
     }
+    (storage.clip_strips, storage.clip_runs) = (strips, runs);
     Ok(CanvasClip::Path {
         data: data.into(), width, height, left, top, right, bottom, stride,
     })
@@ -845,9 +854,21 @@ impl<'target> Canvas<'target> {
     }
     pub fn restore(&mut self) -> bool {
         let Some(saved) = self.saved.pop() else { return false; };
+        self.recycle_clip();
         (self.state, self.clip) = (saved.draw, saved.clip); true
     }
-    pub fn clear_clip(&mut self) -> &mut Self { self.clip = CanvasClip::None; self }
+    fn recycle_clip(&mut self) {
+        let clip = core::mem::replace(&mut self.clip, CanvasClip::None);
+        if let CanvasClip::Sparse { strips, runs, .. } = clip {
+            if let Ok(mut strips) = Rc::try_unwrap(strips) {
+                strips.clear(); self.storage.clip_strips = strips;
+            }
+            if let Ok(mut runs) = Rc::try_unwrap(runs) {
+                runs.clear(); self.storage.clip_runs = runs;
+            }
+        }
+    }
+    pub fn clear_clip(&mut self) -> &mut Self { self.recycle_clip(); self }
     pub fn set_clip_rect(&mut self, value: Rect<Scalar>) -> &mut Self {
         if let CanvasClip::Sparse { strips, runs, width, height } = &self.clip {
             self.clip = clip_sparse_rect(strips, runs, *width, *height, value);
@@ -889,14 +910,17 @@ impl<'target> Canvas<'target> {
         self.plan_fill(path)?;
         let (width, height) = (self.target.width(), self.target.height());
         let region = edge_region(&self.storage.edges, width, height);
-        let mut sink = OwnedSparseSink::new(region);
+        let mut sink = OwnedSparseSink::new(region,
+            core::mem::take(&mut self.storage.clip_strips),
+            core::mem::take(&mut self.storage.clip_runs));
         if region.0 < region.2 && region.1 < region.3 {
             let mut workspace = self.storage.workspace();
             rasterize_lines_region(workspace.geometry.lines, width, height, region,
                 self.state.fill_rule, &mut workspace.raster, &mut sink)
                 .map_err(map_render_error)?;
         }
-        let mut clip = finish_sparse_clip(sink.strips, sink.runs, width, height)?;
+        let mut clip = finish_sparse_clip(
+            sink.strips, sink.runs, width, height, &mut self.storage)?;
         intersect_canvas_clip(&self.clip, &mut clip);
         self.clip = clip;
         Ok(self)

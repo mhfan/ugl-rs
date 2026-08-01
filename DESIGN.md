@@ -823,6 +823,26 @@ from about 375 to 39 µs for a slender path, 588–597 to 60 µs for a polygon, 
 650 to 85 µs for a complex checker grid (roughly 7.6–9.8×). Cold construction
 of that 512×512 slender path, including scratch growth, uses 11 allocations and
 peaks at 24,316 bytes instead of allocating a 262,144-byte local mask.
+`CanvasStorage` now recycles uniquely owned strip/run vectors across `clear_clip`
+and `restore`; the warmed slender case consequently performs only the two 40-byte
+`Rc` control-block allocations. Its approximately 39 µs latency is unchanged,
+confirming that fixed rasterization rather than allocation is now dominant.
+
+The fixed path benchmark separates warmed and cold construction: slender is
+about 39/99 µs, the polygon 61/132 µs, and the checker grid 85/178 µs. Measured
+intersection costs are about 70–83 µs for path/rectangle, 142–150 µs for
+path/dense-mask, 159–160 µs for path/path, and 73–74 µs for a warmed
+`save`/path/`restore` loop. Drawing the same full-target shape costs 125–132 µs
+without a clip, 151–160 µs with a rectangle, 192–198 µs through the slender
+sparse path, and 146–154 µs after two paths reduce the surviving region.
+
+Sparse/dense selection deliberately compares logical encoded bytes rather than
+vector capacity. Every short span pays for a complete `CoverageRun`, so this
+already incorporates run count, fragmentation, and average run length. Spare
+capacity remains owned by the Canvas in either representation; including it in
+the decision would make identical coverage choose differently based on history.
+The measured sparse replay cost does not yet justify an additional arbitrary
+time-weighting constant.
 
 Retained memory, initial mask allocation, rasterization, and subsequent
 intersection now scale with the clipped region. Real-device allocator and
