@@ -457,21 +457,27 @@ impl PaintSampler for ConicGradient<'_> {
 
 #[cfg(test)] mod tests {
     use super::*;
-    use super::super::math::{cordic_turn, integer_sqrt};
-    use crate::{color::SRGBA, float::{atan2, floor}, sampler::{
+    use super::super::math::integer_sqrt;
+    #[cfg(feature = "f32")] use super::super::math::cordic_turn;
+    use crate::color::SRGBA;
+    #[cfg(feature = "f32")]
+    use crate::{float::{atan2, floor}, sampler::{
         ConicGradient as ReferenceConicGradient, GradientStop, GradientStops,
         LinearGradient as ReferenceLinearGradient, PaintSampler as ReferencePaintSampler,
         RadialGradient as ReferenceRadialGradient,
     }};
 
+    #[cfg(feature = "f32")]
     const TAU: f32 = core::f32::consts::PI * 2.0;
 
     fn encoded(color: SRGBA<u8>) -> PremulSRGBA8 { color.premul_encoded() }
+    #[cfg(feature = "f32")]
     fn red_blue_stops() -> [GradientStop; 2] {
         [GradientStop::new(0.0, SRGBA::red()),
          GradientStop::new(1.0, SRGBA::blue())]
     }
 
+    #[cfg(feature = "f32")]
     #[test] fn linear_gradient_matches_the_encoded_reference_ramp() {
         let stops = red_blue_stops();
         let mut storage = [PremulSRGBA8::zeroed(); 257];
@@ -540,6 +546,7 @@ impl PaintSampler for ConicGradient<'_> {
     }
 
 
+    #[cfg(feature = "f32")]
     #[test] fn concentric_radial_matches_the_encoded_reference_ramp() {
         let stops = red_blue_stops();
         let mut storage = [PremulSRGBA8::zeroed(); 257];
@@ -612,6 +619,7 @@ impl PaintSampler for ConicGradient<'_> {
     }
 
 
+    #[cfg(feature = "f32")]
     #[test] fn two_circle_radial_matches_quadratic_and_linear_references() {
         fn assert_close(fixed: &RadialGradient<'_>,
             reference: &ReferenceRadialGradient<'_>,
@@ -681,6 +689,7 @@ impl PaintSampler for ConicGradient<'_> {
     }
 
 
+    #[cfg(feature = "f32")]
     #[test] fn conic_cordic_tracks_exact_angles_and_encoded_ramp() {
         assert_eq!(cordic_turn( 1,  0), Angle::ZERO.to_bits());
         assert_eq!(cordic_turn( 0,  1), Angle::QUARTER_TURN.to_bits());

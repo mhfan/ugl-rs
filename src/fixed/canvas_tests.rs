@@ -1,9 +1,10 @@
 use super::*;
-use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection}, canvas::{
-        RenderOptions as FloatRenderOptions, RenderWorkspace as FloatRenderWorkspace,
-        rasterize_path_clip as rasterize_float_path_clip},
-    color::{PremulRGBA, PremulSRGBA8, SRGBA as RGBA}, edge::Edge,
+use crate::{color::{PremulRGBA, PremulSRGBA8, SRGBA as RGBA}, edge::Edge,
     geometry::{Affine, PathBuilder}, render::SpreadMode};
+#[cfg(feature = "f32")]
+use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersection}, canvas::{
+    RenderOptions as FloatRenderOptions, RenderWorkspace as FloatRenderWorkspace,
+    rasterize_path_clip as rasterize_float_path_clip}};
 
 #[test] fn planners_return_exact_capacities_for_fill_stroke_and_dash() {
     use crate::{fixed::{Scalar, dash::Pattern}, stroke::StrokeContour};
@@ -52,12 +53,14 @@ use crate::{analytic::{Cell as AnalyticCell, Intersection as AnalyticIntersectio
     assert_eq!(dashed.stroke.render.edges, 4);
 }
 
+#[cfg(feature = "f32")]
 struct AnalyticBuffers<const EDGES: usize, const WIDTH: usize> {
     intersections: [AnalyticIntersection; EDGES],
     edges: [Edge; EDGES], cells: [AnalyticCell; WIDTH],
     row_offsets: [u32; 9], edge_indices: [u32; EDGES],
 }
 
+#[cfg(feature = "f32")]
 impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     fn new() -> Self { Self {
         intersections: [AnalyticIntersection::default(); EDGES],
@@ -102,18 +105,21 @@ impl<const EDGES: usize, const WIDTH: usize> AnalyticBuffers<EDGES, WIDTH> {
     assert!(mask_data[..12].iter().any(|&coverage| coverage != u8::MAX));
     assert_eq!(mask_data[12..], [17, 17]);
 
-    let mut reference_builder = PathBuilder::new();
-    reference_builder.move_to((0.5, 2.5))
-        .quad_to((2.0, -0.5), (3.5, 2.5)).line_to((0.5, 2.5)).close();
-    let mut reference_data = [0; 12];
-    let mut reference_buffers = AnalyticBuffers::<32, 4>::new();
-    rasterize_float_path_clip(&reference_builder.build(), Affine::identity(),
-        FloatRenderOptions::default(),
-        &mut CoverageMaskMut::new(&mut reference_data, 4, 3, 4).unwrap(),
-        &mut reference_buffers.workspace()).unwrap();
-    for (fixed, reference) in mask_data[..12].iter().zip(reference_data) {
-        assert!(fixed.abs_diff(reference) <= 2,
-            "fixed={fixed}, reference={reference}");
+    #[cfg(feature = "f32")]
+    {
+        let mut reference_builder = PathBuilder::new();
+        reference_builder.move_to((0.5, 2.5))
+            .quad_to((2.0, -0.5), (3.5, 2.5)).line_to((0.5, 2.5)).close();
+        let mut reference_data = [0; 12];
+        let mut reference_buffers = AnalyticBuffers::<32, 4>::new();
+        rasterize_float_path_clip(&reference_builder.build(), Affine::identity(),
+            FloatRenderOptions::default(),
+            &mut CoverageMaskMut::new(&mut reference_data, 4, 3, 4).unwrap(),
+            &mut reference_buffers.workspace()).unwrap();
+        for (fixed, reference) in mask_data[..12].iter().zip(reference_data) {
+            assert!(fixed.abs_diff(reference) <= 2,
+                "fixed={fixed}, reference={reference}");
+        }
     }
 
     let mut untouched = [23; 12];

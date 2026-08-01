@@ -506,6 +506,7 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
         assert_eq!(x_bounds(&square), (fixed(1.0), fixed(7.0)));
     }
 
+    #[cfg(feature = "f32")]
     #[test] fn diagonal_offsets_track_the_f32_reference() {
         let options = Options::new(fixed(2.0)).unwrap();
         let actual = collect(&[(2.0, 2.0), (6.0, 6.0)], false, options);

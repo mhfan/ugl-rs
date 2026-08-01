@@ -2,6 +2,7 @@
 use super::*;
 use alloc::{vec, vec::Vec};
 use core::convert::Infallible;
+#[cfg(feature = "f32")]
 use crate::analytic::{Intersection as AnalyticIntersection,
     Workspace as AnalyticWorkspace, rasterize_edges as rasterize_edges_analytic};
 
@@ -18,6 +19,7 @@ fn polygon_edges<T: Copy + PartialOrd>(points: &[Point<T>]) -> Vec<Edge<T>> {
     edges
 }
 
+#[cfg(feature = "f32")]
 fn assert_coverage_near(
     actual: &[u8], expected: &[u8], tolerance: u8, context: impl core::fmt::Display) {
     assert_eq!(actual.len(), expected.len(), "{context}: coverage dimensions differ");
@@ -71,6 +73,7 @@ fn render_region(edges: &[Edge<Scalar>], width: usize, height: usize,
     pixels
 }
 
+#[cfg(feature = "f32")]
 fn render_analytic(edges: &[Edge], width: usize, height: usize,
     fill_rule: FillRule) -> Vec<u8> {
     let (mut pixels, mut row) = (vec![0; width * height], vec![0.0; width]);
@@ -146,6 +149,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(render(&edges, 4, 1, FillRule::EvenOdd), [255, 0, 0, 255]);
 }
 
+#[cfg(feature = "f32")]
 #[test] fn triangles_track_the_f32_analytic_reference() {
     let mut state = 0x8f31_7a2d_u32;
     let mut random_raw = || {
@@ -168,6 +172,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     }
 }
 
+#[cfg(feature = "f32")]
 #[test] fn self_intersections_track_the_f32_analytic_reference() {
     let scenes = [[(0, 0), (512, 512), (0, 512), (512, 0)],
                     [(32, 17), (737, 491), (61, 690), (689, 3)],
@@ -197,6 +202,7 @@ fn render_analytic(edges: &[Edge], width: usize, height: usize,
     assert_eq!(crossing_event(left, right), Some(Crossing { y: 205, x: 307 }));
 }
 
+#[cfg(feature = "f32")]
 #[test] fn randomized_quadrilaterals_track_the_f32_reference() {
     let mut state = 0xd431_72a9_u32;
     let mut coordinate = || {

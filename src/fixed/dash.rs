@@ -164,12 +164,15 @@ fn dash_segment<W: DashOutput<Point<Scalar>>>(
 
 #[cfg(test)] mod tests {
 use super::*;
-use crate::{dash::{DashContour, DashError, DashRequirements, DashWorkspace}, float::dash::{
-    DashPattern as ReferencePattern, dash_polyline as reference_dash_polyline,
-    dash_requirements}};
-use alloc::vec::Vec;
-use crate::fixed::{DEVICE_RAW_LIMIT, Scalar};
+use crate::dash::{DashContour, DashError, DashRequirements, DashWorkspace};
+#[cfg(feature = "f32")]
+use crate::float::dash::{DashPattern as ReferencePattern,
+    dash_polyline as reference_dash_polyline, dash_requirements};
+#[cfg(feature = "f32")] use alloc::vec::Vec;
+use crate::fixed::Scalar;
+#[cfg(feature = "f32")] use crate::fixed::DEVICE_RAW_LIMIT;
 
+#[cfg(feature = "f32")]
 fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->
     Result<Vec<Vec<Point>>, DashError> {
     let pattern = ReferencePattern::new(lengths, phase).unwrap();
@@ -180,6 +183,7 @@ fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->
     Ok(dashed.contours().map(|(points, _)| points.to_vec()).collect())
 }
 
+    #[cfg(feature = "f32")]
     #[test] fn dash_matches_f32_on_exact_metric_segments() {
         let fixed = Scalar::from_num;
         let fixed_points = [(fixed(0), fixed(0)).into(), (fixed(6), fixed(8)).into()];
@@ -251,6 +255,7 @@ fn collect(points: &[Point], closed: bool, lengths: &[f32], phase: f32) ->
     }
 
 
+    #[cfg(feature = "f32")]
     #[test] fn randomized_f32_and_fixed_dash_outputs_remain_bounded() {
         let mut state = 0x4d59_5df4_d0f3_3173_u64;
         let mut random = || {
