@@ -349,6 +349,44 @@ fn benchmark_f32(c: &mut Criterion) {
         black_box(&pixels);
     }));
 
+    let encoded_stop_values = [
+        GradientStop::new(0.0, RGBA::new(240, 20, 80, 32)),
+        GradientStop::new(1.0, RGBA::new(30, 60, 250, 224)),
+    ];
+    let mut encoded_ramp = vec![PremulSRGBA8::zeroed(); 1024];
+    let encoded_stops =
+        GradientStops::with_ramp(&encoded_stop_values, &mut encoded_ramp).unwrap();
+    let encoded_radial = RadialGradient::new(
+        (WIDTH as f32 * 0.5, HEIGHT as f32 * 0.5), WIDTH as f32 * 0.7,
+        encoded_stops, SpreadMode::Pad).unwrap();
+    let encoded_conic = ConicGradient::with_angle_mode(
+        (WIDTH as f32 * 0.5, HEIGHT as f32 * 0.5), 0.37, encoded_stops,
+        ConicAngleMode::Fast).unwrap();
+    group.bench_function(BenchmarkId::new(
+        "analytic_encoded_radial", "64_rectangles"), |b| b.iter(|| {
+            pixels.fill(0);
+            let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+            render_paint(&path, Affine::identity(), &encoded_radial, RenderOptions::default(),
+                &mut target, &mut RenderWorkspace {
+                    edges: &mut edges, intersections: &mut analytic_intersections,
+                    cells: &mut analytic_cells,
+                    row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+                }).unwrap();
+            black_box(&pixels);
+        }));
+    group.bench_function(BenchmarkId::new(
+        "analytic_encoded_conic_fast", "64_rectangles"), |b| b.iter(|| {
+            pixels.fill(0);
+            let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+            render_paint(&path, Affine::identity(), &encoded_conic, RenderOptions::default(),
+                &mut target, &mut RenderWorkspace {
+                    edges: &mut edges, intersections: &mut analytic_intersections,
+                    cells: &mut analytic_cells,
+                    row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+                }).unwrap();
+            black_box(&pixels);
+        }));
+
     let mut linear_pixels =
         vec![LinearPremulRGBA::default(); WIDTH as usize * HEIGHT as usize];
     group.bench_function(BenchmarkId::new("analytic_linear_working", "64_rectangles"),
