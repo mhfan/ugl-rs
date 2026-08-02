@@ -1188,14 +1188,14 @@ fn benchmark_clip_masks(c: &mut Criterion) {
         let mut canvas = ugl_rs::float::Canvas::new(SIZE, SIZE).unwrap();
         build.bench_function(BenchmarkId::new("f32", name), |b| b.iter(|| {
             let mask = CoverageMask::new(black_box(bytes), SIZE, SIZE, SIZE).unwrap();
-            canvas.clear_clip().set_clip_mask(mask);
+            canvas.clear_clip().set_clip_mask(mask).unwrap();
             black_box(canvas.target());
         }));
         #[cfg(feature = "fixed")] {
             let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
             build.bench_function(BenchmarkId::new("fixed", name), |b| b.iter(|| {
                 let mask = CoverageMask::new(black_box(bytes), SIZE, SIZE, SIZE).unwrap();
-                canvas.clear_clip().set_clip_mask(mask);
+                canvas.clear_clip().set_clip_mask(mask).unwrap();
                 black_box(canvas.target());
             }));
         }
@@ -1210,7 +1210,7 @@ fn benchmark_clip_masks(c: &mut Criterion) {
     draw.throughput(Throughput::Elements(SIZE as u64 * SIZE as u64));
     for (name, bytes) in masks {
         let mut canvas = ugl_rs::float::Canvas::new(SIZE, SIZE).unwrap();
-        canvas.set_clip_mask(CoverageMask::new(bytes, SIZE, SIZE, SIZE).unwrap())
+        canvas.set_clip_mask(CoverageMask::new(bytes, SIZE, SIZE, SIZE).unwrap()).unwrap()
             .set_color(SRGBA::new(40, 120, 220, 192));
         draw.bench_function(name, |b| b.iter(|| {
             canvas.target_mut().as_bytes_mut().fill(0);
@@ -1268,7 +1268,7 @@ fn benchmark_clip_masks(c: &mut Criterion) {
         draw.throughput(Throughput::Elements(SIZE as u64 * SIZE as u64));
         for (name, bytes) in masks {
             let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
-            canvas.set_clip_mask(CoverageMask::new(bytes, SIZE, SIZE, SIZE).unwrap())
+            canvas.set_clip_mask(CoverageMask::new(bytes, SIZE, SIZE, SIZE).unwrap()).unwrap()
                 .set_color(SRGBA::new(40, 120, 220, 192));
             draw.bench_function(name, |b| b.iter(|| {
                 canvas.target_mut().as_bytes_mut().fill(0);
@@ -1323,7 +1323,8 @@ fn benchmark_clip_masks(c: &mut Criterion) {
                               ("sparse_diagonal", &sparse_diagonal[..])] {
             intersection.bench_function(name, |b| b.iter_batched(|| {
                 let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
-                canvas.set_clip_mask(CoverageMask::new(bytes, SIZE, SIZE, SIZE).unwrap());
+                canvas.set_clip_mask(
+                    CoverageMask::new(bytes, SIZE, SIZE, SIZE).unwrap()).unwrap();
                 canvas
             }, |mut canvas| {
                 canvas.set_clip_rect(rect);
@@ -1333,10 +1334,10 @@ fn benchmark_clip_masks(c: &mut Criterion) {
         intersection.bench_function("sparse_sparse", |b| b.iter_batched(|| {
             let mut canvas = ugl_rs::fixed::Canvas::new(SIZE, SIZE).unwrap();
             canvas.set_clip_mask(
-                CoverageMask::new(&sparse_diagonal, SIZE, SIZE, SIZE).unwrap());
+                CoverageMask::new(&sparse_diagonal, SIZE, SIZE, SIZE).unwrap()).unwrap();
             canvas
         }, |mut canvas| {
-            canvas.set_clip_mask(overlap_mask);
+            canvas.set_clip_mask(overlap_mask).unwrap();
             black_box(canvas.target());
         }, BatchSize::SmallInput));
         intersection.finish();
@@ -1353,7 +1354,7 @@ fn benchmark_clip_masks(c: &mut Criterion) {
             canvas.set_clip_path(&slender).unwrap(); canvas
         }, |mut canvas| {
             canvas.set_clip_mask(CoverageMask::new(
-                &dense_local, SIZE, SIZE, SIZE).unwrap());
+                &dense_local, SIZE, SIZE, SIZE).unwrap()).unwrap();
             black_box(canvas.target());
         }, BatchSize::SmallInput));
         path_intersection.bench_function("path_path", |b| b.iter_batched(|| {

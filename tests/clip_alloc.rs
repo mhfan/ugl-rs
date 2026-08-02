@@ -81,7 +81,7 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, AllocationStats) {
     for y in 0..SIZE { coverage[y * SIZE + y] = 128; }
     let mask = CoverageMask::new(&coverage, SIZE as _, SIZE as _, SIZE as _).unwrap();
     let mut canvas = FixedCanvas::new(SIZE as _, SIZE as _).unwrap();
-    let (_, retain) = measure(|| { canvas.set_clip_mask(mask); });
+    let (_, retain) = measure(|| { canvas.set_clip_mask(mask).unwrap(); });
 
     let fixed = Scalar::from_num;
     let mut shape = PathBuilder::new();
@@ -108,7 +108,7 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, AllocationStats) {
     } }
     let mut dense_canvas = FixedCanvas::new(DENSE_SIZE as _, DENSE_SIZE as _).unwrap();
     dense_canvas.set_clip_mask(CoverageMask::new(
-        &dense, DENSE_SIZE as _, DENSE_SIZE as _, DENSE_SIZE as _).unwrap());
+        &dense, DENSE_SIZE as _, DENSE_SIZE as _, DENSE_SIZE as _).unwrap()).unwrap();
     dense_canvas.save();
     let dense_rect = Rect::from_ltrb(
         Scalar::from_num(8.5), Scalar::from_num(8.5),
@@ -145,7 +145,7 @@ fn measure<T>(operation: impl FnOnce() -> T) -> (T, AllocationStats) {
     for y in 0..SIZE { coverage[y * SIZE + y] = 128; }
     let mask = CoverageMask::new(&coverage, SIZE as _, SIZE as _, SIZE as _).unwrap();
     let mut canvas = FloatCanvas::new(SIZE as _, SIZE as _).unwrap();
-    let (_, retain) = measure(|| { canvas.set_clip_mask(mask); });
+    let (_, retain) = measure(|| { canvas.set_clip_mask(mask).unwrap(); });
 
     let mut shape = PathBuilder::new();
     shape.move_to((0.0, 0.0)).line_to((SIZE as _, 0.0))

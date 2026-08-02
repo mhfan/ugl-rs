@@ -46,12 +46,13 @@ pub struct CoverageStrip { pub y: u32, pub run_start: u32, pub run_count: u32 }
 #[derive(Clone, Copy, Debug)] pub struct CoverageStrips<'a> {
     width: u32, height: u32,
     strips: &'a [CoverageStrip], runs: &'a [CoverageRun],
+    bounds: Option<(u32, u32, u32, u32)>,
 }
 
 impl<'a> CoverageStrips<'a> {
     pub(crate) fn from_parts(width: u32, height: u32,
         strips: &'a [CoverageStrip], runs: &'a [CoverageRun]) -> Self {
-        Self { width, height, strips, runs }
+        Self { width, height, strips, runs, bounds: sparse_bounds(strips, runs) }
     }
     pub fn width(&self) -> u32 { self.width }
     pub fn height(&self) -> u32 { self.height }
@@ -65,6 +66,20 @@ impl<'a> CoverageStrips<'a> {
             }
         }   Ok(())
     }
+}
+
+fn sparse_bounds(strips: &[CoverageStrip], runs: &[CoverageRun]) ->
+    Option<(u32, u32, u32, u32)> {
+    let first = runs.first()?;
+    let (mut left, mut top, mut right, mut bottom) =
+        (first.x, u32::MAX, first.x + first.len, 0);
+    for strip in strips { for run in &runs[strip.run_start as usize..
+        strip.run_start as usize + strip.run_count as usize] {
+        let y = strip.y + u32::from(run.row);
+        left = left.min(run.x); right = right.max(run.x + run.len);
+        top = top.min(y); bottom = bottom.max(y + 1);
+    } }
+    Some((left, top, right, bottom))
 }
 
 pub(crate) fn push_sparse_run(strips: &mut Vec<CoverageStrip>, runs: &mut Vec<CoverageRun>,
@@ -549,18 +564,7 @@ impl ClipMask for CoverageMask<'_> {
 
 impl ClipMask for CoverageStrips<'_> {
     fn dimensions(self) -> (u32, u32) { (self.width, self.height) }
-    fn bounds(self) -> Option<(u32, u32, u32, u32)> {
-        let first = self.runs.first()?;
-        let (mut left, mut top, mut right, mut bottom) =
-            (first.x, self.height, first.x + first.len, 0);
-        for strip in self.strips { for run in &self.runs[strip.run_start as usize..
-            strip.run_start as usize + strip.run_count as usize] {
-            let y = strip.y + u32::from(run.row);
-            left = left.min(run.x); right = right.max(run.x + run.len);
-            top = top.min(y); bottom = bottom.max(y + 1);
-        } }
-        Some((left, top, right, bottom))
-    }
+    fn bounds(self) -> Option<(u32, u32, u32, u32)> { self.bounds }
     fn clip_span<S: CoverageSink>(self, x: u32, y: u32, len: u32,
         coverage: u8, sink: &mut S) -> Result<(), S::Error> {
         let strip_y = y / 16 * 16;
@@ -698,5 +702,15 @@ fn equal_prefix(bytes: &[u8], value: u8) -> usize {
         let (_, runs) = intersect_sparse_masks(
             &left_strips, &left_runs, &right_strips, &right_runs);
         assert_eq!(runs, [CoverageRun { x: 2, len: 2, row: 0, coverage: 64 }]);
+    }
+
+    #[test] fn sparse_coverage_caches_its_non_zero_bounds() {
+        let strips = [CoverageStrip { y: 16, run_start: 0, run_count: 2 }];
+        let runs = [
+            CoverageRun { x: 7, len: 3, row: 2, coverage: 64 },
+            CoverageRun { x: 2, len: 4, row: 9, coverage: 128 },
+        ];
+        let coverage = CoverageStrips::from_parts(32, 32, &strips, &runs);
+        assert_eq!(coverage.bounds(), Some((2, 18, 10, 26)));
     }
 }

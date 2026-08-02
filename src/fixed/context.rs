@@ -7,7 +7,7 @@ use crate::{
         raster::{CoverageMask, FillRule, MaskKind, SparseCoverageSink, SparseStorage,
             clip_sparse_bounds, finish_sparse_coverage, intersect_sparse_masks,
             multiply_sparse_mask, sparse_mask_parts},
-        render::{Clip, DrawState, GlobalAlphaPaint},
+        render::{Clip, DrawState, GlobalAlphaPaint, validate_coverage_dimensions},
         stroke::{StrokeContour, StrokePathWorkspace},
         Pixmap, PixmapError, RenderError, SolidPaint},
     fixed::{DEVICE_RAW_LIMIT, Scalar, canvas::{DashedStrokePathOptions,
@@ -418,8 +418,10 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
         self.clip = Clip::Rect(rect); self
     }
 
-    pub fn set_clip_mask(&mut self, mask: CoverageMask<'clip>) -> &mut Self {
-        self.clip = Clip::Mask(mask); self
+    pub fn set_clip_mask(&mut self, mask: CoverageMask<'clip>) ->
+        Result<&mut Self, RenderError> {
+        validate_coverage_dimensions(mask.width(), mask.height(), self.target)?;
+        self.clip = Clip::Mask(mask); Ok(self)
     }
 
     pub fn fill(&mut self, path: &Path<Scalar>) -> Result<(), RenderError> {
@@ -649,20 +651,33 @@ impl<'target> Canvas<'target> {
             CanvasClip::Sparse { .. } => unreachable!(),
         }; self
     }
-    pub fn set_clip_mask(&mut self, value: CoverageMask<'_>) -> &mut Self {
-        if (value.width(), value.height()) == (self.target.width(), self.target.height()) {
-            match value.kind() {
-                MaskKind::Empty => { self.clip = CanvasClip::Empty; return self; }
-                MaskKind::OpaqueRect(bounds) => if let Some(rect) = mask_rect(bounds) {
-                    return self.set_clip_rect(rect);
-                },
-                MaskKind::Coverage(_) => {}
-            }
+    /// Intersects the current clip with a retained copy of `value`.
+    ///
+    /// Dimensions must match the target; validation happens before changing the clip.
+    ///
+    /// ```
+    /// use ugl_rs::{common::{RenderError, raster::CoverageMask}, fixed::Canvas};
+    ///
+    /// let pixels = [255];
+    /// let mask = CoverageMask::new(&pixels, 1, 1, 1).unwrap();
+    /// let mut canvas = Canvas::new(4, 2).unwrap();
+    /// assert!(matches!(canvas.set_clip_mask(mask),
+    ///     Err(RenderError::CoverageDimensionsMismatch { .. })));
+    /// ```
+    pub fn set_clip_mask(&mut self, value: CoverageMask<'_>) ->
+        Result<&mut Self, RenderError> {
+        validate_coverage_dimensions(value.width(), value.height(), &self.target)?;
+        match value.kind() {
+            MaskKind::Empty => { self.clip = CanvasClip::Empty; return Ok(self); }
+            MaskKind::OpaqueRect(bounds) => if let Some(rect) = mask_rect(bounds) {
+                self.set_clip_rect(rect); return Ok(self);
+            },
+            MaskKind::Coverage(_) => {}
         }
         let mut clip = sparse_canvas_mask(value).unwrap_or_else(|| copy_canvas_mask(value));
         normalize_canvas_clip(&mut clip);
         intersect_canvas_clip(&self.clip, &mut clip);
-        self.clip = clip; self
+        self.clip = clip; Ok(self)
     }
 
     /// Rasterizes an antialiased Q24.8 path and intersects it with the current clip.
@@ -805,12 +820,18 @@ impl<'target> Canvas<'target> {
     #[test] fn owning_canvas_specializes_empty_and_opaque_rectangle_masks() {
         let mut canvas = Canvas::new(4, 2).unwrap();
         let opaque = [0, 255, 255, 0, 0, 255, 255, 0];
-        canvas.set_clip_mask(CoverageMask::new(&opaque, 4, 2, 4).unwrap());
+        canvas.set_clip_mask(CoverageMask::new(&opaque, 4, 2, 4).unwrap()).unwrap();
         let CanvasClip::Rect(rect) = canvas.clip else { panic!("expected rectangle clip") };
         assert_eq!((rect.left(), rect.top(), rect.right(), rect.bottom()),
             (Scalar::from_num(1), Scalar::ZERO, Scalar::from_num(3), Scalar::from_num(2)));
 
-        canvas.set_clip_mask(CoverageMask::new(&[0; 8], 4, 2, 4).unwrap());
+        assert!(matches!(canvas.set_clip_mask(CoverageMask::new(&[255], 1, 1, 1).unwrap()),
+            Err(RenderError::CoverageDimensionsMismatch {
+                coverage: (1, 1), target: (4, 2),
+            })));
+        assert!(matches!(canvas.clip, CanvasClip::Rect(_)));
+
+        canvas.set_clip_mask(CoverageMask::new(&[0; 8], 4, 2, 4).unwrap()).unwrap();
         assert!(matches!(canvas.clip, CanvasClip::Empty));
 
         let mut path = PathBuilder::new();
@@ -823,6 +844,7 @@ impl<'target> Canvas<'target> {
 
         let (coverage, fixed) = ([0, 128, 128, 0, 0, 128, 128, 0], Scalar::from_num);
         canvas.clear_clip().set_clip_mask(CoverageMask::new(&coverage, 4, 2, 4).unwrap())
+            .unwrap()
             .set_clip_rect(Rect::from_ltrb(fixed(3), fixed(0), fixed(4), fixed(2)).unwrap());
         assert!(matches!(canvas.clip, CanvasClip::Empty));
     }
@@ -831,7 +853,7 @@ impl<'target> Canvas<'target> {
         let mut coverage = alloc::vec![0; 64 * 64];
         for y in 0..64 { coverage[y * 64 + y] = 128; }
         let mut canvas = Canvas::new(64, 64).unwrap();
-        canvas.set_clip_mask(CoverageMask::new(&coverage, 64, 64, 64).unwrap());
+        canvas.set_clip_mask(CoverageMask::new(&coverage, 64, 64, 64).unwrap()).unwrap();
         let CanvasClip::Sparse { strips, runs, .. } = &canvas.clip
             else { panic!("sparse mask was retained densely") };
         assert_eq!((strips.len(), runs.len()), (4, 64));
@@ -865,7 +887,7 @@ impl<'target> Canvas<'target> {
         let rect = Rect::from_ltrb(Scalar::from_num(7.25), Scalar::from_num(9.5),
             Scalar::from_num(53.75), Scalar::from_num(57.25)).unwrap();
         let mut canvas = Canvas::new(64, 64).unwrap();
-        canvas.set_clip_mask(CoverageMask::new(&coverage, 64, 64, 64).unwrap())
+        canvas.set_clip_mask(CoverageMask::new(&coverage, 64, 64, 64).unwrap()).unwrap()
             .set_clip_rect(rect);
         assert!(matches!(canvas.clip, CanvasClip::Sparse { .. }));
 
@@ -891,8 +913,8 @@ impl<'target> Canvas<'target> {
             for x in 0..64 { dense[y * 64 + x] = 32 + ((x * 3 + y * 5) & 127) as u8; }
         }
         let mut canvas = Canvas::new(64, 64).unwrap();
-        canvas.set_clip_mask(CoverageMask::new(&sparse, 64, 64, 64).unwrap())
-            .set_clip_mask(CoverageMask::new(&dense, 64, 64, 64).unwrap());
+        canvas.set_clip_mask(CoverageMask::new(&sparse, 64, 64, 64).unwrap()).unwrap()
+            .set_clip_mask(CoverageMask::new(&dense, 64, 64, 64).unwrap()).unwrap();
         assert!(matches!(canvas.clip, CanvasClip::Sparse { .. }));
 
         let mut shape = PathBuilder::new();
@@ -925,8 +947,8 @@ impl<'target> Canvas<'target> {
             .line_to((Scalar::ZERO, Scalar::from_num(64)));
         let shape = shape.build();
         let mut canvas = Canvas::new(64, 64).unwrap();
-        canvas.set_clip_mask(CoverageMask::new(&left, 64, 64, 64).unwrap()).save()
-            .set_clip_mask(CoverageMask::new(&right, 64, 64, 64).unwrap())
+        canvas.set_clip_mask(CoverageMask::new(&left, 64, 64, 64).unwrap()).unwrap().save()
+            .set_clip_mask(CoverageMask::new(&right, 64, 64, 64).unwrap()).unwrap()
             .set_color(SRGBA::red()).fill(&shape).unwrap();
         assert!(matches!(canvas.clip, CanvasClip::Sparse { .. }));
         for y in 0..64 { for x in 0..64 {
@@ -1079,7 +1101,7 @@ impl<'target> Canvas<'target> {
                         let index = (random as usize >> 8) % masks.len();
                         let mask = &masks[index];
                         canvas.set_clip_mask(CoverageMask::new(
-                            mask, WIDTH as _, HEIGHT as _, WIDTH as _).unwrap());
+                            mask, WIDTH as _, HEIGHT as _, WIDTH as _).unwrap()).unwrap();
                         if index == 1 { apply_rect(&mut reference, opaque_mask_rect); }
                         else { apply_dense(&mut reference, mask); }
                     }
@@ -1153,7 +1175,7 @@ impl<'target> Canvas<'target> {
         let mut context = CanvasRef::new(&mut target, workspace);
         context.set_color(SRGBA::new(255, 0, 0, 128))
             .set_transform(Affine::translate(fixed(1), Scalar::ZERO))
-            .set_clip_mask(CoverageMask::new(&mask_data, 4, 3, 4).unwrap());
+            .set_clip_mask(CoverageMask::new(&mask_data, 4, 3, 4).unwrap()).unwrap();
         context.fill(&path).unwrap();
         assert_eq!(
             &pixels[..16], &[0, 0, 0, 0, 64, 0, 0, 64, 0, 0, 0, 0, 0, 0, 0, 0]);

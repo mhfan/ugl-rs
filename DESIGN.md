@@ -333,6 +333,17 @@ valid ordered runs.
   default. Tile construction must be amortized by reuse, batching, a more
   specialized pixel pipeline, or later parallel execution.
 
+### Coverage execution policy
+
+- Ordinary `Canvas` drawing streams coverage directly into the compositor.
+- Retained path clips and reusable masks use 16-row sparse strips when their
+  descriptors and runs are smaller than packed local coverage; otherwise they
+  stay packed. Their non-zero bounds are cached when retained.
+- Tiles are an explicit low-level representation for repeated replay or future
+  parallel scheduling. The facade does not silently convert immediate coverage
+  or strips into tiles, because current scalar measurements do not repay that
+  construction cost.
+
 ## Determinism and quality
 
 - Given the same backend, target, and input, output bytes are identical.

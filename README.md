@@ -282,6 +282,12 @@ edges and rasterizes directly into local coverage storage; it does not allocate
 a temporary canvas-sized mask.
 `save`/`restore` scopes nested clips.
 
+`set_clip_mask` is fallible: the mask must have the same logical dimensions as
+the target. Validation occurs before the current clip is changed. Immediate
+drawing streams coverage; retained clips choose packed local storage or sparse
+16-row strips by size. Tiles remain an explicit low-level replay option rather
+than a hidden `Canvas` policy.
+
 The bounded `CanvasRef` and low-level APIs deliberately use a two-stage operation
 so image-sized storage and lifetime remain visible:
 

@@ -8,7 +8,8 @@ use crate::{
             FillRule, MaskKind, SparseCoverageSink, SparseStorage,
             clip_sparse_bounds, finish_sparse_coverage, intersect_sparse_masks,
             multiply_sparse_mask, sparse_mask_parts},
-        render::{Clip, DrawState, GlobalAlphaPaint}, stroke::StrokeContour,
+        render::{Clip, DrawState, GlobalAlphaPaint, validate_coverage_dimensions},
+        stroke::StrokeContour,
         Pixmap, PixmapError, RenderError, SolidPaint},
     float::{analytic::{Cell, Intersection},
     canvas::{DashedStrokePathOptions, DashedStrokePlanningWorkspace,
@@ -111,8 +112,10 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
         self.clip = Clip::Rect(rect); self
     }
 
-    pub fn set_clip_mask(&mut self, mask: CoverageMask<'clip>) -> &mut Self {
-        self.clip = Clip::Mask(mask); self
+    pub fn set_clip_mask(&mut self, mask: CoverageMask<'clip>) ->
+        Result<&mut Self, RenderError> {
+        validate_coverage_dimensions(mask.width(), mask.height(), self.target)?;
+        self.clip = Clip::Mask(mask); Ok(self)
     }
 
     pub fn fill(&mut self, path: &Path) -> Result<(), RenderError> {
@@ -641,18 +644,32 @@ impl<'target> Canvas<'target> {
     }
 
     /// Intersects the current clip with a retained copy of `value`.
-    pub fn set_clip_mask(&mut self, value: CoverageMask<'_>) -> &mut Self {
-        if (value.width(), value.height()) == (self.target.width(), self.target.height()) {
-            match value.kind() {
-                MaskKind::Empty => { self.clip = CanvasClip::Empty; return self; }
-                MaskKind::OpaqueRect(bounds) => return self.set_clip_rect(mask_rect(bounds)),
-                MaskKind::Coverage(_) => {}
+    ///
+    /// Dimensions must match the target; validation happens before changing the clip.
+    ///
+    /// ```
+    /// use ugl_rs::{common::{RenderError, raster::CoverageMask}, float::Canvas};
+    ///
+    /// let pixels = [255];
+    /// let mask = CoverageMask::new(&pixels, 1, 1, 1).unwrap();
+    /// let mut canvas = Canvas::new(4, 2).unwrap();
+    /// assert!(matches!(canvas.set_clip_mask(mask),
+    ///     Err(RenderError::CoverageDimensionsMismatch { .. })));
+    /// ```
+    pub fn set_clip_mask(&mut self, value: CoverageMask<'_>) ->
+        Result<&mut Self, RenderError> {
+        validate_coverage_dimensions(value.width(), value.height(), &self.target)?;
+        match value.kind() {
+            MaskKind::Empty => { self.clip = CanvasClip::Empty; return Ok(self); }
+            MaskKind::OpaqueRect(bounds) => {
+                self.set_clip_rect(mask_rect(bounds)); return Ok(self);
             }
+            MaskKind::Coverage(_) => {}
         }
         let mut clip = sparse_canvas_mask(value).unwrap_or_else(|| copy_canvas_mask(value));
         normalize_canvas_clip(&mut clip);
         intersect_canvas_clip(&self.clip, &mut clip);
-        self.clip = clip; self
+        self.clip = clip; Ok(self)
     }
 
     /// Rasterizes an antialiased path and intersects it with the current clip.
@@ -827,12 +844,18 @@ impl<'target> Canvas<'target> {
     #[test] fn owning_canvas_specializes_empty_and_opaque_rectangle_masks() {
         let mut canvas = Canvas::new(4, 2).unwrap();
         let opaque = [0, 255, 255, 0, 0, 255, 255, 0];
-        canvas.set_clip_mask(CoverageMask::new(&opaque, 4, 2, 4).unwrap());
+        canvas.set_clip_mask(CoverageMask::new(&opaque, 4, 2, 4).unwrap()).unwrap();
         let CanvasClip::Rect(rect) = canvas.clip else { panic!("expected rectangle clip") };
         assert_eq!((rect.left(), rect.top(), rect.right(), rect.bottom()),
             (1.0, 0.0, 3.0, 2.0));
 
-        canvas.set_clip_mask(CoverageMask::new(&[0; 8], 4, 2, 4).unwrap());
+        assert!(matches!(canvas.set_clip_mask(CoverageMask::new(&[255], 1, 1, 1).unwrap()),
+            Err(RenderError::CoverageDimensionsMismatch {
+                coverage: (1, 1), target: (4, 2),
+            })));
+        assert!(matches!(canvas.clip, CanvasClip::Rect(_)));
+
+        canvas.set_clip_mask(CoverageMask::new(&[0; 8], 4, 2, 4).unwrap()).unwrap();
         assert!(matches!(canvas.clip, CanvasClip::Empty));
 
         canvas.clear_clip().set_clip_path(&rectangle()).unwrap();
@@ -840,6 +863,7 @@ impl<'target> Canvas<'target> {
 
         let coverage = [0, 128, 128, 0, 0, 128, 128, 0];
         canvas.clear_clip().set_clip_mask(CoverageMask::new(&coverage, 4, 2, 4).unwrap())
+            .unwrap()
             .set_clip_rect(Rect::from_ltrb(3.0, 0.0, 4.0, 2.0).unwrap());
         assert!(matches!(canvas.clip, CanvasClip::Empty));
     }
@@ -863,7 +887,7 @@ impl<'target> Canvas<'target> {
         let mut coverage = alloc::vec![0; 64 * 64];
         for y in 0..64 { coverage[y * 64 + y] = 128; }
         let mut canvas = Canvas::new(64, 64).unwrap();
-        canvas.set_clip_mask(CoverageMask::new(&coverage, 64, 64, 64).unwrap());
+        canvas.set_clip_mask(CoverageMask::new(&coverage, 64, 64, 64).unwrap()).unwrap();
         let CanvasClip::Sparse { strips, runs, .. } = &canvas.clip
             else { panic!("sparse external mask was retained densely") };
         assert_eq!((strips.len(), runs.len()), (4, 64));
@@ -909,7 +933,7 @@ impl<'target> Canvas<'target> {
         {
             let data = [255, 255, 0, 0, 255, 255, 0, 0,
                         255, 255, 0, 0, 255, 255, 0, 0];
-            canvas.set_clip_mask(CoverageMask::new(&data, 4, 4, 4).unwrap());
+            canvas.set_clip_mask(CoverageMask::new(&data, 4, 4, 4).unwrap()).unwrap();
         }
         let mut shape = PathBuilder::new();
         shape.move_to((0.0, 0.0)).line_to((4.0, 0.0))
@@ -995,7 +1019,7 @@ impl<'target> Canvas<'target> {
         let mut context = CanvasRef::new(&mut target, workspace);
         context.set_color(SRGBA::new(255, 0, 0, 128))
             .set_transform(Affine::translate(1.0, 0.0))
-            .set_clip_mask(CoverageMask::new(&mask_data, 4, 4, 4).unwrap());
+            .set_clip_mask(CoverageMask::new(&mask_data, 4, 4, 4).unwrap()).unwrap();
         let mut planning_edges = [Edge::default(); 8];
         let required = context.fill_requirements(&rectangle(), &mut planning_edges).unwrap();
         assert_eq!((required.edges, required.cells), (2, 4));
