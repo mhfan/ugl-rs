@@ -31,6 +31,8 @@ use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RG
 struct PointLinearSampler<'a, S>(&'a S);
 struct CompositeLinearSampler<'a, S>(&'a S);
 struct PrecomputedPaint<'a> { colors: &'a [PremulSRGBA8], width: u32 }
+#[cfg(feature = "fixed")]
+struct PrecomputedFixedPaint<'a> { colors: &'a [PremulSRGBA8], width: u32 }
 struct SolidBufferSink<'a> {
     pixels: &'a mut [u8], stride: usize, color: [u8; 4],
 }
@@ -66,6 +68,19 @@ impl PaintSampler for PrecomputedPaint<'_> {
                 emit(self.sample(x + offset as f32 * dx, y + offset as f32 * dy));
             }
         }
+    }
+}
+
+#[cfg(feature = "fixed")]
+impl ugl_rs::fixed::sampler::PaintSampler for PrecomputedFixedPaint<'_> {
+    fn sample(&self, x: u32, y: u32) -> PremulSRGBA8 {
+        self.colors[y as usize * self.width as usize + x as usize]
+    }
+
+    fn sample_span(&self, x: u32, y: u32, len: u32,
+        mut emit: impl FnMut(PremulSRGBA8)) {
+        let start = y as usize * self.width as usize + x as usize;
+        for &color in &self.colors[start..start + len as usize] { emit(color); }
     }
 }
 
@@ -1382,7 +1397,7 @@ fn benchmark_clip_masks(c: &mut Criterion) {
 
 #[cfg(feature = "fixed")] fn benchmark_fixed(c: &mut Criterion) {
     use ugl_rs::{fixed::{
-        canvas::{composite_solid_tiles, render_solid, render_solid_tiled},
+        canvas::{composite_solid_tiles, render_paint, render_solid, render_solid_tiled},
         dash::{Pattern as DashPattern, dash_polyline},
         flatten::{Options as FlattenOptions, build_fill_edges as build_fixed_fill_edges,
             flatten_path},
@@ -1695,6 +1710,64 @@ fn benchmark_clip_masks(c: &mut Criterion) {
     paint_group.bench_function("conic_fast_point",
         |b| b.iter(|| black_box(sample_fixed_checksum(&conic_fast))));
     paint_group.finish();
+
+    let full_edges = [
+        Edge { upper: (Scalar::ZERO, Scalar::ZERO).into(),
+            lower: (Scalar::ZERO, fixed(HEIGHT)).into(), winding: -1 },
+        Edge { upper: (fixed(WIDTH), Scalar::ZERO).into(),
+            lower: (fixed(WIDTH), fixed(HEIGHT)).into(), winding: 1 },
+    ];
+    let mut full_lines = [Line::default(); 2];
+    let full_line_count = prepare_lines(&full_edges, &mut full_lines).unwrap();
+    let full_requirements = ugl_rs::fixed::raster::strip_requirements(
+        &full_lines[..full_line_count], HEIGHT).unwrap();
+    let (mut full_segments, mut full_trapezoids, mut full_area,
+        mut full_offsets, mut full_indices, mut paint_pixels) = (
+        vec![Segment::default(); full_line_count],
+        vec![Trapezoid::default(); full_line_count.div_ceil(2)],
+        vec![0; WIDTH as usize], vec![0; full_requirements.offsets],
+        vec![0; full_requirements.indices],
+        vec![0; WIDTH as usize * HEIGHT as usize * 4],
+    );
+    let precomputed_colors: Vec<_> = (0..WIDTH * HEIGHT).map(|offset| {
+        let alpha = 96 + (offset % 160) as u8;
+        PremulSRGBA8::new(alpha / 3, alpha / 2, alpha, alpha).unwrap()
+    }).collect();
+    let precomputed = PrecomputedFixedPaint { colors: &precomputed_colors, width: WIDTH };
+    let mut pipeline = c.benchmark_group("paint_pipeline_fixed");
+    pipeline.throughput(Throughput::Elements(WIDTH as u64 * HEIGHT as u64));
+    pipeline.bench_function("coverage", |b| b.iter(|| {
+        let mut sink = RunCounter::default();
+        rasterize_lines(&full_lines[..full_line_count], WIDTH, HEIGHT,
+            FillRule::NonZero, &mut Workspace {
+                segments: &mut full_segments, trapezoids: &mut full_trapezoids,
+                row_area: &mut full_area, strip_offsets: &mut full_offsets,
+                strip_indices: &mut full_indices,
+            }, &mut sink).unwrap();
+        black_box((sink.runs, sink.pixels));
+    }));
+    for name in ["precomputed", "radial", "conic_fast"] {
+        pipeline.bench_function(name, |b| b.iter(|| {
+            paint_pixels.fill(0);
+            let mut target =
+                Pixmap::from_buffer(&mut paint_pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+            let mut workspace = Workspace {
+                segments: &mut full_segments, trapezoids: &mut full_trapezoids,
+                row_area: &mut full_area, strip_offsets: &mut full_offsets,
+                strip_indices: &mut full_indices,
+            };
+            match name {
+                "precomputed" => render_paint(&full_lines[..full_line_count], &precomputed,
+                    FillRule::NonZero, &mut target, &mut workspace).unwrap(),
+                "radial" => render_paint(&full_lines[..full_line_count], &matched_radial,
+                    FillRule::NonZero, &mut target, &mut workspace).unwrap(),
+                _ => render_paint(&full_lines[..full_line_count], &conic_fast,
+                    FillRule::NonZero, &mut target, &mut workspace).unwrap(),
+            }
+            black_box(&paint_pixels);
+        }));
+    }
+    pipeline.finish();
 
     let mut group = c.benchmark_group("raster_rgba8888");
     group.throughput(Throughput::Elements((WIDTH as u64) * HEIGHT as u64));
