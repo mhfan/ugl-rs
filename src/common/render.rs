@@ -227,6 +227,20 @@ pub(crate) fn blend_sampled_pixel(pixel: &mut [u8], color: PremulSRGBA8,
     pixel[3] = alpha.saturating_add(mul_div_255(pixel[3], inverse));
 }
 
+pub(crate) fn blend_sampled_quad(pixels: &mut [u8], colors: [PremulSRGBA8; 4],
+    coverage: u8) {
+    debug_assert_eq!(pixels.len(), 16);
+    if coverage == u8::MAX && pixels == [0; 16] {
+        for (pixel, color) in pixels.chunks_exact_mut(4).zip(colors) {
+            pixel.copy_from_slice(&color.to_array());
+        }
+        return;
+    }
+    for (pixel, color) in pixels.chunks_exact_mut(4).zip(colors) {
+        blend_sampled_pixel(pixel, color, coverage);
+    }
+}
+
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)] pub enum RenderError {

@@ -2,12 +2,13 @@
 
 use core::convert::Infallible;
 use crate::{
-    common::{color::SRGBA, dash::{DashContour, DashWorkspace},
+    common::{color::{PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorkspace},
         geometry::{Affine, Edge, Path, Point, Rect},
         raster::{ClipMask, CoverageMask, CoverageMaskMut, CoverageSink, FillRule,
             MaskClipSink},
         render::{BYTES_PER_PIXEL, EdgeCapacity, EdgeSliceSink, Pixmap, RenderError,
-        blend_sampled_pixel, map_dash_error, validate_coverage_dimensions},
+        blend_sampled_pixel, blend_sampled_quad, map_dash_error,
+        validate_coverage_dimensions},
         stroke::{StrokePathWorkspace, StrokeWorkspaceError}, SolidPaint},
     fixed::{DEVICE_RAW_LIMIT, Scalar, dash::{Pattern as DashPattern, dash_polyline},
         flatten::{Error as FlattenError, Options as FlattenOptions, build_fill_edges},
@@ -29,26 +30,23 @@ fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
                 x as usize * BYTES_PER_PIXEL as usize;
     let end = start + len as usize * BYTES_PER_PIXEL as usize;
     let bytes = &mut target.as_bytes_mut()[start..end];
-    let mut pairs = bytes.chunks_exact_mut(8);
-    let mut pending = None;
+    let mut quads = bytes.chunks_exact_mut(16);
+    let mut pending = [PremulSRGBA8::zeroed(); 4];
+    let mut pending_len = 0;
     sampler.sample_span(x, y, len, |color| {
-        let Some(first) = pending.take() else { pending = Some(color); return; };
-        let pair = pairs.next().expect("sampler emitted too many span pixels");
-        if coverage == u8::MAX && pair == [0; 8] {
-            let (first, second) = (
-                u32::from_le_bytes(first.to_array()) as u64,
-                u32::from_le_bytes(color.to_array()) as u64,
-            );
-            pair.copy_from_slice(&(first | second << 32).to_le_bytes());
-        } else {
-            blend_sampled_pixel(&mut pair[..4], first, coverage);
-            blend_sampled_pixel(&mut pair[4..], color, coverage);
+        pending[pending_len] = color;
+        pending_len += 1;
+        if pending_len == 4 {
+            blend_sampled_quad(quads.next().expect("sampler emitted too many span pixels"),
+                pending, coverage);
+            pending_len = 0;
         }
     });
-    let remainder = pairs.into_remainder();
-    if let Some(color) = pending {
-        blend_sampled_pixel(remainder, color, coverage);
-    } else { debug_assert!(remainder.is_empty()); }
+    let remainder = quads.into_remainder();
+    debug_assert_eq!(remainder.len(), pending_len * 4);
+    for (pixel, color) in remainder.chunks_exact_mut(4).zip(pending[..pending_len].iter()) {
+        blend_sampled_pixel(pixel, *color, coverage);
+    }
 }
 
 const SUBPIXEL_SCALE: i64 = 256;

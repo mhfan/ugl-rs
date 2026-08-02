@@ -16,7 +16,7 @@ use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RG
         raster::Intersection,
         canvas::{RenderOptions, RenderWorkspace, SampledRenderOptions,
             SampledRenderWorkspace, StrokePathOptions, StrokeWorkspace,
-            render_solid, render_solid_sampled, render_stroke_solid},
+            render_paint, render_solid, render_solid_sampled, render_stroke_solid},
         linear::{LinearPixmap, Srgb8Encoder, SRGB8_ENCODE_LUT_SIZE,
             render_paint as render_paint_linear, render_solid as render_solid_linear},
         sampler::{ConicAngleMode, ConicGradient, GradientStop, GradientStops,
@@ -30,6 +30,7 @@ use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RG
 }
 struct PointLinearSampler<'a, S>(&'a S);
 struct CompositeLinearSampler<'a, S>(&'a S);
+struct PrecomputedPaint<'a> { colors: &'a [PremulSRGBA8], width: u32 }
 struct SolidBufferSink<'a> {
     pixels: &'a mut [u8], stride: usize, color: [u8; 4],
 }
@@ -47,6 +48,24 @@ impl<S: LinearPaintSampler> LinearPaintSampler for CompositeLinearSampler<'_, S>
     fn sample_linear_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
         emit: impl FnMut(LinearPremulRGBA<f32>)) {
         self.0.sample_linear_span(x, y, dx, dy, len, emit)
+    }
+}
+
+impl PaintSampler for PrecomputedPaint<'_> {
+    fn sample(&self, x: f32, y: f32) -> PremulSRGBA8 {
+        self.colors[y as usize * self.width as usize + x as usize]
+    }
+
+    fn sample_span(&self, x: f32, y: f32, dx: f32, dy: f32, len: u32,
+        mut emit: impl FnMut(PremulSRGBA8)) {
+        if dx == 1.0 && dy == 0.0 {
+            let start = y as usize * self.width as usize + x as usize;
+            for &color in &self.colors[start..start + len as usize] { emit(color); }
+        } else {
+            for offset in 0..len {
+                emit(self.sample(x + offset as f32 * dx, y + offset as f32 * dy));
+            }
+        }
     }
 }
 
@@ -308,6 +327,26 @@ fn benchmark_f32(c: &mut Criterion) {
                 intersections: &mut coverage_active, cells: &mut coverage_cells,
             }, &mut sink).unwrap();
         black_box((sink.runs, sink.pixels));
+    }));
+
+    // Keeps the rasterizer and RGBA8 compositor in the measurement while replacing
+    // gradient arithmetic with one indexed load per pixel.
+    let precomputed_colors: Vec<_> = (0..WIDTH * HEIGHT).map(|offset| {
+        let alpha = 96 + (offset % 160) as u8;
+        PremulSRGBA8::new(alpha / 3, alpha / 2, alpha, alpha).unwrap()
+    }).collect();
+    let precomputed = PrecomputedPaint { colors: &precomputed_colors, width: WIDTH };
+    group.bench_function(BenchmarkId::new(
+        "analytic_precomputed_paint", "64_rectangles"), |b| b.iter(|| {
+        pixels.fill(0);
+        let mut target = Pixmap::from_buffer(&mut pixels, WIDTH, HEIGHT, WIDTH * 4).unwrap();
+        render_paint(&path, Affine::identity(), &precomputed, RenderOptions::default(),
+            &mut target, &mut RenderWorkspace {
+                edges: &mut edges, intersections: &mut analytic_intersections,
+                cells: &mut analytic_cells,
+                row_offsets: &mut analytic_offsets, edge_indices: &mut analytic_indices,
+            }).unwrap();
+        black_box(&pixels);
     }));
 
     let mut linear_pixels =
