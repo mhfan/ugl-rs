@@ -5,10 +5,10 @@
 //! `render_*_sampled`.
 
 use core::convert::Infallible;
-use crate::{common::{color::{PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorkspace},
+use crate::{common::{color::{PremulRGBA, PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorkspace},
     geometry::{Affine, Edge, Path, Point, Rect}, Pixmap, RenderError, SolidPaint,
     raster::{ClipMask, CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
-    render::{BYTES_PER_PIXEL, EdgeCapacity, EdgeSliceSink, blend_sampled_pixel,
+    render::{BYTES_PER_PIXEL, Clip, EdgeCapacity, EdgeSliceSink, blend_sampled_pixel,
         blend_sampled_quad,
         map_dash_error, validate_coverage_dimensions},
     stroke::{StrokeContour, StrokePathWorkspace, StrokeWorkspaceError}},
@@ -20,7 +20,7 @@ use crate::{common::{color::{PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorks
         flatten::{FlattenError, FlattenOptions, build_fill_edges},
         raster::{Intersection, RasterError,
         RasterOptions, RasterWorkspace, RectClipSink, clip_region, rect_is_integer,
-        rasterize_edges}, sampler::PaintSampler,
+        rasterize_edges}, blend::CompositeMode, sampler::PaintSampler,
         stroke::{flatten_stroke_path, stroke_polyline, StrokeExpandError, StrokeOptions}},
 };
 
@@ -29,7 +29,12 @@ use crate::{common::{color::{PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorks
 impl Pixmap<'_> {
     fn blend_sampled_span<S: PaintSampler>(&mut self, x: u32, y: u32, len: u32,
         sampler: &S, coverage: u8) {
-        if let Some(color) = sampler.solid_color() {
+        self.blend_sampled_span_mode(x, y, len, sampler, coverage, CompositeMode::SrcOver)
+    }
+
+    fn blend_sampled_span_mode<S: PaintSampler>(&mut self, x: u32, y: u32, len: u32,
+        sampler: &S, coverage: u8, mode: CompositeMode) {
+        if mode == CompositeMode::SrcOver && let Some(color) = sampler.solid_color() {
             self.blend_solid_span(x, y, len, color, coverage);
             return;
         }
@@ -44,18 +49,41 @@ impl Pixmap<'_> {
             pending[pending_len] = color;
             pending_len += 1;
             if pending_len == 4 {
-                blend_sampled_quad(quads.next().expect("sampler emitted too many span pixels"),
-                    pending, coverage);
+                let pixels = quads.next().expect("sampler emitted too many span pixels");
+                if mode == CompositeMode::SrcOver { blend_sampled_quad(pixels, pending, coverage); }
+                else { for (pixel, color) in pixels.chunks_exact_mut(4).zip(pending) {
+                    composite_mode_pixel(pixel, color, coverage, mode);
+                } }
                 pending_len = 0;
             }
         });
         let remainder = quads.into_remainder();
         debug_assert_eq!(remainder.len(), pending_len * 4);
         for (pixel, color) in remainder.chunks_exact_mut(4).zip(pending[..pending_len].iter()) {
-            blend_sampled_pixel(pixel, *color, coverage);
+            if mode == CompositeMode::SrcOver { blend_sampled_pixel(pixel, *color, coverage); }
+            else { composite_mode_pixel(pixel, *color, coverage, mode); }
         }
     }
 
+}
+
+fn composite_mode_pixel(pixel: &mut [u8], color: PremulSRGBA8,
+    coverage: u8, mode: CompositeMode) {
+    let normalize = |value: u8| value as f32 / u8::MAX as f32;
+    let factor = normalize(coverage);
+    let [sr, sg, sb, sa] = color.to_array().map(normalize);
+    let  src = PremulRGBA::from((sr, sg, sb, sa));
+    let drop = PremulRGBA::from((normalize(pixel[0]), normalize(pixel[1]),
+                                 normalize(pixel[2]), normalize(pixel[3])));
+    let composed = src.composite(drop, mode).to_array();
+    let backdrop = drop.to_array();
+    let result: [f32; 4] = core::array::from_fn(|index|
+        backdrop[index] + factor * (composed[index] - backdrop[index]));
+    let alpha = (result[3] * u8::MAX as f32 + 0.5) as u8;
+    let channel = |value: f32| ((value * u8::MAX as f32 + 0.5) as u8).min(alpha);
+    pixel.copy_from_slice(&[
+        channel(result[0]), channel(result[1]), channel(result[2]), alpha,
+    ]);
 }
 
 pub struct SampledRenderWorkspace<'a> {
@@ -70,6 +98,10 @@ pub struct RenderWorkspace<'a> {
     pub edges: &'a mut [Edge],
     pub row_offsets: &'a mut [u32],
     pub edge_indices: &'a mut [u32],
+}
+
+#[derive(Clone, Copy)] pub(crate) struct Compositing<'a> {
+    pub(crate) mode: CompositeMode, pub(crate) clip: Clip<'a>,
 }
 
 /// Caller-owned storage for the complete analytic stroke pipeline.
@@ -234,7 +266,7 @@ pub fn render_solid_sampled(path: &Path, transform: Affine, color: SRGBA<u8>, op
     Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     let paint = SolidPaint::new(color);
-    let mut compositor = PaintCompositor { target, sampler: &paint };
+    let mut compositor = PaintCompositor::new(target, &paint);
     rasterize_edges(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, options.raster, &mut RasterWorkspace {
             intersections: workspace.intersections,
@@ -249,7 +281,7 @@ pub fn render_solid_sampled_clipped(path: &Path, transform: Affine, color: SRGBA
     workspace: &mut SampledRenderWorkspace<'_>) -> Result<(), RenderError> {
     let edge_count = build_edges(path, transform, options.flatten, workspace.edges)?;
     let paint = SolidPaint::new(color);
-    let mut compositor = PaintCompositor { target, sampler: &paint };
+    let mut compositor = PaintCompositor::new(target, &paint);
     rasterize_edges(&workspace.edges[..edge_count], compositor.target.width,
         compositor.target.height, options.fill_rule, options.raster, &mut RasterWorkspace {
             intersections: workspace.intersections,
@@ -273,9 +305,52 @@ pub fn render_paint<S: PaintSampler>(path: &Path, transform: Affine, sampler: &S
     options: RenderOptions, target: &mut Pixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
+    let mut compositor = PaintCompositor::new(target, sampler);
     render_path_to(path, transform, options, width, height,
         &mut compositor, workspace)
+}
+
+pub(crate) fn render_paint_composited<S: PaintSampler>(path: &Path, transform: Affine,
+    sampler: &S, compositing: Compositing<'_>, options: RenderOptions,
+    target: &mut Pixmap<'_>, workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
+    if matches!(compositing.mode, CompositeMode::SrcOver | CompositeMode::Normal) {
+        return match compositing.clip {
+        Clip::None => render_paint(path, transform, sampler, options, target, workspace),
+        Clip::Rect(rect) => render_paint_clipped(
+            path, transform, sampler, rect, options, target, workspace),
+        Clip::Mask(mask) => render_paint_masked(
+            path, transform, sampler, mask, options, target, workspace),
+        Clip::SparseMask(mask) => render_paint_with_mask(
+            path, transform, sampler, mask, options, target, workspace),
+        };
+    }
+    let (width, height) = (target.width, target.height);
+    let mut compositor = BlendPaintCompositor {
+        target, sampler, mode: compositing.mode,
+    };
+    match compositing.clip {
+        Clip::None => render_path_to(path, transform, options, width, height,
+            &mut compositor, workspace),
+        Clip::Rect(rect) => {
+            let region = clip_region(rect, width, height);
+            if rect_is_integer(rect) { render_path_to_region(path, transform, options,
+                (width, height), region, &mut compositor, workspace) }
+            else { render_path_to_region(path, transform, options, (width, height), region,
+                &mut RectClipSink::new(rect, &mut compositor), workspace) }
+        }
+        Clip::Mask(mask) => {
+            validate_coverage_dimensions(mask.width(), mask.height(), compositor.target)?;
+            render_path_to_region(path, transform, options, (width, height),
+                mask.bounds().unwrap_or_default(),
+                &mut MaskClipSink::new(mask, &mut compositor), workspace)
+        }
+        Clip::SparseMask(mask) => {
+            validate_coverage_dimensions(mask.width(), mask.height(), compositor.target)?;
+            render_path_to_region(path, transform, options, (width, height),
+                mask.bounds().unwrap_or_default(),
+                &mut MaskClipSink::new(mask, &mut compositor), workspace)
+        }
+    }
 }
 
 /// Renders a solid analytic stroke without allocating intermediate geometry.
@@ -291,9 +366,54 @@ pub fn render_stroke_paint<S: PaintSampler>(path: &Path, transform: Affine,
     sampler: &S, options: StrokePathOptions, target: &mut Pixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
+    let mut compositor = PaintCompositor::new(target, sampler);
     render_stroke_to(path, transform, options, width, height,
         &mut compositor, workspace)
+}
+
+pub(crate) fn render_stroke_paint_composited<S: PaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, compositing: Compositing<'_>,
+    options: StrokePathOptions, target: &mut Pixmap<'_>,
+    workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
+    if matches!(compositing.mode, CompositeMode::SrcOver | CompositeMode::Normal) {
+        return match compositing.clip {
+        Clip::None => render_stroke_paint(
+            path, transform, sampler, options, target, workspace),
+        Clip::Rect(rect) => render_stroke_paint_clipped(
+            path, transform, sampler, rect, options, target, workspace),
+        Clip::Mask(mask) => render_stroke_paint_masked(
+            path, transform, sampler, mask, options, target, workspace),
+        Clip::SparseMask(mask) => render_stroke_paint_with_mask(
+            path, transform, sampler, mask, options, target, workspace),
+        };
+    }
+    let (width, height) = (target.width, target.height);
+    let mut compositor = BlendPaintCompositor {
+        target, sampler, mode: compositing.mode,
+    };
+    match compositing.clip {
+        Clip::None => render_stroke_to(path, transform, options, width, height,
+            &mut compositor, workspace),
+        Clip::Rect(rect) => {
+            let region = clip_region(rect, width, height);
+            if rect_is_integer(rect) { render_stroke_to_region(path, transform, options,
+                (width, height), region, &mut compositor, workspace) }
+            else { render_stroke_to_region(path, transform, options, (width, height), region,
+                &mut RectClipSink::new(rect, &mut compositor), workspace) }
+        }
+        Clip::Mask(mask) => {
+            validate_coverage_dimensions(mask.width(), mask.height(), compositor.target)?;
+            render_stroke_to_region(path, transform, options, (width, height),
+                mask.bounds().unwrap_or_default(),
+                &mut MaskClipSink::new(mask, &mut compositor), workspace)
+        }
+        Clip::SparseMask(mask) => {
+            validate_coverage_dimensions(mask.width(), mask.height(), compositor.target)?;
+            render_stroke_to_region(path, transform, options, (width, height),
+                mask.bounds().unwrap_or_default(),
+                &mut MaskClipSink::new(mask, &mut compositor), workspace)
+        }
+    }
 }
 
 /// Renders a dashed analytic stroke without allocating intermediate geometry.
@@ -310,9 +430,54 @@ pub fn render_stroke_paint_dashed<S: PaintSampler>(path: &Path,
     target: &mut Pixmap<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
+    let mut compositor = PaintCompositor::new(target, sampler);
     render_stroke_dashed_to(path, transform, options, width, height,
         &mut compositor, workspace)
+}
+
+pub(crate) fn render_stroke_paint_dashed_composited<S: PaintSampler>(path: &Path,
+    transform: Affine, sampler: &S, compositing: Compositing<'_>,
+    options: DashedStrokePathOptions<'_>, target: &mut Pixmap<'_>,
+    workspace: &mut DashedStrokeWorkspace<'_>) -> Result<(), RenderError> {
+    if matches!(compositing.mode, CompositeMode::SrcOver | CompositeMode::Normal) {
+        return match compositing.clip {
+        Clip::None => render_stroke_paint_dashed(
+            path, transform, sampler, options, target, workspace),
+        Clip::Rect(rect) => render_stroke_paint_dashed_clipped(
+            path, transform, sampler, rect, options, target, workspace),
+        Clip::Mask(mask) => render_stroke_paint_dashed_masked(
+            path, transform, sampler, mask, options, target, workspace),
+        Clip::SparseMask(mask) => render_stroke_paint_dashed_with_mask(
+            path, transform, sampler, mask, options, target, workspace),
+        };
+    }
+    let (width, height) = (target.width, target.height);
+    let mut compositor = BlendPaintCompositor {
+        target, sampler, mode: compositing.mode,
+    };
+    match compositing.clip {
+        Clip::None => render_stroke_dashed_to(path, transform, options, width, height,
+            &mut compositor, workspace),
+        Clip::Rect(rect) => {
+            let region = clip_region(rect, width, height);
+            if rect_is_integer(rect) { render_stroke_dashed_to_region(path, transform, options,
+                (width, height), region, &mut compositor, workspace) }
+            else { render_stroke_dashed_to_region(path, transform, options, (width, height), region,
+                &mut RectClipSink::new(rect, &mut compositor), workspace) }
+        }
+        Clip::Mask(mask) => {
+            validate_coverage_dimensions(mask.width(), mask.height(), compositor.target)?;
+            render_stroke_dashed_to_region(path, transform, options, (width, height),
+                mask.bounds().unwrap_or_default(),
+                &mut MaskClipSink::new(mask, &mut compositor), workspace)
+        }
+        Clip::SparseMask(mask) => {
+            validate_coverage_dimensions(mask.width(), mask.height(), compositor.target)?;
+            render_stroke_dashed_to_region(path, transform, options, (width, height),
+                mask.bounds().unwrap_or_default(),
+                &mut MaskClipSink::new(mask, &mut compositor), workspace)
+        }
+    }
 }
 
 pub fn render_stroke_paint_dashed_clipped<S: PaintSampler>(path: &Path,
@@ -320,7 +485,7 @@ pub fn render_stroke_paint_dashed_clipped<S: PaintSampler>(path: &Path,
     target: &mut Pixmap<'_>, workspace: &mut DashedStrokeWorkspace<'_>) ->
     Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
+    let mut compositor = PaintCompositor::new(target, sampler);
     let region = clip_region(clip, width, height);
     if rect_is_integer(clip) {
         render_stroke_dashed_to_region(path, transform, options, (width, height),
@@ -346,7 +511,7 @@ pub(crate) fn render_stroke_paint_dashed_with_mask<M: ClipMask, S: PaintSampler>
     let (mask_width, mask_height) = mask.dimensions();
     validate_coverage_dimensions(mask_width, mask_height, target)?;
     let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
+    let mut compositor = PaintCompositor::new(target, sampler);
     render_stroke_dashed_to_region(path, transform, options, (width, height),
         mask.bounds().unwrap_or_default(),
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
@@ -365,7 +530,7 @@ pub fn render_stroke_paint_clipped<S: PaintSampler>(path: &Path, transform: Affi
     sampler: &S, clip: Rect, options: StrokePathOptions, target: &mut Pixmap<'_>,
     workspace: &mut StrokeWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
+    let mut compositor = PaintCompositor::new(target, sampler);
     let region = clip_region(clip, width, height);
     if rect_is_integer(clip) {
         render_stroke_to_region(path, transform, options, (width, height),
@@ -398,7 +563,7 @@ pub(crate) fn render_stroke_paint_with_mask<M: ClipMask, S: PaintSampler>(path: 
     let (mask_width, mask_height) = mask.dimensions();
     validate_coverage_dimensions(mask_width, mask_height, target)?;
     let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
+    let mut compositor = PaintCompositor::new(target, sampler);
     render_stroke_to_region(path, transform, options, (width, height),
         mask.bounds().unwrap_or_default(),
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
@@ -417,7 +582,7 @@ pub fn render_paint_clipped<S: PaintSampler>(path: &Path, transform: Affine,
     sampler: &S, clip: Rect, options: RenderOptions, target: &mut Pixmap<'_>,
     workspace: &mut RenderWorkspace<'_>) -> Result<(), RenderError> {
     let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
+    let mut compositor = PaintCompositor::new(target, sampler);
     let region = clip_region(clip, width, height);
     if rect_is_integer(clip) {
         render_path_to_region(path, transform, options, (width, height), region,
@@ -467,7 +632,7 @@ pub(crate) fn render_paint_with_mask<M: ClipMask, S: PaintSampler>(path: &Path,
     let (mask_width, mask_height) = mask.dimensions();
     validate_coverage_dimensions(mask_width, mask_height, target)?;
     let (width, height) = (target.width, target.height);
-    let mut compositor = PaintCompositor { target, sampler };
+    let mut compositor = PaintCompositor::new(target, sampler);
     render_path_to_region(path, transform, options, (width, height),
         mask.bounds().unwrap_or_default(),
         &mut MaskClipSink::new(mask, &mut compositor), workspace)
@@ -682,11 +847,29 @@ pub(crate) struct PaintCompositor<'a, 'b, S> {
     pub(crate) target: &'a mut Pixmap<'b>, pub(crate) sampler: &'a S,
 }
 
+impl<'a, 'b, S> PaintCompositor<'a, 'b, S> {
+    pub(crate) fn new(target: &'a mut Pixmap<'b>, sampler: &'a S) -> Self {
+        Self { target, sampler }
+    }
+}
+
 impl<S: PaintSampler> CoverageSink for PaintCompositor<'_, '_, S> {
     fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
         Result<(), Self::Error> {
         self.target.blend_sampled_span(x, y, len, self.sampler, coverage);  Ok(())
     }   type Error = Infallible;
+}
+
+struct BlendPaintCompositor<'a, 'b, S> {
+    target: &'a mut Pixmap<'b>, sampler: &'a S, mode: CompositeMode,
+}
+
+impl<S: PaintSampler> CoverageSink for BlendPaintCompositor<'_, '_, S> {
+    fn span(&mut self, x: u32, y: u32, len: u32, coverage: u8) ->
+        Result<(), Self::Error> {
+        self.target.blend_sampled_span_mode(
+            x, y, len, self.sampler, coverage, self.mode); Ok(())
+    } type Error = Infallible;
 }
 
 fn map_flatten_error(error: FlattenError<EdgeCapacity>) -> RenderError {

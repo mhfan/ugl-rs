@@ -32,4 +32,5 @@ pub mod linear;
 pub mod context;
 pub mod sampler;
 
+pub use blend::CompositeMode;
 pub use context::Canvas;

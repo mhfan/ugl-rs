@@ -938,6 +938,15 @@ respect to image area and therefore does not scan caller-owned destination
 contents. Compositing over existing bytes requires the caller to uphold the
 premultiplied invariant.
 
+The f32 facade stores `CompositeMode` as drawing state. Porter-Duff operators act
+on premultiplied values; W3C color blend functions temporarily unpremultiply
+RGB in the target's explicit working space and premultiply the result again.
+Coverage interpolates between the complete operator result and the original
+destination, which preserves antialiased semantics for operators such as
+`Clear`, `Copy`, and `DstIn`. `Pixmap` therefore blends in encoded-sRGB space,
+while a linear target must use the separate linear-light compositor; the API
+does not label encoded-domain compatibility output as linear compositing.
+
 ## Canvas and CanvasRef facade and backend organization
 
 `Pixmap` owns or borrows compact RGBA8888 storage, while `LinearPixmap` owns or

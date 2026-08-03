@@ -13,17 +13,15 @@ use crate::{
         Pixmap, PixmapError, RenderError, SolidPaint},
     float::{analytic::{Cell, Intersection},
     canvas::{DashedStrokePathOptions, DashedStrokePlanningWorkspace,
-        DashedStrokeRequirements, DashedStrokeWorkspace, RenderOptions,
+        Compositing, DashedStrokeRequirements, DashedStrokeWorkspace, RenderOptions,
         RenderRequirements, RenderWorkspace, StrokePathOptions, StrokePlanningWorkspace,
         StrokeRequirements, StrokeWorkspace, stroke_requirements,
         build_edges, dashed_stroke_requirements as plan_dashed_stroke, edge_region,
         rasterize_built_region,
-        render_paint, render_requirements,
-        render_paint_clipped, render_paint_masked, render_paint_with_mask,
-        render_stroke_paint_dashed, render_stroke_paint_dashed_clipped,
-        render_stroke_paint_dashed_masked, render_stroke_paint_dashed_with_mask,
-        render_stroke_paint, render_stroke_paint_clipped,
-        render_stroke_paint_masked, render_stroke_paint_with_mask}, dash::DashPattern,
+        render_paint_composited, render_requirements,
+        render_stroke_paint_composited, render_stroke_paint_dashed_composited,
+        },
+        blend::CompositeMode, dash::DashPattern,
         flatten::FlattenOptions,
         math,
         sampler::PaintSampler, stroke::StrokeOptions},
@@ -55,6 +53,7 @@ pub struct CanvasRef<'a, 'target, 'workspace, 'clip> {
     target: &'a mut Pixmap<'target>,
     workspace: Workspace<'workspace>,
     state: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>,
+    comp_mode: CompositeMode,
     clip: Clip<'clip>,
 }
 
@@ -68,7 +67,7 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
                 flatten: FlattenOptions::default(), stroke: StrokeOptions::default(),
                 paint: SolidPaint::new(SRGBA::black()),
                 global_alpha: u8::MAX,
-            },
+            }, comp_mode: CompositeMode::SrcOver,
             clip: Clip::None,
         }
     }
@@ -104,6 +103,17 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
     /// Sets the global opacity applied to every paint sample (`255` is opaque).
     pub fn set_global_alpha(&mut self, alpha: u8) -> &mut Self {
         self.state.global_alpha = alpha; self
+    }
+
+    pub fn composite_mode(&self) -> CompositeMode { self.comp_mode }
+
+    /// Selects the Porter-Duff or W3C blend operation used by subsequent draws.
+    ///
+    /// `Pixmap` stores encoded-premultiplied sRGBA8, so color blend functions
+    /// are evaluated in encoded sRGB. Straight RGB exists only transiently
+    /// inside the compositor; source and destination storage stay premultiplied.
+    pub fn set_composite_mode(&mut self, mode: CompositeMode) -> &mut Self {
+        self.comp_mode = mode; self
     }
 
     pub fn clear_clip(&mut self) -> &mut Self { self.clip = Clip::None; self }
@@ -142,16 +152,8 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
         let (target, paint) = (&mut *self.target,
             GlobalAlphaPaint::new(paint, self.state.global_alpha));
         let mut workspace = render_workspace(&mut self.workspace.stroke);
-        match clip {
-            Clip::None => render_paint(
-                path, transform, &paint, options, target, &mut workspace),
-            Clip::Rect(rect) => render_paint_clipped(
-                path, transform, &paint, rect, options, target, &mut workspace),
-            Clip::Mask(mask) => render_paint_masked(
-                path, transform, &paint, mask, options, target, &mut workspace),
-            Clip::SparseMask(mask) => render_paint_with_mask(
-                path, transform, &paint, mask, options, target, &mut workspace),
-        }
+        render_paint_composited(path, transform, &paint,
+            Compositing { mode: self.comp_mode, clip }, options, target, &mut workspace)
     }
 
     pub fn stroke(&mut self, path: &Path) -> Result<(), RenderError> {
@@ -178,16 +180,9 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
         );
         let (target, paint) = (&mut *self.target,
             GlobalAlphaPaint::new(paint, self.state.global_alpha));
-        match clip {
-            Clip::None => render_stroke_paint(
-                path, transform, &paint, options, target, &mut self.workspace.stroke),
-            Clip::Rect(rect) => render_stroke_paint_clipped(
-                path, transform, &paint, rect, options, target, &mut self.workspace.stroke),
-            Clip::Mask(mask) => render_stroke_paint_masked(
-                path, transform, &paint, mask, options, target, &mut self.workspace.stroke),
-            Clip::SparseMask(mask) => render_stroke_paint_with_mask(
-                path, transform, &paint, mask, options, target, &mut self.workspace.stroke),
-        }
+        render_stroke_paint_composited(path, transform, &paint,
+            Compositing { mode: self.comp_mode, clip }, options,
+            target, &mut self.workspace.stroke)
     }
 
     pub fn stroke_dashed(&mut self, path: &Path, dash: DashPattern<'_>) ->
@@ -221,16 +216,8 @@ impl<'a, 'target, 'workspace, 'clip> CanvasRef<'a, 'target, 'workspace, 'clip> {
             dash_points: workspace.dash_points,
             dash_contours: workspace.dash_contours,
         };
-        match clip {
-            Clip::None => render_stroke_paint_dashed(
-                path, transform, &paint, options, target, &mut dashed),
-            Clip::Rect(rect) => render_stroke_paint_dashed_clipped(
-                path, transform, &paint, rect, options, target, &mut dashed),
-            Clip::Mask(mask) => render_stroke_paint_dashed_masked(
-                path, transform, &paint, mask, options, target, &mut dashed),
-            Clip::SparseMask(mask) => render_stroke_paint_dashed_with_mask(
-                path, transform, &paint, mask, options, target, &mut dashed),
-        }
+        render_stroke_paint_dashed_composited(path, transform, &paint,
+            Compositing { mode: self.comp_mode, clip }, options, target, &mut dashed)
     }
 }
 
@@ -305,7 +292,7 @@ impl CanvasStorage {
 pub struct Canvas<'target> {
     target: Pixmap<'target>, storage: CanvasStorage,
     state: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>,
-    clip: CanvasClip, saved: Vec<SavedCanvasState>,
+    comp_mode: CompositeMode, clip: CanvasClip, saved: Vec<SavedCanvasState>,
 }
 
 #[derive(Clone)] enum CanvasClip {
@@ -317,7 +304,8 @@ pub struct Canvas<'target> {
 }
 
 #[derive(Clone)] struct SavedCanvasState {
-    draw: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>, clip: CanvasClip,
+    draw: DrawState<f32, FlattenOptions, StrokeOptions, SolidPaint>,
+    comp_mode: CompositeMode, clip: CanvasClip,
 }
 
 impl CanvasClip {
@@ -559,7 +547,7 @@ impl<'target> Canvas<'target> {
                 paint: SolidPaint::new(SRGBA::black()),
                 global_alpha: u8::MAX,
             },
-            clip: CanvasClip::None,
+            comp_mode: CompositeMode::SrcOver, clip: CanvasClip::None,
             saved: Vec::new(),
         }
     }
@@ -571,6 +559,7 @@ impl<'target> Canvas<'target> {
     pub fn flatten(&self) -> FlattenOptions { self.state.flatten }
     pub fn stroke_options(&self) -> StrokeOptions { self.state.stroke }
     pub fn global_alpha(&self) -> u8 { self.state.global_alpha }
+    pub fn composite_mode(&self) -> CompositeMode { self.comp_mode }
 
     pub fn set_transform(&mut self, value: Affine) -> &mut Self {
         self.state.transform = value; self
@@ -591,10 +580,31 @@ impl<'target> Canvas<'target> {
     pub fn set_global_alpha(&mut self, value: u8) -> &mut Self {
         self.state.global_alpha = value; self
     }
+    /// Selects the compositing/blending operation used by subsequent draws.
+    ///
+    /// Color blend functions operate in this encoded-sRGB target's working
+    /// space and preserve its premultiplied storage invariant. The mode is part
+    /// of the state captured by [`Self::save`] and [`Self::restore`].
+    ///
+    /// ```
+    /// use ugl_rs::{CompositeMode, Canvas};
+    ///
+    /// let mut canvas = Canvas::new(8, 8).unwrap();
+    /// canvas.set_composite_mode(CompositeMode::Multiply).save()
+    ///       .set_composite_mode(CompositeMode::Screen);
+    /// assert_eq!(canvas.composite_mode(), CompositeMode::Screen);
+    /// assert!(canvas.restore());
+    /// assert_eq!(canvas.composite_mode(), CompositeMode::Multiply);
+    /// ```
+    pub fn set_composite_mode(&mut self, value: CompositeMode) -> &mut Self {
+        self.comp_mode = value; self
+    }
 
     /// Saves the complete drawing state, including the current clip.
     pub fn save(&mut self) -> &mut Self {
-        self.saved.push(SavedCanvasState { draw: self.state, clip: self.clip.clone() }); self
+        self.saved.push(SavedCanvasState {
+            draw: self.state, comp_mode: self.comp_mode, clip: self.clip.clone(),
+        }); self
     }
 
     /// Restores the most recently saved drawing state.
@@ -603,7 +613,8 @@ impl<'target> Canvas<'target> {
     pub fn restore(&mut self) -> bool {
         let Some(saved) = self.saved.pop() else { return false; };
         self.recycle_clip();
-        (self.state, self.clip) = (saved.draw, saved.clip); true
+        (self.state, self.comp_mode, self.clip) =
+            (saved.draw, saved.comp_mode, saved.clip); true
     }
 
     fn recycle_clip(&mut self) {
@@ -762,10 +773,11 @@ impl<'target> Canvas<'target> {
     }
 
     fn as_canvas_ref(&mut self) -> Result<CanvasRef<'_, 'target, '_, '_>, RenderError> {
-        let state = self.state;
+        let (state, comp_mode) = (self.state, self.comp_mode);
         let (target, storage, clip) = (&mut self.target, &mut self.storage, &self.clip);
         let mut canvas = CanvasRef::new(target, storage.workspace());
         canvas.state = state;
+        canvas.comp_mode = comp_mode;
         canvas.clip = clip.as_clip()?;
         Ok(canvas)
     }
@@ -987,6 +999,35 @@ impl<'target> Canvas<'target> {
             GradientStops::new(&stops).unwrap(), SpreadMode::Pad).unwrap();
         canvas.fill_with(&rectangle(), &gradient).unwrap();
         assert_eq!(canvas.target().pixel_bytes(0, 0).unwrap(), [0, 128, 0, 128]);
+    }
+
+    #[test] fn canvas_composite_mode_is_saved_and_composites_in_encoded_target_space() {
+        let path = rectangle();
+        let mut canvas = Canvas::new(4, 4).unwrap();
+        canvas.set_color(SRGBA::blue()).fill(&path).unwrap();
+        canvas.set_composite_mode(CompositeMode::Multiply).save()
+            .set_composite_mode(CompositeMode::Screen).set_color(SRGBA::red())
+            .fill(&path).unwrap();
+        assert_eq!(canvas.target().pixel(1, 1).unwrap().to_array(), [255, 0, 255, 255]);
+        assert!(canvas.restore());
+        assert_eq!(canvas.composite_mode(), CompositeMode::Multiply);
+        canvas.set_color(SRGBA::red()).fill(&path).unwrap();
+        assert_eq!(canvas.target().pixel(1, 1).unwrap().to_array(), [255, 0, 0, 255]);
+    }
+
+    #[test] fn porter_duff_clear_interpolates_antialiased_coverage() {
+        let mut shape = PathBuilder::new();
+        shape.move_to((0.5, 0.0)).line_to((1.5, 0.0))
+            .line_to((1.5, 1.0)).line_to((0.5, 1.0));
+        let mut canvas = Canvas::new(2, 1).unwrap();
+        canvas.set_color(SRGBA::blue()).fill(&rectangle()).unwrap();
+        canvas.set_composite_mode(CompositeMode::Clear).fill(&shape.build()).unwrap();
+        for x in 0..2 {
+            let [r, g, b, a] = canvas.target().pixel(x, 0).unwrap().to_array();
+            assert_eq!((r, g), (0, 0));
+            assert!((127..=128).contains(&b));
+            assert_eq!(a, b);
+        }
     }
 
     #[test] fn canvas_path_clips_intersect_instead_of_replacing() {

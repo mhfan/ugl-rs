@@ -1,6 +1,5 @@
-use crate::{common::color::{PremulRGBA, RGBA}, float::{floor, sqrt}};
 
-/** Porter-Duff Compositing Operators & Blending Modes
+/*! Porter-Duff Compositing Operators & Blending Modes
 ```text
 
       Simple alpha compositing: co = Cs x αs + Cb x αb x (1 - αs)
@@ -50,12 +49,18 @@ use crate::{common::color::{PremulRGBA, RGBA}, float::{floor, sqrt}};
     https://www.w3.org/TR/compositing-1
 ``` */
 
-#[derive(Clone, Copy, Debug, PartialEq)] pub enum BlendMode {
+use crate::{common::color::{PremulRGBA, RGBA}, float::{floor, sqrt}};
+
+/// Porter-Duff compositing operators and W3C blending modes.
+///
+/// Color blending is evaluated in the target's working color space using
+/// straight RGB; storage before and after the operation remains premultiplied.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)] pub enum CompositeMode {
     //  (Alpha) Porter-Duff Compositing Operators:
     /** No regions are enabled. */ Clear,
     /** Only the      source will be present. */ Copy,
     /** Only the destination will be present. */ Dest,
-    /** Source is placed over the destination. */ SrcOver,
+    /** Source is placed over the destination. */ #[default] SrcOver,
     /** The source that overlaps the destination, replaces the destination. */ SrcIn,
     /** Source is placed, where it falls outside of the destination. */ SrcOut,
     /** Source which overlaps the destination, replaces the destination.
@@ -103,13 +108,11 @@ use crate::{common::color::{PremulRGBA, RGBA}, float::{floor, sqrt}};
     //  ...
 }
 
-pub type CompOp = BlendMode;
-
 /* impl RGBA<u8> {
     /// Composite: ao x Co = αs x Fa x Cs + αb x Fb x Cb, ao = αs x Fa + αb x Fb;
-    pub fn composite(self, dest: Self, fa: u8, fb: u8) -> Self {
+    pub fn porter_duff(self, dest: Self, fa: u8, fb: u8) -> Self {
         let (fa, fb) =  ((fa as u32 * self.a as u32 + 128) >> 8,
-                                   (fb as u32 * dest.a as u32 + 128) >> 8);
+                         (fb as u32 * dest.a as u32 + 128) >> 8);
         let a = (fa + fb).min(255);     // XXX: make it non-premultiplied?
         let r = (fa * self.r as u32 + fb * dest.r as u32 + 128) >> 8; // / a;
         let g = (fa * self.g as u32 + fb * dest.g as u32 + 128) >> 8; // / a;
@@ -142,18 +145,78 @@ pub type CompOp = BlendMode;
     assert_eq!(draw.clear().to_array(),    [0.0, 0.0, 0.0, 0.0]);
 ``` */
 impl PremulRGBA<f32> {
+    /// Composites premultiplied channels in their caller-selected working space.
+    ///
+    /// Porter-Duff operators consume premultiplied channels directly. Color blend
+    /// modes temporarily recover straight RGB for `B(Cb, Cs)`, then apply the W3C
+    /// source-over formula. The caller decides whether the channels represent
+    /// encoded sRGB or linear light.
+    pub(crate) fn composite(self, drop: Self, mode: CompositeMode) -> Self {
+        use CompositeMode::*; match mode {
+            Clear   => self.clear(),
+            Copy    => self.copy(drop),
+            Dest    => self.drop(drop),
+            SrcIn   => self.src_in(drop),
+            DstIn   => self.dst_in(drop),
+            SrcAtop => self.src_atop(drop),
+            DstAtop => self.dst_atop(drop),
+            SrcOut  => self.src_out(drop),
+            DstOut  => self.dst_out(drop),
+            DstOver => self.dst_over(drop),
+            SrcOver |
+            Normal  => self.src_over(drop),
+            Lighter => self.lighter(drop),
+            XOR     => self.xor(drop),
+            _ => self.blend_src_over(drop, mode),
+        }
+    }
+
+    /// Applies a W3C color blend in straight RGB, then source-over composites
+    /// the result back into premultiplied storage.
+    fn blend_src_over(self, drop: Self, mode: CompositeMode) -> Self {
+        let (src_channels, drop_channels) = (self.to_array(), drop.to_array());
+        let (src_straight, drop_straight) = (self.unpremul(), drop.unpremul());
+        let (sa, ba) = (self.alpha(), drop.alpha());
+        let blended = match mode {
+            Normal     => src_straight.normal(drop_straight),
+            Screen     => src_straight.screen(drop_straight),
+            Multiply   => src_straight.multiply(drop_straight),
+            Overlay    => src_straight.overlay(drop_straight),
+            Lighten    => src_straight.lighten(drop_straight),
+            Darken     => src_straight.darken(drop_straight),
+            ColorDodge => src_straight.dodge(drop_straight),
+            ColorBurn  => src_straight.burn(drop_straight),
+            HardLight  => src_straight.hard_light(drop_straight),
+            SoftLight  => src_straight.soft_light(drop_straight),
+            Difference => src_straight.difference(drop_straight),
+            Exclusion  => src_straight.exclusion(drop_straight),
+            Hue        => src_straight.hue(drop_straight),
+            Color      => src_straight.color(drop_straight),
+            Saturation => src_straight.saturation(drop_straight),
+            Luminosity => src_straight.luminosity(drop_straight),
+            _ => unreachable!("Porter-Duff mode passed to blend_src_over"),
+        };  use CompositeMode::*;
+
+        let [br, bg, bb, _] = blended.to_array();
+        let (blend, alpha) = ([br, bg, bb], sa + ba * (1. - sa));
+        let channel = |index|   src_channels[index] * (1. - ba) +
+            drop_channels[index] * (1. - sa) + sa * ba * blend[index];
+        Self::from((channel(0).clamp(0., alpha), channel(1).clamp(0., alpha),
+                    channel(2).clamp(0., alpha), alpha))
+    }
+
     /// (Alpha) Porter-Duff Compositing Operators:
     ///
     /// Composite: co = Fa x cs + Fb x cb, ao = Fa x αs + Fb x αb.
-    fn composite(self, dest: Self, fa: f32, fb: f32) -> Self {
+    fn porter_duff(self, dest: Self, fa: f32, fb: f32) -> Self {
         let ([sr, sg, sb, sa], [dr, dg, db, da]) = (self.to_array(), dest.to_array());
-        Self::from(((fa * sr + fb * dr).min(1.0), (fa * sg + fb * dg).min(1.0),
-                    (fa * sb + fb * db).min(1.0), (fa * sa + fb * da).min(1.0)))
+        Self::from(((fa * sr + fb * dr).min(1.), (fa * sg + fb * dg).min(1.),
+                    (fa * sb + fb * db).min(1.), (fa * sa + fb * da).min(1.)))
     }
     /* Composite: ao x Co = αs x Fa x Cs + αb x Fb x Cb, ao = αs x Fa + αb x Fb;
     // Output pre-multiplied color with alpha from NON-premultiplied source and
     // destination/backdrop  color  and alpha.
-    fn composite(self, dest: Self, fa: f32, fb: f32) -> Self {
+    fn porter_duff(self, dest: Self, fa: f32, fb: f32) -> Self {
         let (fa, fb) =  (fa * self.a, fb * dest.a);
         let r = fa * self.r + fb * dest.r;
         let g = fa * self.g + fb * dest.g;
@@ -164,58 +227,58 @@ impl PremulRGBA<f32> {
     /// No regions are enabled.
     pub fn clear(self) -> Self { Self::zeroed() }
     /// Only the source will be present.
-    pub fn  copy(self, dest: Self) -> Self { self.composite(dest, 1., 0.) }
+    pub fn  copy(self, dest: Self) -> Self { self.porter_duff(dest, 1., 0.) }
     /// Only the destination will be present.
-    pub fn  drop(self, dest: Self) -> Self { self.composite(dest, 0., 1.) }
+    pub fn  drop(self, dest: Self) -> Self { self.porter_duff(dest, 0., 1.) }
     /// Display the sum of the source image and destination image.
-    pub fn  plus(self, dest: Self) -> Self { self.composite(dest, 1., 1.) }
+    pub fn  plus(self, dest: Self) -> Self { self.porter_duff(dest, 1., 1.) }
 
     /// Source is placed over the destination.
-    pub fn src_over(self, dest: Self) -> Self { self.composite(dest, 1., 1. - self.alpha()) }
+    pub fn src_over(self, dest: Self) -> Self { self.porter_duff(dest, 1., 1. - self.alpha()) }
     /// Destination is placed over the source.
-    pub fn dst_over(self, dest: Self) -> Self { self.composite(dest, 1. - dest.alpha(), 1.) }
+    pub fn dst_over(self, dest: Self) -> Self { self.porter_duff(dest, 1. - dest.alpha(), 1.) }
     /// Source is placed, where it falls outside of the destination.
-    pub fn src_out (self, dest: Self) -> Self { self.composite(dest, 1. - dest.alpha(), 0.) }
+    pub fn src_out (self, dest: Self) -> Self { self.porter_duff(dest, 1. - dest.alpha(), 0.) }
     /// Destination is placed, where it falls outside of the source.
-    pub fn dst_out (self, dest: Self) -> Self { self.composite(dest, 0., 1. - self.alpha()) }
+    pub fn dst_out (self, dest: Self) -> Self { self.porter_duff(dest, 0., 1. - self.alpha()) }
     /// The source that overlaps the destination, replaces the destination.
-    pub fn src_in  (self, dest: Self) -> Self { self.composite(dest, dest.alpha(), 0.) }
+    pub fn src_in  (self, dest: Self) -> Self { self.porter_duff(dest, dest.alpha(), 0.) }
     /// Destination which overlaps the source, replaces the source.
-    pub fn dst_in  (self, dest: Self) -> Self { self.composite(dest, 0., self.alpha()) }
+    pub fn dst_in  (self, dest: Self) -> Self { self.porter_duff(dest, 0., self.alpha()) }
     /// Display the sum of the source image and destination image.
     pub fn lighter (self, dest: Self) -> Self { self.plus(dest) }
 
     /// Source which overlaps the destination, replaces the destination.
     /// Destination is placed elsewhere.
     pub fn src_atop(self, dest: Self) -> Self {
-        self.composite(dest, dest.alpha(), 1. - self.alpha())
+        self.porter_duff(dest, dest.alpha(), 1. - self.alpha())
     }
     /// Destination which overlaps the source replaces the source. Source is placed elsewhere.
     pub fn dst_atop(self, dest: Self) -> Self {
-        self.composite(dest, 1. - dest.alpha(), self.alpha())
+        self.porter_duff(dest, 1. - dest.alpha(), self.alpha())
     }
     /// The non-overlapping regions of source and destination are combined.
     pub fn xor(self, dest: Self) -> Self {
-        self.composite(dest, 1. - dest.alpha(), 1. - self.alpha())
+        self.porter_duff(dest, 1. - dest.alpha(), 1. - self.alpha())
     }
 }
 
 impl RGBA<f32> {    #![allow(unused)]
     /// (Color) Blending/Mixing Modes:
     ///
-    /// Apply the blend in place: Cs = (1 - αb) x Cs + αb x B(Cb, Cs)
-    fn blend(self, drop: Self, bop: impl Fn(f32, f32) -> f32) -> Self {
-        //lerp(self.r, bop(drop.r, self.r), drop.a);    // lerp for g, b as well
-        let inv_a = 1. - drop.a;
-        let r = inv_a * self.r + drop.a * bop(drop.r, self.r);
-        let g = inv_a * self.g + drop.a * bop(drop.g, self.g);
-        let b = inv_a * self.b + drop.a * bop(drop.b, self.b);
-        Self { r, g, b,  a: inv_a * self.a + drop.a } // XXX: self.a
+    /// W3C blending first replaces the straight source color in the overlap:
+    ///   `Cs' = (1 - αb) × Cs + αb × B(Cb, Cs)`.
+    /// Source-over compositing then combines `Cs'` with the backdrop and computes
+    /// the output alpha. This helper evaluates only the separable blend function
+    /// `B(Cb, Cs)`; therefore alpha does not participate and remains the source alpha.
+    fn blend(self, drop: Self, operation: impl Fn(f32, f32) -> f32) -> Self {
+        Self::new(operation(drop.r, self.r), operation(drop.g, self.g),
+                  operation(drop.b, self.b), self.a)
     }
 
     /// This is the default attribute which specifies no blending.
     /// The blending formula simply selects the source color.
-    pub fn normal(self, _: Self) -> Self { self } // XXX: self.blend(drop, |_, cs| cs)
+    pub fn normal(self, _: Self) -> Self { self } // self.blend(drop, |_, cs| cs)
 
     /// The source color is multiplied by the destination color and replaces the destination.
     /// The resultant color is always at least as dark as either the source or destination color.
@@ -234,42 +297,43 @@ impl RGBA<f32> {    #![allow(unused)]
 
     /// Selects the darker of the backdrop and source colors. The backdrop is replaced with
     /// the source where the source is darker; otherwise, it is left unchanged.
-    pub fn darken (self, drop: Self) -> Self { self.blend(drop, |cb, cs| cb.min(cs)) }
+    pub fn darken (self, drop: Self) -> Self { self.blend(drop, f32::min) }
 
     /// Selects the lighter of the backdrop and source colors. The backdrop is replaced with
     /// the source where the source is lighter; otherwise, it is left unchanged.
-    pub fn lighten(self, drop: Self) -> Self { self.blend(drop, |cb, cs| cb.max(cs)) }
+    pub fn lighten(self, drop: Self) -> Self { self.blend(drop, f32::max) }
 
     /// Brightens the backdrop color to reflect the source color.
     /// Painting with black produces no changes.
     pub fn dodge(self, drop: Self) -> Self {
-        self.blend(drop, |cb, cs|
-            if cs == 1. { 1. } else { (cb / (1. - cs)).min(1.) })
+        self.blend(drop, |cb, cs| if cs >= 1. { 1. } else { (cb / (1. - cs)).min(1.) })
     }
 
     /// Darkens the backdrop color to reflect the source color.
     /// Painting with white produces no change.
     pub fn burn(self, drop: Self) -> Self {
-        self.blend(drop, |cb, cs|
-            if cs == 0. { 0. } else { 1. - ((1. - cb) / cs).min(1.) })
+        self.blend(drop, |cb, cs| if cs <= 0. { 0. } else { 1. - ((1. - cb) / cs).min(1.) })
     }
 
     /// Overlay is the inverse of the hard-light blend mode.
-    pub fn overlay(self, drop: Self) -> Self { drop.hard_light(self) }
+    pub fn overlay(self, drop: Self) -> Self {
+        self.blend(drop, |cb, cs| if cb <= 0.5 { 2. * cb * cs }
+            else { 1. - 2. * (1. - cb) * (1. - cs) })
+    }
+
     /// Multiplies or screens the colors, depending on the source color value.
     /// The effect is similar to shining a harsh spotlight on the backdrop.
     pub fn hard_light(self, drop: Self) -> Self {
-        self.blend(drop, |cb, cs|
-            if cs <= 0.5 { cb * cs * 2. } else { 1. - (1. - cb) * (1. - cs) * 2. })
+        self.blend(drop, |cb, cs| if cs <= 0.5 { 2. * cb * cs }
+            else { 1. - 2. * (1. - cb) * (1. - cs) })
     }
 
     /// Darkens or lightens the colors, depending on the source color value.
     /// The effect is similar to shining a diffused spotlight on the backdrop.
     pub fn soft_light(self, drop: Self) -> Self {
-        self.blend(drop, |cb, cs|
-            if cs <= 0.5 { cb * (1. - cb) } else {
-                (if cb <= 0.25 { ((cb * 16. - 12.) * cb + 4.) * cb } else { sqrt(cb) }) - cb
-            } * (cs * 2. - 1.) + cb)
+        self.blend(drop, |cb, cs| if cs <= 0.5 { cb * (1. - cb) } else {
+            (if cb <= 0.25 { ((cb * 16. - 12.) * cb + 4.) * cb  } else { sqrt(cb) }) - cb
+        } * (cs * 2. - 1.) + cb)
     }
 
     /// Subtracts the darker of the two constituent colors from the lighter color.
@@ -284,7 +348,7 @@ impl RGBA<f32> {    #![allow(unused)]
 
     /// Creates a color with the hue of the source color and
     /// the saturation and luminosity of the backdrop color.
-    pub fn hue(self, drop: Self) -> Self {    // synonymous with chroma?
+    pub fn hue(self, drop: Self) -> Self {  // synonymous with chroma?
         self.set_sat(drop.to_sat()).set_lum(drop.to_lum())
     }
 
@@ -292,7 +356,9 @@ impl RGBA<f32> {    #![allow(unused)]
     /// of the backdrop color. Painting with this mode in an area of the backdrop that is
     /// a pure gray (no saturation) produces no change.
     pub fn saturation(self, drop: Self) -> Self {
-        let lum = drop.to_lum(); drop.set_sat(self.to_sat()).set_lum(lum)
+        let lum = drop.to_lum();
+        let mut blended = drop.set_sat(self.to_sat()).set_lum(lum);
+        blended.a = self.a;     blended
     }
 
     /// Creates a color with the hue and saturation of the source color and the luminosity
@@ -302,7 +368,10 @@ impl RGBA<f32> {    #![allow(unused)]
 
     /// Creates a color with the luminosity of the source color and the hue and saturation
     /// of the backdrop color. This produces an inverse effect to that of the Color mode.
-    pub fn luminosity(self, drop: Self) -> Self { drop.set_lum(self.to_lum()) }
+    pub fn luminosity(self, drop: Self) -> Self {
+        let mut blended = drop.set_lum(self.to_lum());
+        blended.a = self.a;     blended
+    }
 
     /// Luma is the weighted average of gamma-corrected R, G, and B, based on their contribution
     /// to perceived lightness, long used as the monochromatic dimension in color TV broadcast.
@@ -344,33 +413,33 @@ impl RGBA<f32> {    #![allow(unused)]
     fn to_hsl(self) -> (f32, f32, f32) {
         let (r, g, b) = (self.r, self.g, self.b);
         let (max, min) = (r.max(g).max(b), r.min(g).min(b));
-        let l = (max + min) / 2.0;  let (h, s);
+        let l = (max + min) / 2.;  let (h, s);
 
-        if max == min { (h, s) = (0.0, 0.0); } else {   let d = max - min;
-            s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+        if max == min { (h, s) = (0., 0.); } else {   let d = max - min;
+            s = if l > 0.5 { d / (2. - max - min) } else { d / (max + min) };
 
-            h =    if max == r { ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
-            } else if max == g { ((b - r) / d + 2.0) / 6.0
-            } else {             ((r - g) / d + 4.0) / 6.0 };
+            h =    if max == r { ((g - b) / d + if g < b { 6. } else { 0. }) / 6.
+            } else if max == g { ((b - r) / d + 2.) / 6.
+            } else {             ((r - g) / d + 4.) / 6. };
         }   (h, s, l)
     }
 
     fn from_hsl(h: f32, s: f32, l: f32, a: f32) -> Self {
         fn hue_to_rgb(p: f32, q: f32, t: f32) -> f32 {
             let mut t = t;
-            if t < 0.0 { t += 1.0; }
-            if t > 1.0 { t -= 1.0; }
-            if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
-            if t < 1.0 / 2.0 { return q; }
-            if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+            if t < 0. { t += 1.; }
+            if t > 1. { t -= 1.; }
+            if t < 1. / 6. { return p + (q - p) * 6. * t; }
+            if t < 1. / 2. { return q; }
+            if t < 2. / 3. { return p + (q - p) * (2. / 3. - t) * 6.; }
             p
         }
 
-        let (r, g, b) = if s == 0.0 { (l, l, l) } else {
-            let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
-            let p = 2.0 * l - q;
-            (hue_to_rgb(p, q, h + 1.0 / 3.0), hue_to_rgb(p, q, h),
-             hue_to_rgb(p, q, h - 1.0 / 3.0))
+        let (r, g, b) = if s == 0. { (l, l, l) } else {
+            let q = if l < 0.5 { l * (1. + s) } else { l + s - l * s };
+            let p = 2. * l - q;
+            (hue_to_rgb(p, q, h + 1. / 3.), hue_to_rgb(p, q, h),
+             hue_to_rgb(p, q, h - 1. / 3.))
         };  Self { r, g, b, a }
     }
 
@@ -393,23 +462,23 @@ impl RGBA<f32> {    #![allow(unused)]
         let (r, g, b) = (self.r, self.g, self.b);
         let (max, min) = (r.max(g).max(b), r.min(g).min(b));
         let (v, d) = (max, max - min);
-        let s = if max == 0.0 { 0.0 } else { d / max };
-        let h = if   d == 0.0 { 0.0
+        let s = if max == 0. { 0. } else { d / max };
+        let h = if   d == 0. { 0.
         } else if max == r {
             let h = (g - b) / d;
-            ((h % 6.0) + if h < 0.0 { 6.0 } else { 0.0 }) / 6.0
-        } else if max == g { ((b - r) / d + 2.0) / 6.0
-        } else {             ((r - g) / d + 4.0) / 6.0 };
+            ((h % 6.) + if h < 0. { 6. } else { 0. }) / 6.
+        } else if max == g { ((b - r) / d + 2.) / 6.
+        } else {             ((r - g) / d + 4.) / 6. };
         (h, s, v)
     }
 
     fn from_hsv(h: f32, s: f32, v: f32, a: f32) -> Self {
-        let h = h % 1.0;
-        let i = floor(h * 6.0);
-        let f =  h * 6.0 - i;
-        let p = v * (1.0 - s);
-        let q = v * (1.0 - f * s);
-        let t = v * (1.0 - (1.0 - f) * s);
+        let h = h % 1.;
+        let i = floor(h * 6.);
+        let f =  h * 6. - i;
+        let p = v * (1. - s);
+        let q = v * (1. - f * s);
+        let t = v * (1. - (1. - f) * s);
 
         let (r, g, b) = match i as i32 % 6 {
             0 => (v, t, p), 1 => (q, v, p), 2 => (p, v, t),
@@ -485,20 +554,52 @@ impl RGBA<f32> {    #![allow(unused)]
     //  https://docs.krita.org/en/reference_manual/blending_modes.html
 }
 
-#[cfg(test)] mod tests { use super::RGBA;
+#[cfg(test)] mod tests { use super::*;
     fn assert_close(actual: f32, expected: f32) {
         assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
     }
 
     #[test] fn premultiplied_source_over_can_be_composed_repeatedly() {
-        let   source = RGBA::new(1.0, 0.0, 0.0, 0.5).premul();
-        let backdrop = RGBA::new(0.0, 0.0, 1.0, 0.5).premul();
-        let composite = source.src_over(backdrop);
+        let  src = RGBA::new(1.0, 0.0, 0.0, 0.5).premul();
+        let drop = RGBA::new(0.0, 0.0, 1.0, 0.5).premul();
+        let composite = src.src_over(drop);
         for (actual, expected) in composite.to_array().into_iter()
             .zip([0.5, 0.0, 0.25, 0.75]) {
             assert_close(actual, expected);
         }
         assert_eq!(composite.src_over(Default::default()), composite);
+    }
+
+    #[test] fn color_blends_use_straight_rgb_and_return_premultiplied_output() {
+        let (src, drop) = ([0.5, 0.0, 0.0, 0.5], [0.0, 0.0, 0.5, 0.5]);
+        let premul = |[r, g, b, a]: [f32; 4]| PremulRGBA::from((r, g, b, a));
+        assert_eq!(premul(src).composite(premul(drop), CompositeMode::Multiply)
+            .to_array(), [0.25, 0.0, 0.25, 0.75]);
+        assert_eq!(premul(src).composite(premul(drop), CompositeMode::Screen)
+            .to_array(), [0.5, 0.0, 0.5, 0.75]);
+        let (src, drop) =
+            (RGBA::new(1.0, 0.0, 0.0, 0.25), RGBA::new(0.0, 0.0, 1.0, 0.75));
+        assert_eq!(src.screen(drop), RGBA::new(1.0, 0.0, 1.0, 0.25));
+        assert_eq!(src.linear_dodge(drop), RGBA::new(1.0, 0.0, 1.0, 0.25));
+        for blended in [src.overlay(drop), src.saturation(drop),
+                                           src.luminosity(drop)] {
+            assert_eq!(blended.a, src.a);
+        }
+    }
+
+    #[test] fn every_mode_preserves_finite_premultiplied_channels() {
+        let modes = [Clear, Copy, Dest, SrcOver, SrcIn, SrcOut, SrcAtop, DstOver, DstIn,
+            DstOut, DstAtop, XOR, Lighter, Normal, Multiply, Screen, Overlay, Darken,
+            Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference,
+            Exclusion, Hue, Saturation, Color, Luminosity];     use CompositeMode::*;
+        for mode in modes {
+            let result = PremulRGBA::from((0.31, 0.12, 0.48, 0.6))
+                .composite((0.08, 0.35, 0.2, 0.5).into(), mode).to_array();
+            assert!(result.into_iter().all(f32::is_finite));
+            assert!(result[..3].iter().all(|channel|
+                *channel >= 0.0 && *channel <= result[3]));
+            assert!((0.0..=1.0).contains(&result[3]));
+        }
     }
 
     #[test] fn set_sat_preserves_channel_order_and_sets_range() {

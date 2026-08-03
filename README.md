@@ -250,6 +250,13 @@ they are intentionally separate types: conversion and quantization happen only
 through `LinearPixmap::encode_into` or its LUT/dirty variants. No generic pixel
 format trait obscures which compositing domain is active.
 
+`Canvas::set_composite_mode` selects Porter-Duff compositing or a W3C color blend
+mode and is included in `save`/`restore`. Because `Canvas` draws into `Pixmap`,
+its color blend functions operate on temporary straight RGB in encoded-sRGB
+space, then return validated premultiplied storage. The default `SrcOver` path
+retains its packed integer fast path. Linear-light blending belongs to the
+separate `LinearPixmap` pipeline rather than silently changing `Pixmap` output.
+
 ### Workspace planning
 
 Both backends expose exact, target-independent planners for fill, stroke, and

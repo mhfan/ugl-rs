@@ -9,7 +9,7 @@ use crate::{common::{geometry::{Edge, Point}, raster::{CoverageSink, FillRule}},
 ///
 /// This corresponds to ±2,097,152 device units and leaves enough headroom for
 /// every line-intersection multiply-add to remain in `i64`.
-pub const   SUBPIXEL_SCALE: u32 = 1 << 8;
+pub const SUBPIXEL_SCALE: u32 = 1 << 8;
 pub const STRIP_HEIGHT: u32 = 16;
 const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
 
