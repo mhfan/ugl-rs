@@ -144,7 +144,7 @@ impl<S: CoverageSink> CoverageSink for FixedRectClipSink<'_, S> {
         let overlap = |from: Scalar, to: Scalar, pixel: u32| {
             let pixel = i64::from(pixel) * SUBPIXEL_SCALE;
             (i64::from(to.to_bits()).min(pixel + SUBPIXEL_SCALE) -
-             i64::from(from.to_bits()).max(pixel)).clamp(0, SUBPIXEL_SCALE) as u64
+             i64::from(from.to_bits()).max(pixel)).clamp(0, SUBPIXEL_SCALE) as u32
         };
         let vertical = overlap(self.rect.top(), self.rect.bottom(), y);
         if vertical == 0 { return Ok(()); }
@@ -152,7 +152,7 @@ impl<S: CoverageSink> CoverageSink for FixedRectClipSink<'_, S> {
         let (start, end) = (x.max(left), x.saturating_add(len).min(right));
         let quantize = |pixel| {
             let horizontal = overlap(self.rect.left(), self.rect.right(), pixel);
-            ((u64::from(coverage) * horizontal * vertical + 32_768) / 65_536) as u8
+            ((u32::from(coverage) * horizontal * vertical + 32_768) / 65_536) as u8
         };
         let mut cursor = start;
         while cursor < end {
@@ -394,8 +394,8 @@ pub(crate) struct DashedPreparedUsage {
 fn requirements_from_lines(edges: usize, lines: &[Line], dimensions: (u32, u32)) ->
     Result<RenderRequirements, RenderError> {
     let (width, height) = dimensions;
-    let extent = |value: u32| value as u64 * 256;
-    if extent(width) > DEVICE_RAW_LIMIT as u64 || extent(height) > DEVICE_RAW_LIMIT as u64 {
+    let limit = DEVICE_RAW_LIMIT as u32 / 256;
+    if width > limit || height > limit {
         return Err(RenderError::FixedRaster(RasterError::CoordinateOutOfRange));
     }
     let bins = strip_requirements(lines, height).map_err(RenderError::FixedRaster)?;

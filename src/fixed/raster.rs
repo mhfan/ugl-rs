@@ -11,7 +11,7 @@ use crate::{common::{geometry::{Edge, Point}, raster::{CoverageSink, FillRule}},
 /// every line-intersection multiply-add to remain in `i64`.
 pub const SUBPIXEL_SCALE: u32 = 1 << 8;
 pub const STRIP_HEIGHT: u32 = 16;
-const PIXEL_AREA_TWICE: u64 = 2 * SUBPIXEL_SCALE as u64 * SUBPIXEL_SCALE as u64;
+const PIXEL_AREA_TWICE: u32 = 2 * SUBPIXEL_SCALE * SUBPIXEL_SCALE;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum Error {
     CoordinateOutOfRange, CrossingEdges, DimensionsOverflow, InvalidEdge, InvalidIntersectionOrder,
@@ -30,7 +30,7 @@ pub enum WorkspaceKind {
 pub enum RenderError<E> { Raster(Error), Sink(E) }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Line { x0: i32, y0: i32, dx: i64, dy: u32, winding: i8 }
+pub struct Line { x0: i32, y0: i32, dx: i32, dy: u32, winding: i8 }
 
 impl Line {
     pub fn new(edge: Edge<Scalar>) -> Result<Self, Error> {
@@ -46,13 +46,13 @@ impl Line {
         if  dy <= 0 || !matches!(edge.winding, -1 | 1) {
             return Err(Error::InvalidEdge);
         }
-        Ok(Self { x0, y0, dx: x1 as i64 - x0 as i64, dy: dy as _, winding: edge.winding })
+        Ok(Self { x0, y0, dx: x1 - x0, dy: dy as _, winding: edge.winding })
     }
 
     pub fn intersection(&self, y: Scalar) -> Intersection {
         let offset = y.to_bits() as i64 - self.y0 as i64;
         Intersection {  den: self.dy, winding: self.winding,
-            num: self.x0 as i64 * self.dy as i64 +  self.dx * offset,
+            num: self.x0 as i64 * self.dy as i64 + self.dx as i64 * offset,
         }
     }
 
@@ -164,14 +164,13 @@ impl Trapezoid {
     }
 
     /// Clips this row-local trapezoid to one pixel and returns doubled area.
-    pub fn pixel_area_twice_raw(self, x: u32, y: u32) -> Result<u64, Error> {
+    pub fn pixel_area_twice_raw(self, x: u32, y: u32) -> Result<u32, Error> {
         self.area_twice_raw()?;
-        let scale = SUBPIXEL_SCALE as u64;
-        let (left, top) = (x as u64 * scale, y as u64 * scale);
+        let limit = DEVICE_RAW_LIMIT as u32 / SUBPIXEL_SCALE;
+        if x >= limit || y >= limit { return Err(Error::CoordinateOutOfRange); }
+        let scale = SUBPIXEL_SCALE;
+        let (left, top) = (x * scale, y * scale);
         let (right, bottom) = (left + scale, top + scale);
-        if right > DEVICE_RAW_LIMIT as u64 || bottom > DEVICE_RAW_LIMIT as u64 {
-            return Err(Error::CoordinateOutOfRange);
-        }
         let (left, top, right, bottom) =
             (left as i64, top as i64, right as i64, bottom as i64);
         if (self.left.top_y as i64) < top || self.left.bottom_y as i64 > bottom {
@@ -198,7 +197,7 @@ impl Trapezoid {
             area_twice += (current.x - left) * (next.y - top)
                 - (next.x - left) * (current.y - top);
         }
-        Ok(area_twice.unsigned_abs().min(PIXEL_AREA_TWICE))
+        Ok(area_twice.unsigned_abs().min(PIXEL_AREA_TWICE as _) as _)
     }
 }
 
@@ -258,7 +257,7 @@ fn round_ratio_i128(numerator: i128, denominator: i128) -> i128 {
     }
 }
 
-fn integrate_clamped_edge_twice(start: i64, end: i64, height: u32) -> u64 {
+fn integrate_clamped_edge_twice(start: i64, end: i64, height: u32) -> u32 {
     // |start| and |end| are at most twice DEVICE_RAW_LIMIT after subtracting
     // the target pixel origin. The primitive is below 2^39 and multiplying by
     // a one-row height (<= 256) remains safely inside i64.
@@ -307,7 +306,7 @@ fn round_trapezoid(trapezoid: Trapezoid) -> Result<RoundedTrapezoid, Error> {
     Ok(rounded)
 }
 
-fn full_row_pixel_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u64 {
+fn full_row_pixel_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u32 {
     let pixel_left = x as i64 * SUBPIXEL_SCALE as i64;
     let right = integrate_clamped_edge_twice(
         trapezoid.right_top - pixel_left,
@@ -318,7 +317,7 @@ fn full_row_pixel_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u64 {
     right.saturating_sub(left).min(PIXEL_AREA_TWICE)
 }
 
-fn full_row_left_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u64 {
+fn full_row_left_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u32 {
     let pixel_left = x as i64 * SUBPIXEL_SCALE as i64;
     let left = integrate_clamped_edge_twice(
         trapezoid.left_top - pixel_left,
@@ -326,7 +325,7 @@ fn full_row_left_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u64 {
     PIXEL_AREA_TWICE.saturating_sub(left)
 }
 
-fn full_row_right_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u64 {
+fn full_row_right_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u32 {
     let pixel_left = x as i64 * SUBPIXEL_SCALE as i64;
     integrate_clamped_edge_twice(
         trapezoid.right_top - pixel_left,
@@ -334,19 +333,19 @@ fn full_row_right_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u64 {
 }
 
 /// Maps a pixel-clipped doubled Q24.8 area to round-to-nearest 8-bit coverage.
-pub fn quantize_area_coverage(area_twice_raw: u64) -> u8 {
+pub fn quantize_area_coverage(area_twice_raw: u32) -> u8 {
     let area = area_twice_raw.min(PIXEL_AREA_TWICE);
-    ((area * u8::MAX as u64 + PIXEL_AREA_TWICE / 2) / PIXEL_AREA_TWICE) as _
+    ((area * u8::MAX as u32 + PIXEL_AREA_TWICE / 2) / PIXEL_AREA_TWICE) as _
 }
 
 /// Accumulates one row-local trapezoid into a caller-owned doubled-area row.
 pub fn accumulate_trapezoid_row(trapezoid: Trapezoid, width: u32, y: u32,
-    row_area: &mut [u64]) -> Result<(), Error> {
+    row_area: &mut [u32]) -> Result<(), Error> {
     accumulate_trapezoid_row_region(trapezoid, 0, width, y, row_area)
 }
 
 fn accumulate_trapezoid_row_region(trapezoid: Trapezoid, x_origin: u32,
-    width: u32, y: u32, row_area: &mut [u64]) -> Result<(), Error> {
+    width: u32, y: u32, row_area: &mut [u32]) -> Result<(), Error> {
     trapezoid.area_twice_raw()?;
     let width_usize = usize::try_from(width.saturating_sub(x_origin))
         .map_err(|_| Error::DimensionsOverflow)?;
@@ -356,10 +355,11 @@ fn accumulate_trapezoid_row_region(trapezoid: Trapezoid, x_origin: u32,
         });
     }
     let scale = SUBPIXEL_SCALE as i64;
-    let row_top = y as u64 * SUBPIXEL_SCALE as u64;
-    if  row_top + SUBPIXEL_SCALE as u64 > DEVICE_RAW_LIMIT as u64 {
+    let limit = DEVICE_RAW_LIMIT as u32 / SUBPIXEL_SCALE;
+    if y >= limit {
         return Err(Error::CoordinateOutOfRange);
     }
+    let row_top = y * SUBPIXEL_SCALE;
     if (trapezoid.left.top_y as i64) < row_top as i64 ||
         trapezoid.left.bottom_y as i64 > row_top as i64 + scale {
         return Err(Error::InvalidSlabPartition);
@@ -375,7 +375,7 @@ fn accumulate_trapezoid_row_region(trapezoid: Trapezoid, x_origin: u32,
         .clamp(x_origin as i64, width as i64) as u32;
 
     let interior = trapezoid.interior_pixel_range(width);
-    let interior_area = 2 * trapezoid.left.height_raw() as u64 * SUBPIXEL_SCALE as u64;
+    let interior_area = 2 * trapezoid.left.height_raw() * SUBPIXEL_SCALE;
     let vertical = xs[0] == xs[1] && xs[2] == xs[3];
 
     for x in first..last {
@@ -383,7 +383,7 @@ fn accumulate_trapezoid_row_region(trapezoid: Trapezoid, x_origin: u32,
             if vertical {
                 let pixel_left = x as i64 * scale;
                 let overlap = xs[2].min(pixel_left + scale) - xs[0].max(pixel_left);
-                2 * trapezoid.left.height_raw() as u64 * overlap.max(0) as u64
+                2 * trapezoid.left.height_raw() * overlap.max(0) as u32
             } else { trapezoid.pixel_area_twice_raw(x, y)? }
         };
         let cell = &mut row_area[(x - x_origin) as usize];
@@ -392,12 +392,12 @@ fn accumulate_trapezoid_row_region(trapezoid: Trapezoid, x_origin: u32,
 }
 
 /// Quantizes and coalesces one accumulated fixed-point area row.
-pub fn emit_area_runs<S>(row_area: &[u64], y: u32, sink: &mut S) ->
+pub fn emit_area_runs<S>(row_area: &[u32], y: u32, sink: &mut S) ->
     Result<(), S::Error> where S: CoverageSink {
     emit_area_runs_offset(row_area, 0, y, sink)
 }
 
-fn emit_area_runs_offset<S>(row_area: &[u64], x_origin: u32, y: u32,
+fn emit_area_runs_offset<S>(row_area: &[u32], x_origin: u32, y: u32,
     sink: &mut S) -> Result<(), S::Error> where S: CoverageSink {
     let Some((&first, rest)) = row_area.split_first() else { return Ok(()); };
     let (mut run_start, mut run_coverage) = (0, quantize_area_coverage(first));
@@ -421,7 +421,7 @@ fn emit_area_runs_offset<S>(row_area: &[u64], x_origin: u32, y: u32,
 pub struct Workspace<'a> {
     pub segments: &'a mut [Segment],
     pub trapezoids: &'a mut [Trapezoid],
-    pub row_area: &'a mut [u64],
+    pub row_area: &'a mut [u32],
     pub strip_offsets: &'a mut [u32],
     pub strip_indices: &'a mut [u32],
 }
@@ -430,7 +430,7 @@ pub struct Workspace<'a> {
 pub struct RasterWorkspace<'a> {
     pub segments: &'a mut [Segment],
     pub trapezoids: &'a mut [Trapezoid],
-    pub row_area: &'a mut [u64],
+    pub row_area: &'a mut [u32],
 }
 
 /// Caller-owned storage for optional retained sparse coverage.
@@ -505,10 +505,11 @@ fn rasterize_lines_binned_region<S>(lines: &[Line], bins: StripBins<'_>,
         x0.min(width), y0.min(height), x1.min(width), y1.min(height));
     let width_usize = usize::try_from(x1.saturating_sub(x0))
         .map_err(|_| RenderError::Raster(Error::DimensionsOverflow))?;
-    let extent = |value: u32| value as u64 * SUBPIXEL_SCALE as u64;
-    if extent(width) > DEVICE_RAW_LIMIT as u64 || extent(height) > DEVICE_RAW_LIMIT as u64 {
+    let limit = DEVICE_RAW_LIMIT as u32 / SUBPIXEL_SCALE;
+    if width > limit || height > limit {
         return Err(RenderError::Raster(Error::CoordinateOutOfRange));
     }
+    let extent = |value: u32| value * SUBPIXEL_SCALE;
     for (kind, available, required) in [
         (WorkspaceKind::Segments, workspace.  segments.len(), lines.len()),
         (WorkspaceKind::Trapezoids, workspace.trapezoids.len(), lines.len().div_ceil(2)),
@@ -635,7 +636,7 @@ fn rounded_interior(trapezoid: RoundedTrapezoid, x_end: u32) -> (u32, u32) {
 }
 
 fn accumulate_full_row_trapezoid(trapezoid: RoundedTrapezoid,
-    x_origin: u32, x_end: u32, row: &mut [u64]) {
+    x_origin: u32, x_end: u32, row: &mut [u32]) {
     let (first, last) = rounded_bounds(trapezoid, x_origin, x_end);
     let (interior_start, interior_end) = rounded_interior(trapezoid, x_end);
     for x in first..last {
@@ -990,16 +991,17 @@ fn next_crossing_boundary(lines: &[Line], segments: &mut [Segment],
 }
 
 fn crossing_event(left: Line, right: Line) -> Option<Crossing> {
-    let (left_dy, right_dy) = (left.dy as i128, right.dy as i128);
+    let (left_dy, right_dy) = (left.dy as i64, right.dy as i64);
     let (left_c, right_c) = (
-         left.x0 as i128 *  left_dy -  left.dx as i128 *  left.y0 as i128,
-        right.x0 as i128 * right_dy - right.dx as i128 * right.y0 as i128,
+         left.x0 as i64 *  left_dy -  left.dx as i64 *  left.y0 as i64,
+        right.x0 as i64 * right_dy - right.dx as i64 * right.y0 as i64,
     );
-    let (mut denominator, mut numerator) = (
-        left.dx as i128 * right_dy - right.dx as i128 * left_dy,
-        right_c * left_dy - left_c * right_dy,
-    );
+    let denominator = left.dx as i64 * right_dy - right.dx as i64 * left_dy;
     if denominator == 0 { return None; }
+    // First-order line coefficients fit i64, but eliminating their two
+    // denominators forms products up to roughly 2^90 over the device domain.
+    let (mut denominator, mut numerator) = (denominator as i128,
+        right_c as i128 * left_dy as i128 - left_c as i128 * right_dy as i128);
     if denominator < 0 { denominator = -denominator; numerator = -numerator; }
 
     let overlap_top = left.y0.max(right.y0) as i128;
@@ -1008,8 +1010,8 @@ fn crossing_event(left: Line, right: Line) -> Option<Crossing> {
     if numerator <= overlap_top * denominator ||
        numerator >= overlap_bottom * denominator { return None; }
 
-    let x_numerator = left.dx as i128 * numerator + left_c * denominator;
-    let x_denominator = left_dy * denominator;
+    let x_numerator = left.dx as i128 * numerator + left_c as i128 * denominator;
+    let x_denominator = left_dy as i128 * denominator;
     Some(Crossing {
         y: i32::try_from(round_ratio_i128(numerator, denominator)).ok()?,
         x: i64::try_from(round_ratio_i128(x_numerator, x_denominator)).ok()?,

@@ -169,21 +169,27 @@ fn flatten_cubic<S: LineSink<Scalar>>(curve: Cubic, options: Options,
 fn control_is_flat(from: Point<Scalar>, to: Point<Scalar>,
     control: Point<Scalar>, tolerance: Scalar) -> bool {
     let (from_x, from_y, to_x, to_y, control_x, control_y) = (
-        from.x.to_bits() as i128, from.y.to_bits() as i128,
-        to.x.to_bits() as i128, to.y.to_bits() as i128,
-        control.x.to_bits() as i128, control.y.to_bits() as i128,
+        from.x.to_bits() as i64, from.y.to_bits() as i64,
+        to.x.to_bits() as i64, to.y.to_bits() as i64,
+        control.x.to_bits() as i64, control.y.to_bits() as i64,
     );
     let (dx, dy) = (to_x - from_x, to_y - from_y);
     let (cx, cy) = (control_x - from_x, control_y - from_y);
     let chord_squared = dx * dx + dy * dy;
-    let tolerance_squared = tolerance.to_bits() as i128 * tolerance.to_bits() as i128;
+    let tolerance_squared = tolerance.to_bits() as i64 * tolerance.to_bits() as i64;
     if chord_squared == 0 {
         return cx * cx + cy * cy <= tolerance_squared;
     }
     let projection = cx * dx + cy * dy;
     let cross = cx * dy - cy * dx;
-    0 <= projection && projection <= chord_squared &&
-        cross * cross <= tolerance_squared * chord_squared
+    if projection < 0 || projection > chord_squared { return false; }
+    if let (Some(distance), Some(limit)) =
+        (cross.checked_mul(cross), tolerance_squared.checked_mul(chord_squared)) {
+        distance <= limit
+    } else {
+        cross as i128 * cross as i128 <=
+            tolerance_squared as i128 * chord_squared as i128
+    }
 }
 
 fn split_quad(curve: Quad) -> (Quad, Quad) {
@@ -207,8 +213,8 @@ fn split_cubic(curve: Cubic) -> (Cubic, Cubic) {
 
 fn midpoint(a: Point<Scalar>, b: Point<Scalar>) -> Point<Scalar> {
     let average = |a: Scalar, b: Scalar| {
-        let sum = a.to_bits() as i64 + b.to_bits() as i64;
-        Scalar::from_bits(if sum < 0 { ((sum - 1) / 2) as _ } else { ((sum + 1) / 2) as _ })
+        let sum = a.to_bits() + b.to_bits();
+        Scalar::from_bits(if sum < 0 { (sum - 1) / 2 } else { (sum + 1) / 2 })
     };
     (average(a.x, b.x), average(a.y, b.y)).into()
 }

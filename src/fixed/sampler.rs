@@ -3,7 +3,8 @@
 use crate::{common::{color::PremulSRGBA8, geometry::Point, render::GlobalAlphaPaint,
         GradientError, SolidPaint, SpreadMode},
     fixed::{DEVICE_RAW_LIMIT, Scalar}};
-use super::math::{cordic_turn, integer_sqrt_u64, scaled_integer_sqrt};
+use super::math::{cordic_turn, integer_sqrt_u64,
+    scaled_integer_sqrt, scaled_integer_sqrt_u64};
 
 pub use super::math::Angle;
 
@@ -48,6 +49,13 @@ impl PaintSampler for SolidPaint {
     fn solid_color(&self) -> Option<PremulSRGBA8> { Some(self.color()) }
 }
 
+fn device_pixel_center_raw(pixel: u32) -> Option<i32> {
+    const HALF_PIXEL_RAW: u32 = 1 << 7;
+    const SUBPIXEL_SCALE: u32 = 1 << 8;
+    (pixel <= (DEVICE_RAW_LIMIT as u32 - HALF_PIXEL_RAW) / SUBPIXEL_SCALE)
+        .then(|| (pixel * SUBPIXEL_SCALE + HALF_PIXEL_RAW) as _)
+}
+
 /// Allocation-free, no-FPU linear gradient over a caller-provided encoded ramp.
 ///
 /// Geometry is Q24.8. Projection and ramp selection use exact widened integer
@@ -77,7 +85,23 @@ impl<'a> LinearGradient<'a> {
     pub fn ramp(&self) -> &'a [PremulSRGBA8] { self.ramp }
     pub fn spread(&self) -> SpreadMode { self.spread }
 
+    fn parameter_i64(&self, x: u32, y: u32) -> Option<i64> {
+        const HALF_PIXEL_RAW: i64 = 1 << 7;
+        const SUBPIXEL_SCALE: i64 = 1 << 8;
+        let point = [
+            i64::from(x) * SUBPIXEL_SCALE + HALF_PIXEL_RAW - i64::from(self.from[0]),
+            i64::from(y) * SUBPIXEL_SCALE + HALF_PIXEL_RAW - i64::from(self.from[1]),
+        ];
+        point[0].checked_mul(self.delta[0])?
+            .checked_add(point[1].checked_mul(self.delta[1])?)
+    }
+
     fn ramp_index(&self, x: u32, y: u32) -> usize {
+        if ramp_index_i64_supported(self.length_squared, self.ramp.len(), self.spread)
+            && let (Some(parameter), Ok(denominator)) =
+                (self.parameter_i64(x, y), i64::try_from(self.length_squared)) {
+            return ramp_index_i64(parameter, denominator, self.ramp.len(), self.spread);
+        }
         const HALF_PIXEL_RAW: i128 = 1 << 7;
         const SUBPIXEL_SCALE: i128 = 1 << 8;
         let point = [
@@ -98,6 +122,20 @@ impl PaintSampler for LinearGradient<'_> {
     fn sample_span(&self, x: u32, y: u32, len: u32,
         mut emit: impl FnMut(PremulSRGBA8)) {
         if len == 0 { return; }
+        const SUBPIXEL_SCALE_I64: i64 = 1 << 8;
+        let step = self.delta[0] * SUBPIXEL_SCALE_I64;
+        if ramp_index_i64_supported(self.length_squared, self.ramp.len(), self.spread)
+            && let (Some(mut parameter), Ok(denominator)) =
+                (self.parameter_i64(x, y), i64::try_from(self.length_squared))
+            && step.checked_mul(i64::from(len - 1))
+                .and_then(|last| parameter.checked_add(last)).is_some() {
+            for index in 0..len {
+                emit(self.ramp[ramp_index_i64(parameter, denominator,
+                    self.ramp.len(), self.spread)]);
+                if index + 1 < len { parameter += step; }
+            }
+            return;
+        }
         const HALF_PIXEL_RAW: i128 = 1 << 7;
         const SUBPIXEL_SCALE: i128 = 1 << 8;
         let point = [
@@ -107,19 +145,6 @@ impl PaintSampler for LinearGradient<'_> {
         let mut parameter = point[0] * self.delta[0] as i128 +
                             point[1] * self.delta[1] as i128;
         let step = self.delta[0] as i128 * SUBPIXEL_SCALE;
-        let last_parameter = parameter + step * (len - 1) as i128;
-        if ramp_index_i64_supported(self.length_squared, self.ramp.len(), self.spread)
-            && let (Ok(mut parameter), Ok(last_parameter), Ok(step), Ok(denominator)) =
-                (i64::try_from(parameter), i64::try_from(last_parameter),
-                 i64::try_from(step), i64::try_from(self.length_squared)) {
-            for index in 0..len {
-                emit(self.ramp[ramp_index_i64(parameter, denominator,
-                    self.ramp.len(), self.spread)]);
-                if index + 1 < len { parameter += step; }
-            }
-            debug_assert_eq!(parameter, last_parameter);
-            return;
-        }
         for _ in 0..len {
             emit(self.ramp[ramp_index(parameter, self.length_squared,
                 self.ramp.len(), self.spread)]);
@@ -133,8 +158,8 @@ impl PaintSampler for LinearGradient<'_> {
 /// Geometry uses Q24.8 within [`DEVICE_RAW_LIMIT`]. Root solving,
 /// spread, and ramp mapping use widened integer arithmetic.
 #[derive(Clone, Copy, Debug)] pub struct RadialGradient<'a> {
-    start: [i32; 2], center_delta: [i64; 2],
-    start_radius: i64, radius_delta: i64, quadratic: i128,
+    start: [i32; 2], center_delta: [i32; 2],
+    start_radius: i32, radius_delta: i32, quadratic: i64,
     ramp: &'a [PremulSRGBA8], spread: SpreadMode,
 }
 
@@ -174,16 +199,16 @@ impl<'a> RadialGradient<'a> {
         }
         let start = [start.x.to_bits(), start.y.to_bits()];
         let center_delta = [
-            end.x.to_bits() as i64 - start[0] as i64,
-            end.y.to_bits() as i64 - start[1] as i64,
+            end.x.to_bits() - start[0],
+            end.y.to_bits() - start[1],
         ];
-        let radius_delta = end_radius.to_bits() as i64 - start_radius.to_bits() as i64;
+        let radius_delta = end_radius.to_bits() - start_radius.to_bits();
         if center_delta == [0, 0] && radius_delta == 0 {
             return Err(GradientError::DegenerateGeometry);
         }
-        let quadratic = center_delta[0] as i128 * center_delta[0] as i128 +
-                        center_delta[1] as i128 * center_delta[1] as i128 -
-                        radius_delta as i128 * radius_delta as i128;
+        let quadratic = center_delta[0] as i64 * center_delta[0] as i64 +
+                        center_delta[1] as i64 * center_delta[1] as i64 -
+                        radius_delta as i64 * radius_delta as i64;
         Ok(Self { start, center_delta, start_radius: start_radius.to_bits() as _,
             radius_delta, quadratic, ramp, spread })
     }
@@ -192,13 +217,7 @@ impl<'a> RadialGradient<'a> {
     pub fn spread(&self) -> SpreadMode { self.spread }
 
     fn concentric_ramp_index(&self, x: u32, y: u32) -> Option<usize> {
-        const HALF_PIXEL_RAW: i64 = 1 << 7;
-        const SUBPIXEL_SCALE: u64 = 1 << 8;
-        let (x, y) = (x as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64,
-                      y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64);
-        if x > DEVICE_RAW_LIMIT as u64 || y > DEVICE_RAW_LIMIT as u64 {
-            return None;
-        }
+        let (x, y) = (device_pixel_center_raw(x)?, device_pixel_center_raw(y)?);
         let (dx, dy) = (x as i64 - self.start[0] as i64,
                         y as i64 - self.start[1] as i64);
         Some(self.concentric_ramp_index_squared((dx * dx + dy * dy) as _))
@@ -212,7 +231,7 @@ impl<'a> RadialGradient<'a> {
     fn concentric_ramp_index_with_floor(&self, squared: u64, floor: u64) -> usize {
         let distance = if squared - floor * floor > floor { floor + 1 } else { floor };
         let (mut parameter, mut denominator) =
-            (distance as i64 - self.start_radius, self.radius_delta);
+            (distance as i64 - self.start_radius as i64, self.radius_delta as i64);
         if denominator < 0 {
             parameter = -parameter;
             denominator = -denominator;
@@ -239,33 +258,52 @@ impl<'a> RadialGradient<'a> {
     }
 
     fn parameter(&self, x: u32, y: u32) -> Option<(i128, i128)> {
-        const HALF_PIXEL_RAW: i64 = 1 << 7;
-        const SUBPIXEL_SCALE: u64 = 1 << 8;
-        let (x, y) = (x as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64,
-                      y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64);
-        if x > DEVICE_RAW_LIMIT as u64 || y > DEVICE_RAW_LIMIT as u64 {
-            return None;
-        }
+        let (x, y) = (device_pixel_center_raw(x)?, device_pixel_center_raw(y)?);
         let point = [x as i64 - self.start[0] as i64,
                      y as i64 - self.start[1] as i64];
-        let linear_half = point[0] as i128 * self.center_delta[0] as i128 +
-                          point[1] as i128 * self.center_delta[1] as i128 +
-                          self.start_radius as i128 * self.radius_delta as i128;
-        let constant = point[0] as i128 * point[0] as i128 +
-                       point[1] as i128 * point[1] as i128 -
-                       self.start_radius as i128 * self.start_radius as i128;
+        let linear_half = point[0] * self.center_delta[0] as i64 +
+                          point[1] * self.center_delta[1] as i64 +
+                          self.start_radius as i64 * self.radius_delta as i64;
+        let constant = point[0] * point[0] + point[1] * point[1] -
+                       self.start_radius as i64 * self.start_radius as i64;
         if self.quadratic == 0 {
             if linear_half == 0 {
                 return (constant == 0).then_some((0, 1));
             }
-            let ratio = normalize_ratio(constant, linear_half * 2)?;
-            return self.valid_radius(ratio).then_some(ratio);
+            let ratio = normalize_ratio_i64(constant, linear_half * 2)?;
+            return self.valid_radius_i64(ratio)
+                .then_some((ratio.0 as _, ratio.1 as _));
         }
-        let discriminant = linear_half * linear_half - self.quadratic * constant;
+        // Common gradients solve in i64/u64. Extreme valid focal geometry can
+        // produce a discriminant near 124 bits and takes the exact fallback.
+        let narrow_discriminant = linear_half.checked_mul(linear_half).and_then(|square|
+            self.quadratic.checked_mul(constant)
+                .and_then(|product| square.checked_sub(product)));
+        if let Some(discriminant) = narrow_discriminant {
+            if discriminant < 0 { return None; }
+            let (root, scale) = scaled_integer_sqrt_u64(discriminant as _);
+            if let (Ok(root), Ok(scale)) = (i64::try_from(root), i64::try_from(scale))
+                && let (Some(linear_half), Some(quadratic)) =
+                    (linear_half.checked_mul(scale), self.quadratic.checked_mul(scale))
+                && let (Some(first), Some(second)) = (
+                    linear_half.checked_add(root)
+                        .and_then(|value| normalize_ratio_i64(value, quadratic)),
+                    linear_half.checked_sub(root)
+                        .and_then(|value| normalize_ratio_i64(value, quadratic))) {
+                debug_assert_eq!(first.1, second.1);
+                return [first, second].into_iter()
+                    .filter(|ratio| self.valid_radius_i64(*ratio))
+                    .max_by_key(|ratio| ratio.0)
+                    .map(|(numerator, denominator)| (numerator as _, denominator as _));
+            }
+        }
+        let discriminant = linear_half as i128 * linear_half as i128 -
+            self.quadratic as i128 * constant as i128;
         if discriminant < 0 { return None; }
         let (root, scale) = scaled_integer_sqrt(discriminant as _);
         let (linear_half, quadratic) =
-            (linear_half * scale as i128, self.quadratic * scale as i128);
+            (linear_half as i128 * scale as i128,
+             self.quadratic as i128 * scale as i128);
         let first = normalize_ratio(linear_half + root as i128, quadratic)?;
         let second = normalize_ratio(linear_half - root as i128, quadratic)?;
         debug_assert_eq!(first.1, second.1);
@@ -276,6 +314,15 @@ impl<'a> RadialGradient<'a> {
     fn valid_radius(&self, (numerator, denominator): (i128, i128)) -> bool {
         self.start_radius as i128 * denominator +
             numerator * self.radius_delta as i128 >= 0
+    }
+
+    fn valid_radius_i64(&self, ratio: (i64, i64)) -> bool {
+        let (numerator, denominator) = ratio;
+        (self.start_radius as i64).checked_mul(denominator).and_then(|start|
+            (self.radius_delta as i64).checked_mul(numerator)
+                .and_then(|delta| start.checked_add(delta)))
+            .map_or_else(|| self.valid_radius((numerator as _, denominator as _)),
+                |radius| radius >= 0)
     }
 }
 
@@ -293,22 +340,21 @@ impl PaintSampler for RadialGradient<'_> {
 
     fn sample_span(&self, x: u32, y: u32, len: u32,
         mut emit: impl FnMut(PremulSRGBA8)) {
-        const HALF_PIXEL_RAW: u64 = 1 << 7;
-        const SUBPIXEL_SCALE: u64 = 1 << 8;
+        const SUBPIXEL_SCALE: i64 = 1 << 8;
         let last = len.checked_sub(1).and_then(|offset| x.checked_add(offset));
+        let (start, end, row) = (device_pixel_center_raw(x),
+            last.and_then(device_pixel_center_raw), device_pixel_center_raw(y));
         if self.center_delta != [0, 0] || last.is_none() ||
-            last.unwrap_or(x) as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW >
-                DEVICE_RAW_LIMIT as u64 ||
-            y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW > DEVICE_RAW_LIMIT as u64 {
+            start.is_none() || end.is_none() || row.is_none() {
             for offset in 0..len {
                 emit(x.checked_add(offset).map_or_else(PremulSRGBA8::zeroed,
                     |x| self.sample(x, y)));
             }
             return;
         }
-        let (half, scale) = (HALF_PIXEL_RAW as i64, SUBPIXEL_SCALE as i64);
-        let (x, y) = (x as i64 * scale + half - self.start[0] as i64,
-                      y as i64 * scale + half - self.start[1] as i64);
+        let scale = SUBPIXEL_SCALE;
+        let (x, y) = (start.unwrap() as i64 - self.start[0] as i64,
+                      row.unwrap() as i64 - self.start[1] as i64);
         if self.spread == SpreadMode::Pad && self.start_radius == 0 &&
             self.radius_delta > 0 {
             let radius = self.radius_delta as u64;
@@ -348,8 +394,17 @@ fn nearby_integer_sqrt(value: u64, previous: u64) -> u64 {
 fn normalize_ratio(mut numerator: i128, mut denominator: i128) -> Option<(i128, i128)> {
     if denominator == 0 { return None; }
     if denominator < 0 {
-        numerator = -numerator;
-        denominator = -denominator;
+        numerator = numerator.checked_neg()?;
+        denominator = denominator.checked_neg()?;
+    }
+    Some((numerator, denominator))
+}
+
+fn normalize_ratio_i64(mut numerator: i64, mut denominator: i64) -> Option<(i64, i64)> {
+    if denominator == 0 { return None; }
+    if denominator < 0 {
+        numerator = numerator.checked_neg()?;
+        denominator = denominator.checked_neg()?;
     }
     Some((numerator, denominator))
 }
@@ -448,14 +503,8 @@ impl<'a> ConicGradient<'a> {
     pub fn start_angle(&self) -> Angle { self.start_angle }
 
     fn ramp_index(&self, x: u32, y: u32) -> Option<usize> {
-        const HALF_PIXEL_RAW: i64 = 1 << 7;
-        const SUBPIXEL_SCALE: u64 = 1 << 8;
         const FULL_TURN: u64 = 1_u64 << 32;
-        let (x, y) = (x as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64,
-                      y as u64 * SUBPIXEL_SCALE + HALF_PIXEL_RAW as u64);
-        if x > DEVICE_RAW_LIMIT as u64 || y > DEVICE_RAW_LIMIT as u64 {
-            return None;
-        }
+        let (x, y) = (device_pixel_center_raw(x)?, device_pixel_center_raw(y)?);
         let (x, y) = (x as i64 - self.center[0] as i64,
                       y as i64 - self.center[1] as i64);
         let angle = match self.angle_mode {
@@ -471,14 +520,15 @@ impl<'a> ConicGradient<'a> {
 fn unit_angle_approx(x: i64, y: i64) -> u32 {
     const QUARTER: i64 = 1 << 30;
     const HALF: i64 = 1 << 31;
-    const SCALE: u128 = 1 << 32;
+    const SCALE: u64 = 1 << 32;
     let (x_abs, y_abs) = (x.unsigned_abs(), y.unsigned_abs());
     let maximum = x_abs.max(y_abs);
     if maximum == 0 { return 0; }
-    let slope = (x_abs.min(y_abs) as u128 * SCALE / maximum as u128) as i64;
+    let slope = x_abs.min(y_abs) * SCALE / maximum;
     // Q32 slope/squared are at most 2^32. Every Horner product stays below
     // 2^60 and the final slope product below 2^62, so i64 is exact here.
-    let squared = ((slope as i128 * slope as i128) >> 32) as i64;
+    let squared = if slope == SCALE { SCALE } else { (slope * slope) >> 32 } as i64;
+    let slope = slope as i64;
     let polynomial = 683_420_221_i64 + ((squared * (-222_711_105_i64 +
         ((squared * (106_347_771_i64 +
         ((squared * -30_299_868_i64) >> 32))) >> 32))) >> 32);

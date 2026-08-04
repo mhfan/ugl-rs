@@ -54,19 +54,44 @@ impl Affine<Scalar> {
         Result<Point<Scalar>, TransformError> {
         let transform = |first: Scalar, x: Scalar, second: Scalar, y: Scalar,
             translation: Scalar| {
-            const FRACTION_BITS: u32 = 8;
-            const SCALE: i128 = 1 << FRACTION_BITS;
-            let value = first.to_bits() as i128 * x.to_bits() as i128
-                + second.to_bits() as i128 * y.to_bits() as i128
-                + ((translation.to_bits() as i128) << FRACTION_BITS);
-            let rounded = if value < 0 {
-                (value - SCALE / 2) / SCALE
-            } else { (value + SCALE / 2) / SCALE };
+            const SCALE: i64 = 1 << 8;
+            let (first, second) = (first.to_bits() as i64 * x.to_bits() as i64,
+                second.to_bits() as i64 * y.to_bits() as i64);
+            let (mut quotient, remainder) = (translation.to_bits() as i64 +
+                first.div_euclid(SCALE) + second.div_euclid(SCALE),
+                first.rem_euclid(SCALE) + second.rem_euclid(SCALE));
+            quotient += remainder.div_euclid(SCALE);
+            let remainder = remainder.rem_euclid(SCALE);
+            let rounded = quotient + i64::from(remainder > SCALE / 2 ||
+                remainder == SCALE / 2 && quotient >= 0);
             i32::try_from(rounded).map(Scalar::from_bits)
                 .map_err(|_| TransformError::Overflow)
         };
         Ok((transform(self.a, point.x, self.c, point.y, self.e)?,
             transform(self.b, point.x, self.d, point.y, self.f)?).into())
+    }
+}
+
+#[cfg(test)] mod tests { use super::*;
+    #[test] fn decomposed_affine_matches_full_width_rounding() {
+        let reference = |a: Scalar, x: Scalar, c: Scalar, y: Scalar, e: Scalar| {
+            let value = a.to_bits() as i128 * x.to_bits() as i128 +
+                        c.to_bits() as i128 * y.to_bits() as i128 +
+                        ((e.to_bits() as i128) << 8);
+            let rounded = if value < 0 { (value - 128) / 256 }
+                          else         { (value + 128) / 256 };
+            i32::try_from(rounded).map(Scalar::from_bits)
+                .map_err(|_| TransformError::Overflow)
+        };
+        let (mut state, zero) = (0x6d2b_79f5_u32, Scalar::ZERO);
+        let mut next = || { state ^= state << 13; state ^= state >> 17; state ^= state << 5;
+            Scalar::from_bits(state as _) };
+        for _ in 0..20_000 {
+            let (a, x, c, y, e) = (next(), next(), next(), next(), next());
+            let transform = Affine::new(a, zero, c, zero, e, zero);
+            assert_eq!(transform.try_transform_point((x, y).into()).map(|point| point.x),
+                reference(a, x, c, y, e));
+        }
     }
 }
 

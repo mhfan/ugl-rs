@@ -29,7 +29,7 @@ impl<'a> Pattern<'a> {
     pub fn new(lengths: &'a [Scalar], phase: Scalar) ->
         Result<Self, PatternError> {
         if lengths.is_empty() { return Err(PatternError::Empty); }
-        let mut cycle = 0_i64;
+        let mut cycle = 0_i32;
         for length in lengths {
             if *length <= Scalar::ZERO {
                 return Err(PatternError::NonPositiveLength);
@@ -44,7 +44,6 @@ impl<'a> Pattern<'a> {
         if slots != lengths.len() {
             cycle = cycle.checked_mul(2).ok_or(PatternError::CycleOverflow)?;
         }
-        let cycle = i32::try_from(cycle).map_err(|_| PatternError::CycleOverflow)?;
         Ok(Self { lengths, phase: phase.to_bits().rem_euclid(cycle), cycle, slots })
     }
 
@@ -126,25 +125,26 @@ fn dash_segment<W: DashOutput<Point<Scalar>>>(
     from: Point<Scalar>, to: Point<Scalar>,
     pattern: Pattern<'_>, state: &mut DashState,
     writer: &mut W) -> Result<(), DashError> {
-    let (dx, dy) = (to.x.to_bits() as i64 - from.x.to_bits() as i64,
-                    to.y.to_bits() as i64 - from.y.to_bits() as i64);
-    let length = integer_sqrt_u64((dx * dx + dy * dy) as _);
+    let (dx, dy) = (to.x.to_bits() - from.x.to_bits(),
+                    to.y.to_bits() - from.y.to_bits());
+    let squared = dx as i64 * dx as i64 + dy as i64 * dy as i64;
+    let length = integer_sqrt_u64(squared as _) as u32;
     if length == 0 { return Ok(()); }
-    let (mut current, mut consumed) = (from, 0_u64);
+    let (mut current, mut consumed) = (from, 0_u32);
     while consumed < length {
         let left = length - consumed;
-        let remaining = state.remaining as u64;
+        let remaining = state.remaining as u32;
         let ends_dash = remaining <= left;
         let step = remaining.min(left);
         consumed += step;
         let endpoint = if consumed == length { to } else {
-            let interpolate = |start: Scalar, delta: i64| {
-                let numerator = delta as i128 * consumed as i128;
-                let denominator = length as i128;
+            let interpolate = |start: Scalar, delta: i32| {
+                let numerator = delta as i64 * consumed as i64;
+                let denominator = length as i64;
                 let offset = if numerator < 0 {
                     (numerator - denominator / 2) / denominator
                 } else { (numerator + denominator / 2) / denominator };
-                Scalar::from_bits((start.to_bits() as i128 + offset) as _)
+                Scalar::from_bits((start.to_bits() as i64 + offset) as _)
             };
             (interpolate(from.x, dx), interpolate(from.y, dy)).into()
         };

@@ -49,7 +49,7 @@ impl<'a> Workspace<'a> {
     points: Vec<Point<Scalar>>, contours: Vec<StrokeContour>,
     dash_points: Vec<Point<Scalar>>, dash_contours: Vec<DashContour>,
     edges: Vec<Edge<Scalar>>, lines: Vec<Line>, segments: Vec<Segment>,
-    trapezoids: Vec<Trapezoid>, row_area: Vec<u64>, strip_offsets: Vec<u32>,
+    trapezoids: Vec<Trapezoid>, row_area: Vec<u32>, strip_offsets: Vec<u32>,
     strip_indices: Vec<u32>, clip_strips: Vec<CoverageStrip>, clip_runs: Vec<CoverageRun>,
 }
 
@@ -154,8 +154,8 @@ fn intersect_rects(a: Rect<Scalar>, b: Rect<Scalar>) -> Option<Rect<Scalar>> {
 
 fn mask_rect((left, top, right, bottom): (u32, u32, u32, u32)) -> Option<Rect<Scalar>> {
     let scalar = |value: u32| {
-        let raw = u64::from(value) << 8;
-        (raw <= DEVICE_RAW_LIMIT as u64).then(|| Scalar::from_bits(raw as _))
+        (value <= DEVICE_RAW_LIMIT as u32 >> 8)
+            .then(|| Scalar::from_bits((value << 8) as _))
     };
     Rect::from_ltrb(scalar(left)?, scalar(top)?, scalar(right)?, scalar(bottom)?)
 }
@@ -209,17 +209,17 @@ fn multiply_rect_mask(data: &mut [u8], region: (u32, u32, u32, u32), stride: u32
         for x in left..right {
             let offset = (y - top) as usize * stride as usize + (x - left) as usize;
             let area = rect_pixel_area(rect, x, y);
-            data[offset] = ((u64::from(data[offset]) * area + 32_768) / 65_536) as _;
+            data[offset] = ((u32::from(data[offset]) * area + 32_768) / 65_536) as _;
         }
     }
 }
 
-fn rect_pixel_area(rect: Rect<Scalar>, x: u32, y: u32) -> u64 {
+fn rect_pixel_area(rect: Rect<Scalar>, x: u32, y: u32) -> u32 {
     const SCALE: i64 = 256;
     let overlap = |from: Scalar, to: Scalar, pixel: u32| {
         let pixel = i64::from(pixel) * SCALE;
         (i64::from(to.to_bits()).min(pixel + SCALE) -
-         i64::from(from.to_bits()).max(pixel)).clamp(0, SCALE) as u64
+         i64::from(from.to_bits()).max(pixel)).clamp(0, SCALE) as u32
     };
     overlap(rect.left(), rect.right(), x) * overlap(rect.top(), rect.bottom(), y)
 }
@@ -238,7 +238,7 @@ fn clip_sparse_rect(strips: &[CoverageStrip], runs: &[CoverageRun],
         upper(rect.right(), width), upper(rect.bottom(), height));
     let (clipped_strips, clipped_runs) = clip_sparse_bounds(
         strips, runs, bounds, |coverage, x, y|
-            ((u64::from(coverage) * rect_pixel_area(rect, x, y) + 32_768) / 65_536) as _);
+            ((u32::from(coverage) * rect_pixel_area(rect, x, y) + 32_768) / 65_536) as _);
     if clipped_runs.is_empty() { CanvasClip::Empty } else { CanvasClip::Sparse {
         strips: Rc::new(clipped_strips), runs: Rc::new(clipped_runs), width, height,
     } }
@@ -899,7 +899,7 @@ impl<'target> Canvas<'target> {
         canvas.set_color(SRGBA::red()).fill(&shape.build()).unwrap();
         for y in 0..64 { for x in 0..64 {
             let source = coverage[y as usize * 64 + x as usize];
-            let expected = ((u64::from(source) * rect_pixel_area(rect, x, y) + 32_768) /
+            let expected = ((u32::from(source) * rect_pixel_area(rect, x, y) + 32_768) /
                 65_536) as u8;
             assert_eq!(canvas.target().pixel_bytes(x, y).unwrap(),
                 [expected, 0, 0, expected]);
@@ -1057,7 +1057,7 @@ impl<'target> Canvas<'target> {
                     ReferenceClip::Rect),
             ReferenceClip::Dense(values) => for y in 0..HEIGHT { for x in 0..WIDTH {
                 let value = &mut values[y * WIDTH + x];
-                *value = ((u64::from(*value) * rect_pixel_area(rect, x as _, y as _) +
+                *value = ((u32::from(*value) * rect_pixel_area(rect, x as _, y as _) +
                     32_768) / 65_536) as _;
             } },
         };
@@ -1067,7 +1067,7 @@ impl<'target> Canvas<'target> {
                 let rect = *rect;
                 *clip = ReferenceClip::Dense(mask.iter().enumerate().map(|(index, value)| {
                     let (x, y) = (index % WIDTH, index / WIDTH);
-                    ((u64::from(*value) * rect_pixel_area(rect, x as _, y as _) +
+                    ((u32::from(*value) * rect_pixel_area(rect, x as _, y as _) +
                         32_768) / 65_536) as _
                 }).collect());
             }

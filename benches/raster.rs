@@ -1675,7 +1675,7 @@ fn benchmark_clip_masks(c: &mut Criterion) {
             }, &mut sink).unwrap();
         black_box((sink.runs, sink.pixels));
     }));
-    let mut emission_row = vec![u64::MAX; WIDTH as usize];
+    let mut emission_row = vec![u32::MAX; WIDTH as usize];
     emission_row[0] = 16_384;
     emission_row[WIDTH as usize - 1] = 32_768;
     mask_stages.bench_function("run_emission/full_span", |b| b.iter(|| {

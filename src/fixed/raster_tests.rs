@@ -427,10 +427,10 @@ fn render_region(edges: &[Edge<Scalar>], width: usize, height: usize,
     let triangle = Trapezoid {
         left: segment(128, 0, 1), right: segment(128, 256, -1),
     };
-    assert_eq!(rectangle.area_twice_raw(), Ok(PIXEL_AREA_TWICE));
-    assert_eq!(quantize_area_coverage(rectangle.area_twice_raw().unwrap()), 255);
-    assert_eq!(triangle.area_twice_raw(), Ok(PIXEL_AREA_TWICE / 2));
-    assert_eq!(quantize_area_coverage(triangle.area_twice_raw().unwrap()), 128);
+    assert_eq!(rectangle.area_twice_raw(), Ok(PIXEL_AREA_TWICE as _));
+    assert_eq!(quantize_area_coverage(rectangle.area_twice_raw().unwrap() as _), 255);
+    assert_eq!(triangle.area_twice_raw(), Ok((PIXEL_AREA_TWICE / 2) as _));
+    assert_eq!(quantize_area_coverage(triangle.area_twice_raw().unwrap() as _), 128);
     assert_eq!(quantize_area_coverage(PIXEL_AREA_TWICE * 2), 255);
 
     let inverted = Trapezoid { left: rectangle.right, right: rectangle.left };
@@ -456,13 +456,13 @@ fn render_region(edges: &[Edge<Scalar>], width: usize, height: usize,
             else if value < scale { value * value }
             else { 2 * scale * value - scale * scale };
         if start == end {
-            return (2 * i128::from(start).clamp(0, scale) * i128::from(height)) as u64;
+            return (2 * i128::from(start).clamp(0, scale) * i128::from(height)) as u32;
         }
         let (mut numerator, mut denominator) = (i128::from(height) *
             (primitive(end as _) - primitive(start as _)), i128::from(end - start));
         if denominator < 0 { numerator = -numerator; denominator = -denominator; }
         round_ratio_i128(numerator, denominator)
-            .clamp(0, 2 * scale * i128::from(height)) as u64
+            .clamp(0, 2 * scale * i128::from(height)) as u32
     };
     let limit = i64::from(DEVICE_RAW_LIMIT) * 2;
     for (start, end) in [(-limit, limit), (limit, -limit),

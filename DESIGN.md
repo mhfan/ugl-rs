@@ -135,11 +135,16 @@ valid ordered runs.
   reference, not permission to evaluate transforms, slopes, cross-products, or
   accumulated area in 32 bits. Those operations require at least 64-bit widened
   intermediates and explicit narrowing behavior.
+- Fixed hot paths use checked 64-bit arithmetic where their local bounds permit
+  it. `i128/u128` is reserved for exact crossing elimination, full-range
+  linear-gradient fallbacks, focal-gradient discriminants, miter
+  intersections, and final squared geometric comparisons that can exceed 64 bits.
 - Fixed raster intersections remain exact rationals while sorting and forming
   topology. At the analytic-area boundary they are rounded to the nearest
   Q24.8 subpixel, with exact half-way cases rounded away from zero. Trapezoid
   area uses a doubled 64-bit integer representation; pixel-clipped area is
-  saturated and rounded to the nearest 8-bit coverage value.
+  bounded by `2 * 256 * 256 = 131072`, accumulated in a saturated `u32` row,
+  and rounded to the nearest 8-bit coverage value.
 
 ## Paths and filling
 

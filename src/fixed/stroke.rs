@@ -71,7 +71,7 @@ impl Default for Options {
     CoordinateOutOfRange, Sink(E),
 }
 
-#[derive(Clone, Copy)] struct Direction { dx: i64, dy: i64, length: u64 }
+#[derive(Clone, Copy)] struct Direction { dx: i32, dy: i32, length: u32 }
 
 pub fn flatten_path<'a>(path: &Path<Scalar>,
     transform: Affine<Scalar>, options: FlattenOptions,
@@ -101,10 +101,10 @@ pub fn stroke_polyline<S: EdgeSink<Scalar>>(points: &[Point<Scalar>],
         pair[0] != pair[1]) && points.windows(3).all(|triple| {
             let before = direction(triple[0], triple[1]).unwrap();
             let after = direction(triple[1], triple[2]).unwrap();
-            let cross = before.dx as i128 * after.dy as i128 -
-                        before.dy as i128 * after.dx as i128;
-            let dot = before.dx as i128 * after.dx as i128 +
-                      before.dy as i128 * after.dy as i128;
+            let cross = before.dx as i64 * after.dy as i64 -
+                        before.dy as i64 * after.dx as i64;
+            let dot = before.dx as i64 * after.dx as i64 +
+                      before.dy as i64 * after.dy as i64;
             cross != 0 || dot >= 0
         }) {
         return stroke_open_outline(points, options, sink);
@@ -163,7 +163,7 @@ fn stroke_open_outline<S: EdgeSink<Scalar>>(points: &[Point<Scalar>],
         1, end_extension)?)?;
     if options.cap == LineCap::Round {
         contour_arc(&mut contour, points[last], options.width,
-            cordic_turn(-last_direction.dy, last_direction.dx),
+            cordic_turn((-last_direction.dy) as _, last_direction.dx as _),
             -(Angle::HALF_TURN.to_bits() as i64), options.round_segments as _)?;
     } else {
         contour.point(outline_endpoint(points[last], last_direction, options.width,
@@ -178,7 +178,7 @@ fn stroke_open_outline<S: EdgeSink<Scalar>>(points: &[Point<Scalar>],
         -1, start_extension)?)?;
     if options.cap == LineCap::Round {
         contour_arc(&mut contour, points[0], options.width,
-            cordic_turn(first_direction.dy, -first_direction.dx),
+            cordic_turn(first_direction.dy as _, (-first_direction.dx) as _),
             -(Angle::HALF_TURN.to_bits() as i64), options.round_segments as _)?;
     }
     contour.close()
@@ -191,10 +191,10 @@ fn reverse(direction: Direction) -> Direction {
 fn outline_endpoint<E>(point: Point<Scalar>, direction: Direction, width: i32,
     side: i64, extension: i64) -> Result<Point<Scalar>, ExpandError<E>> {
     let (nx, ny) = normal(direction, width);
-    let denominator = direction.length as i128 * 2;
+    let denominator = direction.length as i64 * 2;
     let (tx, ty) = (
-        round_ratio(direction.dx as i128 * width as i128, denominator),
-        round_ratio(direction.dy as i128 * width as i128, denominator),
+        round_ratio_i64(direction.dx as i64 * width as i64, denominator),
+        round_ratio_i64(direction.dy as i64 * width as i64, denominator),
     );
     offset(point, nx * side + tx * extension, ny * side + ty * extension)
 }
@@ -202,22 +202,26 @@ fn outline_endpoint<E>(point: Point<Scalar>, direction: Direction, width: i32,
 fn outline_join<S: EdgeSink<Scalar>>(contour: &mut EdgeContour<'_, S>,
     point: Point<Scalar>, before: Direction, after: Direction, side: i64,
     options: Options) -> Result<(), ExpandError<S::Error>> {
-    let cross = before.dx as i128 * after.dy as i128 -
-                before.dy as i128 * after.dx as i128;
+    let cross = before.dx as i64 * after.dy as i64 -
+                before.dy as i64 * after.dx as i64;
     let (before_x, before_y) = normal(before, options.width);
     let (after_x, after_y) = normal(after, options.width);
     let before_offset = offset(point, before_x * side, before_y * side)?;
     let after_offset = offset(point, after_x * side, after_y * side)?;
     if cross == 0 { return contour.point(after_offset); }
     let (delta_x, delta_y) = (
-        after_offset.x.to_bits() as i128 - before_offset.x.to_bits() as i128,
-        after_offset.y.to_bits() as i128 - before_offset.y.to_bits() as i128,
+        after_offset.x.to_bits() as i64 - before_offset.x.to_bits() as i64,
+        after_offset.y.to_bits() as i64 - before_offset.y.to_bits() as i64,
     );
-    let distance = delta_x * after.dy as i128 - delta_y * after.dx as i128;
-    let intersection = offset(before_offset,
-        round_ratio(before.dx as i128 * distance, cross),
-        round_ratio(before.dy as i128 * distance, cross))?;
-    if cross * side as i128 >= 0 { return contour.point(intersection); }
+    let distance = delta_x * after.dy as i64 - delta_y * after.dx as i64;
+    let (dx, dy) = (
+        round_ratio(before.dx as i128 * distance as i128, cross as _)
+            .ok_or(ExpandError::CoordinateOutOfRange)?,
+        round_ratio(before.dy as i128 * distance as i128, cross as _)
+            .ok_or(ExpandError::CoordinateOutOfRange)?,
+    );
+    let intersection = offset(before_offset, dx, dy)?;
+    if cross * side >= 0 { return contour.point(intersection); }
     if options.join == LineJoin::Round {
         contour.point(before_offset)?;
         let start = cordic_turn(
@@ -230,17 +234,15 @@ fn outline_join<S: EdgeSink<Scalar>>(contour: &mut EdgeContour<'_, S>,
         // so every exposed round join advances clockwise to the next offset.
         let sweep = -(start.wrapping_sub(end) as i64);
         let segments = (options.round_segments as u64 * sweep.unsigned_abs())
-            .div_ceil(Angle::HALF_TURN.to_bits() as u64).max(1) as usize;
+            .div_ceil(Angle::HALF_TURN.to_bits() as u64).max(1) as u32;
         return contour_arc(contour, point, options.width, start, sweep, segments);
     }
     if options.join == LineJoin::Miter {
         let (dx, dy) = (
-            intersection.x.to_bits() as i128 - point.x.to_bits() as i128,
-            intersection.y.to_bits() as i128 - point.y.to_bits() as i128,
+            intersection.x.to_bits() as i64 - point.x.to_bits() as i64,
+            intersection.y.to_bits() as i64 - point.y.to_bits() as i64,
         );
-        let scale = 2_i128 * Scalar::ONE.to_bits() as i128;
-        let limit = options.width as i128 * options.miter_limit as i128;
-        if (dx * dx + dy * dy) * scale * scale <= limit * limit {
+        if within_miter_limit(dx, dy, options) {
             return contour.point(intersection);
         }
     }
@@ -249,11 +251,10 @@ fn outline_join<S: EdgeSink<Scalar>>(contour: &mut EdgeContour<'_, S>,
 }
 
 fn contour_arc<S: EdgeSink<Scalar>>(contour: &mut EdgeContour<'_, S>,
-    center: Point<Scalar>, width: i32, start: u32, sweep: i64, segments: usize) ->
+    center: Point<Scalar>, width: i32, start: u32, sweep: i64, segments: u32) ->
     Result<(), ExpandError<S::Error>> {
     for index in 1..=segments {
-        let angle = start.wrapping_add((sweep as i128 * index as i128 /
-            segments as i128) as _);
+        let angle = start.wrapping_add((sweep * index as i64 / segments as i64) as _);
         contour.point(circle_point(center, width, Angle::from_bits(angle))?)?;
     }
     Ok(())
@@ -271,26 +272,53 @@ fn segment_at(points: &[Point<Scalar>], index: usize) ->
 }
 
 fn direction(from: Point<Scalar>, to: Point<Scalar>) -> Option<Direction> {
-    let (dx, dy) = (to.x.to_bits() as i64 - from.x.to_bits() as i64,
-                    to.y.to_bits() as i64 - from.y.to_bits() as i64);
-    let squared = (dx * dx + dy * dy) as u64;
+    let (dx, dy) = (to.x.to_bits() - from.x.to_bits(),
+                    to.y.to_bits() - from.y.to_bits());
+    let squared = (dx as i64 * dx as i64 + dy as i64 * dy as i64) as u64;
     if squared == 0 { return None; }
     let floor = integer_sqrt_u64(squared);
     let length = if squared - floor * floor > floor { floor + 1 } else { floor };
-    Some(Direction { dx, dy, length })
+    Some(Direction { dx, dy, length: length as _ })
 }
 
 fn normal(direction: Direction, width: i32) -> (i64, i64) {
-    let denominator = direction.length as i128 * 2;
-    (round_ratio(-direction.dy as i128 * width as i128, denominator),
-     round_ratio( direction.dx as i128 * width as i128, denominator))
+    let denominator = direction.length as i64 * 2;
+    (round_ratio_i64(-direction.dy as i64 * width as i64, denominator),
+     round_ratio_i64( direction.dx as i64 * width as i64, denominator))
 }
 
-fn round_ratio(numerator: i128, denominator: i128) -> i64 {
-    if denominator < 0 { return round_ratio(-numerator, -denominator); }
-    let magnitude = (numerator.unsigned_abs() + denominator as u128 / 2) /
-                    denominator as u128;
+fn round_ratio_i64(numerator: i64, denominator: i64) -> i64 {
+    if denominator < 0 { return round_ratio_i64(-numerator, -denominator); }
+    let magnitude = (numerator.unsigned_abs() + denominator as u64 / 2) /
+                    denominator as u64;
     if numerator < 0 { -(magnitude as i64) } else { magnitude as _ }
+}
+
+fn round_ratio(numerator: i128, denominator: i128) -> Option<i64> {
+    debug_assert!(denominator != 0);
+    // Near-parallel miter intersections need the i128 quotient input; the
+    // checked result prevents an unrepresentable offset from wrapping.
+    if denominator < 0 { return round_ratio(-numerator, -denominator); }
+    let adjusted = if numerator < 0 {
+        numerator.checked_sub(denominator / 2)?
+    } else { numerator.checked_add(denominator / 2)? };
+    i64::try_from(adjusted / denominator).ok()
+}
+
+fn within_miter_limit(dx: i64, dy: i64, options: Options) -> bool {
+    let scale = 2 * Scalar::ONE.to_bits() as i64;
+    let limit = options.width as i64 * options.miter_limit as i64;
+    let distance = dx.checked_mul(dx).and_then(|dx| dy.checked_mul(dy)
+        .and_then(|dy| dx.checked_add(dy)));
+    if let (Some(distance), Some(limit)) = (
+        distance.and_then(|distance| distance.checked_mul(scale))
+            .and_then(|distance| distance.checked_mul(scale)),
+        limit.checked_mul(limit)) {
+        distance <= limit
+    } else {
+        (dx as i128 * dx as i128 + dy as i128 * dy as i128) *
+            scale as i128 * scale as i128 <= limit as i128 * limit as i128
+    }
 }
 
 fn offset<E>(point: Point<Scalar>, dx: i64, dy: i64) ->
@@ -319,7 +347,7 @@ fn emit_cap<S: EdgeSink<Scalar>>(point: Point<Scalar>, direction: Direction,
     Result<(), ExpandError<S::Error>> {
     if options.cap == LineCap::Butt { return Ok(()) }
     if options.cap == LineCap::Round {
-        let tangent = cordic_turn(direction.dx, direction.dy);
+        let tangent = cordic_turn(direction.dx as _, direction.dy as _);
         let start_angle = tangent.wrapping_sub(Angle::QUARTER_TURN.to_bits());
         let sweep = if start {
             -(Angle::HALF_TURN.to_bits() as i64)
@@ -328,10 +356,10 @@ fn emit_cap<S: EdgeSink<Scalar>>(point: Point<Scalar>, direction: Direction,
             options.round_segments as _, sink);
     }
     let sign = if start { -1 } else { 1 };
-    let denominator = direction.length as i128 * 2;
+    let denominator = direction.length as i64 * 2;
     let (dx, dy) = (
-        round_ratio(direction.dx as i128 * options.width as i128, denominator) * sign,
-        round_ratio(direction.dy as i128 * options.width as i128, denominator) * sign,
+        round_ratio_i64(direction.dx as i64 * options.width as i64, denominator) * sign,
+        round_ratio_i64(direction.dy as i64 * options.width as i64, denominator) * sign,
     );
     let end = offset(point, dx, dy)?;
     emit_segment_body(point, end, direction, options.width, sink)
@@ -365,8 +393,8 @@ fn emit_round_point<S: EdgeSink<Scalar>>(point: Point<Scalar>,
 fn emit_join<S: EdgeSink<Scalar>>(point: Point<Scalar>,
     before: Direction, after: Direction, options: Options, sink: &mut S) ->
     Result<(), ExpandError<S::Error>> {
-    let cross = before.dx as i128 * after.dy as i128 -
-                before.dy as i128 * after.dx as i128;
+    let cross = before.dx as i64 * after.dy as i64 -
+                before.dy as i64 * after.dx as i64;
     if cross == 0 { return Ok(()) }
     let side = if cross > 0 { -1 } else { 1 };
     let (before_x, before_y) = normal(before, options.width);
@@ -387,25 +415,27 @@ fn emit_join<S: EdgeSink<Scalar>>(point: Point<Scalar>,
                 end.wrapping_sub(start) as i64
             } else { -(start.wrapping_sub(end) as i64) };
             let segments = (options.round_segments as u64 * sweep.unsigned_abs())
-                .div_ceil(Angle::HALF_TURN.to_bits() as u64).max(1) as usize;
+                .div_ceil(Angle::HALF_TURN.to_bits() as u64).max(1) as u32;
             return emit_round_wedge(
                 point, options.width, start, sweep, segments, sink);
         }
         LineJoin::Miter => {}
     }
     let (delta_x, delta_y) = (
-        after_outer.x.to_bits() as i128 - before_outer.x.to_bits() as i128,
-        after_outer.y.to_bits() as i128 - before_outer.y.to_bits() as i128,
+        after_outer.x.to_bits() as i64 - before_outer.x.to_bits() as i64,
+        after_outer.y.to_bits() as i64 - before_outer.y.to_bits() as i64,
     );
-    let distance = delta_x * after.dy as i128 - delta_y * after.dx as i128;
-    let miter = offset(before_outer,
-        round_ratio(before.dx as i128 * distance, cross),
-        round_ratio(before.dy as i128 * distance, cross))?;
-    let (dx, dy) = (miter.x.to_bits() as i128 - point.x.to_bits() as i128,
-                    miter.y.to_bits() as i128 - point.y.to_bits() as i128);
-    let scale = 2_i128 * Scalar::ONE.to_bits() as i128;
-    let limit = options.width as i128 * options.miter_limit as i128;
-    if (dx * dx + dy * dy) * scale * scale <= limit * limit {
+    let distance = delta_x * after.dy as i64 - delta_y * after.dx as i64;
+    let (dx, dy) = (
+        round_ratio(before.dx as i128 * distance as i128, cross as _)
+            .ok_or(ExpandError::CoordinateOutOfRange)?,
+        round_ratio(before.dy as i128 * distance as i128, cross as _)
+            .ok_or(ExpandError::CoordinateOutOfRange)?,
+    );
+    let miter = offset(before_outer, dx, dy)?;
+    let (dx, dy) = (miter.x.to_bits() as i64 - point.x.to_bits() as i64,
+                    miter.y.to_bits() as i64 - point.y.to_bits() as i64);
+    if within_miter_limit(dx, dy, options) {
         emit_polygon(&[point, before_outer, miter, after_outer], sink)
     } else { emit_polygon(&[point, before_outer, after_outer], sink) }
 }
@@ -413,20 +443,20 @@ fn emit_join<S: EdgeSink<Scalar>>(point: Point<Scalar>,
 fn circle_point<E>(center: Point<Scalar>, width: i32, angle: Angle) ->
     Result<Point<Scalar>, ExpandError<E>> {
     let (cosine, sine) = cordic_unit_vector(angle);
-    let denominator = 2_i128 << 30;
+    let denominator = 2_i64 << 30;
     offset(center,
-        round_ratio(cosine as i128 * width as i128, denominator),
-        round_ratio(  sine as i128 * width as i128, denominator))
+        round_ratio_i64(cosine as i64 * width as i64, denominator),
+        round_ratio_i64(  sine as i64 * width as i64, denominator))
 }
 
 fn emit_round_wedge<S: EdgeSink<Scalar>>(center: Point<Scalar>, width: i32,
-    start: u32, sweep: i64, segments: usize, sink: &mut S) ->
+    start: u32, sweep: i64, segments: u32, sink: &mut S) ->
     Result<(), ExpandError<S::Error>> {
     let mut contour = EdgeContour::new(sink);
     contour.point(center)?;
     contour.point(circle_point(center, width, Angle::from_bits(start))?)?;
     for index in 1..=segments {
-        let offset = sweep as i128 * index as i128 / segments as i128;
+        let offset = sweep * index as i64 / segments as i64;
         contour.point(circle_point(center, width,
             Angle::from_bits(start.wrapping_add(offset as _)))?)?;
     }
@@ -587,5 +617,12 @@ impl<S: EdgeSink<Scalar>> EdgeContour<'_, S> {
             &mut |edge| { edges.push(edge); Ok::<_, Infallible>(()) }),
             Err(ExpandError::CoordinateOutOfRange));
         assert!(edges.is_empty());
+    }
+
+    #[test] fn wide_ratio_rounding_rejects_unrepresentable_offsets() {
+        assert_eq!(round_ratio( 1, 2), Some( 1));
+        assert_eq!(round_ratio(-1, 2), Some(-1));
+        assert_eq!(round_ratio(i64::MAX as i128 + 1, 1), None);
+        assert_eq!(round_ratio(i64::MIN as i128 - 1, 1), None);
     }
 }

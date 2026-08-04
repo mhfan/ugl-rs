@@ -23,8 +23,8 @@ pub struct Requirements {
 /// `runs`, and `pieces` bound their correspondingly named workspace slices.
 pub fn requirements(width: u32, height: u32) ->
     Result<Requirements, Error> {
-    let extent = |value: u32| value as u64 * SUBPIXEL_SCALE as u64;
-    if extent(width) > DEVICE_RAW_LIMIT as u64 || extent(height) > DEVICE_RAW_LIMIT as u64 {
+    let limit = DEVICE_RAW_LIMIT as u32 / SUBPIXEL_SCALE;
+    if width > limit || height > limit {
         return Err(Error::CoordinateOutOfRange);
     }
     let  width = usize::try_from(width) .map_err(|_| Error::DimensionsOverflow)?;
@@ -438,7 +438,7 @@ fn tile_is_full(pieces: &[CoverageTilePiece], width: u32, height: u32) -> bool {
     }
 
     type RasterStorage =
-        (Vec<Segment>, Vec<Trapezoid>, Vec<u64>, Vec<u32>, Vec<u32>);
+        (Vec<Segment>, Vec<Trapezoid>, Vec<u32>, Vec<u32>, Vec<u32>);
 
     fn raster_workspaces(lines: &[Line], width: u32, height: u32) ->
         RasterStorage {

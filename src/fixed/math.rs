@@ -75,9 +75,9 @@ pub(crate) fn cordic_turn(mut x: i64, mut y: i64) -> u32 {
 }
 
 /// Returns `(cos, sin)` in signed Q1.30.
-pub(crate) fn cordic_unit_vector(angle: Angle) -> (i64, i64) {
-    const CORDIC_GAIN_INVERSE_Q30: i64 = 0x26dd_3b6a;
-    const ONE_Q30: i64 = 1 << 30;
+pub(crate) fn cordic_unit_vector(angle: Angle) -> (i32, i32) {
+    const CORDIC_GAIN_INVERSE_Q30: i32 = 0x26dd_3b6a;
+    const ONE_Q30: i32 = 1 << 30;
     match angle.to_bits() {
         0x0000_0000 => return ( ONE_Q30, 0),
         0x4000_0000 => return (0,  ONE_Q30),
@@ -94,7 +94,7 @@ pub(crate) fn cordic_unit_vector(angle: Angle) -> (i64, i64) {
         angle += Angle::HALF_TURN.0 as i64;
         sign = -1;
     }
-    let (mut x, mut y) = (CORDIC_GAIN_INVERSE_Q30, 0_i64);
+    let (mut x, mut y) = (CORDIC_GAIN_INVERSE_Q30, 0);
     for (shift, increment) in CORDIC_ATAN_TURNS.into_iter().enumerate() {
         let (old_x, old_y) = (x, y);
         if angle >= 0 {
@@ -133,14 +133,20 @@ pub(crate) fn integer_sqrt_u64(value: u64) -> u64 {
     }
 }
 
+pub(crate) fn scaled_integer_sqrt_u64(value: u64) -> (u64, u64) {
+    const MAX_FRACTION_BITS: u32 = 16;
+    let fraction_bits = (value.leading_zeros() / 2).min(MAX_FRACTION_BITS);
+    let scaled = value << (fraction_bits * 2);
+    let floor = integer_sqrt_u64(scaled);
+    let root = if scaled - floor * floor > floor { floor + 1 } else { floor };
+    (root, 1 << fraction_bits)
+}
+
 pub(crate) fn scaled_integer_sqrt(value: u128) -> (u128, u128) {
     const MAX_FRACTION_BITS: u32 = 16;
     if let Ok(value) = u64::try_from(value) {
-        let fraction_bits = (value.leading_zeros() / 2).min(MAX_FRACTION_BITS);
-        let scaled = value << (fraction_bits * 2);
-        let floor = integer_sqrt_u64(scaled);
-        let root = if scaled - floor * floor > floor { floor + 1 } else { floor };
-        return (root as _, 1 << fraction_bits);
+        let (root, scale) = scaled_integer_sqrt_u64(value);
+        return (root as _, scale as _);
     }
     let fraction_bits = (value.leading_zeros() / 2).min(MAX_FRACTION_BITS);
     let scaled = value << (fraction_bits * 2);
