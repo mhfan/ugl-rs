@@ -2,7 +2,7 @@
 
 use crate::{common::geometry::{Affine, EdgeSink, FillEdgeBuilder, LineSink,
         Path, PathError, PathSegment, Point},
-    fixed::{DEVICE_RAW_LIMIT, Scalar}};
+    fixed::{DEVICE_RAW_LIMIT, Scalar, math::round_div_i64}};
 
 const STACK_CAPACITY: usize = 32;
 
@@ -213,8 +213,8 @@ fn split_cubic(curve: Cubic) -> (Cubic, Cubic) {
 
 fn midpoint(a: Point<Scalar>, b: Point<Scalar>) -> Point<Scalar> {
     let average = |a: Scalar, b: Scalar| {
-        let sum = a.to_bits() + b.to_bits();
-        Scalar::from_bits(if sum < 0 { (sum - 1) / 2 } else { (sum + 1) / 2 })
+        Scalar::from_bits(round_div_i64(
+            i64::from(a.to_bits()) + i64::from(b.to_bits()), 2) as _)
     };
     (average(a.x, b.x), average(a.y, b.y)).into()
 }

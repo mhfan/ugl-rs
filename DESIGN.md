@@ -135,6 +135,9 @@ valid ordered runs.
   reference, not permission to evaluate transforms, slopes, cross-products, or
   accumulated area in 32 bits. Those operations require at least 64-bit widened
   intermediates and explicit narrowing behavior.
+- `fixed::Scalar` is a project-owned transparent `i32` newtype. This keeps the
+  public coordinate contract and fixed-only build independent of a general-purpose
+  fixed-point crate while retaining explicit raw-bit and primitive conversions.
 - Fixed hot paths use checked 64-bit arithmetic where their local bounds permit
   it. `i128/u128` is reserved for exact crossing elimination, full-range
   linear-gradient fallbacks, focal-gradient discriminants, miter

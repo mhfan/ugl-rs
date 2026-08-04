@@ -10,7 +10,8 @@ use crate::{
         render::{Clip, DrawState, GlobalAlphaPaint, validate_coverage_dimensions},
         stroke::{StrokeContour, StrokePathWorkspace},
         Pixmap, PixmapError, RenderError, SolidPaint},
-    fixed::{DEVICE_RAW_LIMIT, Scalar, canvas::{DashedStrokePathOptions,
+    fixed::{COORD_FRAC_BITS, COORD_SCALE, DEVICE_RAW_LIMIT, Scalar,
+        canvas::{DashedStrokePathOptions,
             DashedStrokeRequirements, DashedStrokeWorkspace, GeometryWorkspace,
             RenderOptions, RenderRequirements, StrokePathOptions,
             StrokePlanningWorkspace, StrokeRequirements,
@@ -22,6 +23,7 @@ use crate::{
             render_path_masked, render_path_sparse_masked},
         dash::Pattern as DashPattern,
         flatten::Options as FlattenOptions,
+        math::round_div_u32,
         raster::{CoverageRun, CoverageStrip, CoverageStrips, Error as RasterError,
             Line, Segment, Trapezoid, Workspace as RasterWorkspace, WorkspaceKind,
             rasterize_lines_region},
@@ -154,8 +156,8 @@ fn intersect_rects(a: Rect<Scalar>, b: Rect<Scalar>) -> Option<Rect<Scalar>> {
 
 fn mask_rect((left, top, right, bottom): (u32, u32, u32, u32)) -> Option<Rect<Scalar>> {
     let scalar = |value: u32| {
-        (value <= DEVICE_RAW_LIMIT as u32 >> 8)
-            .then(|| Scalar::from_bits((value << 8) as _))
+        (value <= DEVICE_RAW_LIMIT as u32 >> COORD_FRAC_BITS)
+            .then(|| Scalar::from_bits((value << COORD_FRAC_BITS) as _))
     };
     Rect::from_ltrb(scalar(left)?, scalar(top)?, scalar(right)?, scalar(bottom)?)
 }
@@ -209,13 +211,13 @@ fn multiply_rect_mask(data: &mut [u8], region: (u32, u32, u32, u32), stride: u32
         for x in left..right {
             let offset = (y - top) as usize * stride as usize + (x - left) as usize;
             let area = rect_pixel_area(rect, x, y);
-            data[offset] = ((u32::from(data[offset]) * area + 32_768) / 65_536) as _;
+            data[offset] = round_div_u32(u32::from(data[offset]) * area, 65_536) as _;
         }
     }
 }
 
 fn rect_pixel_area(rect: Rect<Scalar>, x: u32, y: u32) -> u32 {
-    const SCALE: i64 = 256;
+    const SCALE: i64 = COORD_SCALE as _;
     let overlap = |from: Scalar, to: Scalar, pixel: u32| {
         let pixel = i64::from(pixel) * SCALE;
         (i64::from(to.to_bits()).min(pixel + SCALE) -
@@ -226,7 +228,7 @@ fn rect_pixel_area(rect: Rect<Scalar>, x: u32, y: u32) -> u32 {
 
 fn clip_sparse_rect(strips: &[CoverageStrip], runs: &[CoverageRun],
     width: u32, height: u32, rect: Rect<Scalar>) -> CanvasClip {
-    const SCALE: i64 = 256;
+    const SCALE: i64 = COORD_SCALE as _;
     let lower = |value: Scalar, limit: u32| i64::from(value.to_bits()).div_euclid(SCALE)
         .clamp(0, i64::from(limit)) as u32;
     let upper = |value: Scalar, limit: u32| {
@@ -237,8 +239,8 @@ fn clip_sparse_rect(strips: &[CoverageStrip], runs: &[CoverageRun],
     let bounds = (lower(rect.left(), width), lower(rect.top(), height),
         upper(rect.right(), width), upper(rect.bottom(), height));
     let (clipped_strips, clipped_runs) = clip_sparse_bounds(
-        strips, runs, bounds, |coverage, x, y|
-            ((u32::from(coverage) * rect_pixel_area(rect, x, y) + 32_768) / 65_536) as _);
+        strips, runs, bounds, |coverage, x, y| round_div_u32(
+            u32::from(coverage) * rect_pixel_area(rect, x, y), 65_536) as _);
     if clipped_runs.is_empty() { CanvasClip::Empty } else { CanvasClip::Sparse {
         strips: Rc::new(clipped_strips), runs: Rc::new(clipped_runs), width, height,
     } }
@@ -332,7 +334,7 @@ fn intersect_canvas_clip(current: &CanvasClip, next: &mut CanvasClip) {
 
 fn edge_region(edges: &[Edge<Scalar>], width: u32, height: u32) ->
     (u32, u32, u32, u32) {
-    const SCALE: i64 = 256;
+    const SCALE: i64 = COORD_SCALE as _;
     let Some(first) = edges.first() else { return (0, 0, 0, 0); };
     let (mut min_x, mut min_y, mut max_x, mut max_y) = (
         first.upper.x.to_bits(), first.upper.y.to_bits(),
@@ -899,8 +901,8 @@ impl<'target> Canvas<'target> {
         canvas.set_color(SRGBA::red()).fill(&shape.build()).unwrap();
         for y in 0..64 { for x in 0..64 {
             let source = coverage[y as usize * 64 + x as usize];
-            let expected = ((u32::from(source) * rect_pixel_area(rect, x, y) + 32_768) /
-                65_536) as u8;
+            let expected = round_div_u32(
+                u32::from(source) * rect_pixel_area(rect, x, y), 65_536) as u8;
             assert_eq!(canvas.target().pixel_bytes(x, y).unwrap(),
                 [expected, 0, 0, expected]);
         } }
@@ -1057,8 +1059,8 @@ impl<'target> Canvas<'target> {
                     ReferenceClip::Rect),
             ReferenceClip::Dense(values) => for y in 0..HEIGHT { for x in 0..WIDTH {
                 let value = &mut values[y * WIDTH + x];
-                *value = ((u32::from(*value) * rect_pixel_area(rect, x as _, y as _) +
-                    32_768) / 65_536) as _;
+                *value = round_div_u32(
+                    u32::from(*value) * rect_pixel_area(rect, x as _, y as _), 65_536) as _;
             } },
         };
         let apply_dense = |clip: &mut ReferenceClip, mask: &[u8]| match clip {
@@ -1067,8 +1069,8 @@ impl<'target> Canvas<'target> {
                 let rect = *rect;
                 *clip = ReferenceClip::Dense(mask.iter().enumerate().map(|(index, value)| {
                     let (x, y) = (index % WIDTH, index / WIDTH);
-                    ((u32::from(*value) * rect_pixel_area(rect, x as _, y as _) +
-                        32_768) / 65_536) as _
+                    round_div_u32(u32::from(*value) *
+                        rect_pixel_area(rect, x as _, y as _), 65_536) as _
                 }).collect());
             }
             ReferenceClip::Dense(values) => for (value, mask) in values.iter_mut().zip(mask) {
@@ -1121,9 +1123,9 @@ impl<'target> Canvas<'target> {
                 for (index, pixel) in canvas.target().as_bytes().chunks_exact(4).enumerate() {
                     let expected = match &reference {
                         ReferenceClip::None => u8::MAX,
-                        ReferenceClip::Rect(rect) => ((255 * rect_pixel_area(*rect,
-                            (index % WIDTH) as _, (index / WIDTH) as _) + 32_768) /
-                            65_536) as _,
+                        ReferenceClip::Rect(rect) => round_div_u32(255 *
+                            rect_pixel_area(*rect,
+                            (index % WIDTH) as _, (index / WIDTH) as _), 65_536) as _,
                         ReferenceClip::Dense(values) => values[index],
                     };
                     assert_eq!(pixel, &[expected, 0, 0, expected],

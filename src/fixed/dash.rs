@@ -3,7 +3,7 @@
 use crate::{common::{dash::{DashCounter, DashError, DashOutput, DashRequirements, DashWorkspace,
         DashWriter, DashedPath, validate_capacity},
         geometry::Point},
-    fixed::{DEVICE_RAW_LIMIT, Scalar, math::integer_sqrt_u64},
+    fixed::{DEVICE_RAW_LIMIT, Scalar, math::{integer_sqrt_u64, round_div_i64}},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum PatternError {
@@ -141,9 +141,7 @@ fn dash_segment<W: DashOutput<Point<Scalar>>>(
             let interpolate = |start: Scalar, delta: i32| {
                 let numerator = delta as i64 * consumed as i64;
                 let denominator = length as i64;
-                let offset = if numerator < 0 {
-                    (numerator - denominator / 2) / denominator
-                } else { (numerator + denominator / 2) / denominator };
+                let offset = round_div_i64(numerator, denominator);
                 Scalar::from_bits((start.to_bits() as i64 + offset) as _)
             };
             (interpolate(from.x, dx), interpolate(from.y, dy)).into()

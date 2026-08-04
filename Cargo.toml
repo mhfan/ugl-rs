@@ -17,13 +17,12 @@ keywords = [ "ugl", "microgl", "vector-graphic" ]
 [features]
 default = [ "f32", "fixed", "std" ]
 f32 = [ "dep:libm" ]
+fixed = []
 native-float = [ "f32" ]
 std = []
 
 [dependencies]
 #nalgebra-glm = "0.20"
-# `fixed` currently has an empty default feature set; serde/std integrations stay opt-in.
-fixed = { version = "1.29", optional = true }
 # Required by the complete no_std f32 backend. Cargo cannot conditionally enable
 # a dependency when `std` is absent; unused routines are removed when linking std builds.
 libm = { version = "0.2", optional = true }

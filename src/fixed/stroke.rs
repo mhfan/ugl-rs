@@ -5,7 +5,7 @@ use crate::{common::{geometry::{Affine, Edge, EdgeSink, Path, Point},
             StrokeWorkspaceError, flatten_stroke_path_with}},
     fixed::{DEVICE_RAW_LIMIT, Scalar,
         flatten::{self, Error as FlattenError, Options as FlattenOptions},
-        math::{Angle, cordic_turn, cordic_unit_vector, integer_sqrt_u64}}};
+        math::{Angle, cordic_turn, cordic_unit_vector, integer_sqrt_u64, round_div_i64}}};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)] pub enum Error {
     NonPositiveWidth, WidthOutOfRange, MiterLimitTooSmall, RoundSegmentLimitZero,
@@ -193,8 +193,8 @@ fn outline_endpoint<E>(point: Point<Scalar>, direction: Direction, width: i32,
     let (nx, ny) = normal(direction, width);
     let denominator = direction.length as i64 * 2;
     let (tx, ty) = (
-        round_ratio_i64(direction.dx as i64 * width as i64, denominator),
-        round_ratio_i64(direction.dy as i64 * width as i64, denominator),
+        round_div_i64(direction.dx as i64 * width as i64, denominator),
+        round_div_i64(direction.dy as i64 * width as i64, denominator),
     );
     offset(point, nx * side + tx * extension, ny * side + ty * extension)
 }
@@ -283,15 +283,8 @@ fn direction(from: Point<Scalar>, to: Point<Scalar>) -> Option<Direction> {
 
 fn normal(direction: Direction, width: i32) -> (i64, i64) {
     let denominator = direction.length as i64 * 2;
-    (round_ratio_i64(-direction.dy as i64 * width as i64, denominator),
-     round_ratio_i64( direction.dx as i64 * width as i64, denominator))
-}
-
-fn round_ratio_i64(numerator: i64, denominator: i64) -> i64 {
-    if denominator < 0 { return round_ratio_i64(-numerator, -denominator); }
-    let magnitude = (numerator.unsigned_abs() + denominator as u64 / 2) /
-                    denominator as u64;
-    if numerator < 0 { -(magnitude as i64) } else { magnitude as _ }
+    (round_div_i64(-direction.dy as i64 * width as i64, denominator),
+     round_div_i64( direction.dx as i64 * width as i64, denominator))
 }
 
 fn round_ratio(numerator: i128, denominator: i128) -> Option<i64> {
@@ -358,8 +351,8 @@ fn emit_cap<S: EdgeSink<Scalar>>(point: Point<Scalar>, direction: Direction,
     let sign = if start { -1 } else { 1 };
     let denominator = direction.length as i64 * 2;
     let (dx, dy) = (
-        round_ratio_i64(direction.dx as i64 * options.width as i64, denominator) * sign,
-        round_ratio_i64(direction.dy as i64 * options.width as i64, denominator) * sign,
+        round_div_i64(direction.dx as i64 * options.width as i64, denominator) * sign,
+        round_div_i64(direction.dy as i64 * options.width as i64, denominator) * sign,
     );
     let end = offset(point, dx, dy)?;
     emit_segment_body(point, end, direction, options.width, sink)
@@ -445,8 +438,8 @@ fn circle_point<E>(center: Point<Scalar>, width: i32, angle: Angle) ->
     let (cosine, sine) = cordic_unit_vector(angle);
     let denominator = 2_i64 << 30;
     offset(center,
-        round_ratio_i64(cosine as i64 * width as i64, denominator),
-        round_ratio_i64(  sine as i64 * width as i64, denominator))
+        round_div_i64(cosine as i64 * width as i64, denominator),
+        round_div_i64(  sine as i64 * width as i64, denominator))
 }
 
 fn emit_round_wedge<S: EdgeSink<Scalar>>(center: Point<Scalar>, width: i32,

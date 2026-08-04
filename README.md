@@ -140,7 +140,7 @@ The core supports `no_std` and currently uses `alloc`. Default builds enable
 `f32`, `fixed`, and `std`. The rendering backends are independently selectable:
 
 - `--no-default-features --features fixed` builds the no_std Q24.8 renderer,
-  omits the f32 renderer and floating samplers, and has no `libm` dependency;
+  omits the f32 renderer and floating samplers, and has no normal dependencies;
 - `--no-default-features --features f32` builds the complete no_std f32 backend
   and enables optional `libm`;
 - adding `std` makes the f32 math dispatcher use platform implementations;

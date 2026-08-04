@@ -1,5 +1,7 @@
 //! Numeric building blocks for the fixed-point rendering backend.
 
+use core::cmp::Ordering;
+
 //  number: Q-number/Fixed/float/double, performance/fast vs quality/accurate
 //  linear algebra, affine transformation, trigonometry
 
@@ -9,6 +11,34 @@
 //  https://en.wikipedia.org/wiki/Q_(number_format)
 //  https://johnmcfarlane.github.io/cnl/
 //  https://gitlab.com/tspiteri/fixed
+
+/// Divides by a positive denominator and rounds to nearest, with ties away from zero.
+pub(crate) fn round_div_i64(numerator: i64, denominator: i64) -> i64 {
+    debug_assert!(denominator > 0);
+    let (quotient, remainder) = (
+        numerator.div_euclid(denominator), numerator.rem_euclid(denominator),
+    );
+    match remainder.cmp(&(denominator - remainder)) {
+        Ordering::Equal if numerator >= 0 => quotient + 1,
+        Ordering::Equal | Ordering::Less => quotient,
+        Ordering::Greater => quotient + 1,
+    }
+}
+
+/// Unsigned counterpart of [`round_div_i64`].
+pub(crate) fn round_div_u32(numerator: u32, denominator: u32) -> u32 {
+    debug_assert!(denominator > 0);
+    let (quotient, remainder) = (numerator / denominator, numerator % denominator);
+    quotient + u32::from(remainder >= denominator - remainder)
+}
+
+/// Wide unsigned counterpart of [`round_div_i64`].
+pub(crate) fn round_div_u64(numerator: u64, denominator: u64) -> u64 {
+    debug_assert!(denominator > 0);
+    let (quotient, remainder) = (numerator / denominator, numerator % denominator);
+    quotient + u64::from(remainder >= denominator - remainder)
+}
+
 /// Unsigned binary angle where the complete `u32` range represents one turn.
 ///
 /// ```
@@ -153,6 +183,24 @@ pub(crate) fn scaled_integer_sqrt(value: u128) -> (u128, u128) {
     let floor = integer_sqrt(scaled);
     let root = if scaled - floor * floor > floor { floor + 1 } else { floor };
     (root, 1 << fraction_bits)
+}
+
+#[cfg(test)] mod tests { use super::*;
+    #[test] fn round_div_uses_symmetric_half_away_rounding() {
+        assert_eq!(round_div_i64( 1, 2),  1);
+        assert_eq!(round_div_i64(-1, 2), -1);
+        assert_eq!(round_div_i64( 2, 3),  1);
+        assert_eq!(round_div_i64(-2, 3), -1);
+        assert_eq!(round_div_i64(i64::MIN, 1), i64::MIN);
+
+        assert_eq!(round_div_u32(1, 2), 1);
+        assert_eq!(round_div_u32(1, 3), 0);
+        assert_eq!(round_div_u32(u32::MAX, 1), u32::MAX);
+
+        assert_eq!(round_div_u64(1, 2), 1);
+        assert_eq!(round_div_u64(1, 3), 0);
+        assert_eq!(round_div_u64(u64::MAX, 1), u64::MAX);
+    }
 }
 
 #[cfg(all(test, feature = "f32"))] mod refer_tests {

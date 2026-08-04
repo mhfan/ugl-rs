@@ -3,13 +3,14 @@
 use core::cmp::Ordering;
 pub use crate::common::raster::{CoverageRun, CoverageStrip, CoverageStrips};
 use crate::{common::{geometry::{Edge, Point}, raster::{CoverageSink, FillRule}},
-    fixed::{DEVICE_RAW_LIMIT, Scalar}};
+    fixed::{COORD_SCALE, DEVICE_RAW_LIMIT, Scalar,
+        math::{round_div_i64, round_div_u32}}};
 
 /// Accepted Q24.8 raw-coordinate magnitude for the fixed rasterizer.
 ///
 /// This corresponds to ±2,097,152 device units and leaves enough headroom for
 /// every line-intersection multiply-add to remain in `i64`.
-pub const SUBPIXEL_SCALE: u32 = 1 << 8;
+pub const SUBPIXEL_SCALE: u32 = COORD_SCALE as _;
 pub const STRIP_HEIGHT: u32 = 16;
 const PIXEL_AREA_TWICE: u32 = 2 * SUBPIXEL_SCALE * SUBPIXEL_SCALE;
 
@@ -82,7 +83,7 @@ impl Intersection {
     pub fn floor_raw(self) -> i64 { self.num.div_euclid(self.den as i64) }
 
     /// Rounds to the nearest Q24.8 grid coordinate, with ties away from zero.
-    pub fn round_raw(self) -> i64 { round_ratio(self.num, self.den as _) }
+    pub fn round_raw(self) -> i64 { round_div_i64(self.num, self.den as _) }
 
     pub fn cmp_x(&self, other: &Self) -> Ordering {
         if self.den == other.den { return self.num.cmp(&other.num); }
@@ -230,19 +231,7 @@ fn intersect_vertical(from: PixelPoint, to: PixelPoint, x: i64) -> PixelPoint {
     let (mut numerator, mut denominator) =
         ((to.y - from.y) * (x - from.x), to.x - from.x);
     if denominator < 0 { numerator = -numerator; denominator = -denominator; }
-    PixelPoint { x, y: from.y + round_ratio(numerator, denominator) }
-}
-
-fn round_ratio(numerator: i64, denominator: i64) -> i64 {
-    debug_assert!(denominator > 0);
-    let (floor, remainder) = (
-        numerator.div_euclid(denominator), numerator.rem_euclid(denominator),
-    );
-    match (remainder * 2).cmp(&denominator) {
-        Ordering::Equal if numerator >= 0 => floor + 1,
-        Ordering::Equal | Ordering::Less  => floor,
-        Ordering::Greater => floor + 1,
-    }
+    PixelPoint { x, y: from.y + round_div_i64(numerator, denominator) }
 }
 
 fn round_ratio_i128(numerator: i128, denominator: i128) -> i128 {
@@ -279,7 +268,7 @@ fn integrate_clamped_edge_twice(start: i64, end: i64, height: u32) -> u32 {
     let (mut numerator, mut denominator) = (
         height as i64 * (primitive(end) - primitive(start)), end - start);
     if denominator < 0 { numerator = -numerator; denominator = -denominator; }
-    round_ratio(numerator, denominator).clamp(0, 2 * scale * height as i64) as _
+    round_div_i64(numerator, denominator).clamp(0, 2 * scale * height as i64) as _
 }
 
 #[derive(Clone, Copy)]
@@ -335,7 +324,7 @@ fn full_row_right_area_twice(trapezoid: RoundedTrapezoid, x: u32) -> u32 {
 /// Maps a pixel-clipped doubled Q24.8 area to round-to-nearest 8-bit coverage.
 pub fn quantize_area_coverage(area_twice_raw: u32) -> u8 {
     let area = area_twice_raw.min(PIXEL_AREA_TWICE);
-    ((area * u8::MAX as u32 + PIXEL_AREA_TWICE / 2) / PIXEL_AREA_TWICE) as _
+    round_div_u32(area * u8::MAX as u32, PIXEL_AREA_TWICE) as _
 }
 
 /// Accumulates one row-local trapezoid into a caller-owned doubled-area row.

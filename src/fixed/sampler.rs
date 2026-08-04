@@ -2,8 +2,8 @@
 
 use crate::{common::{color::PremulSRGBA8, geometry::Point, render::GlobalAlphaPaint,
         GradientError, SolidPaint, SpreadMode},
-    fixed::{DEVICE_RAW_LIMIT, Scalar}};
-use super::math::{cordic_turn, integer_sqrt_u64,
+    fixed::{COORD_SCALE, DEVICE_RAW_LIMIT, HALF_PIXEL_RAW, Scalar}};
+use super::math::{cordic_turn, integer_sqrt_u64, round_div_u64,
     scaled_integer_sqrt, scaled_integer_sqrt_u64};
 
 pub use super::math::Angle;
@@ -50,10 +50,9 @@ impl PaintSampler for SolidPaint {
 }
 
 fn device_pixel_center_raw(pixel: u32) -> Option<i32> {
-    const HALF_PIXEL_RAW: u32 = 1 << 7;
-    const SUBPIXEL_SCALE: u32 = 1 << 8;
-    (pixel <= (DEVICE_RAW_LIMIT as u32 - HALF_PIXEL_RAW) / SUBPIXEL_SCALE)
-        .then(|| (pixel * SUBPIXEL_SCALE + HALF_PIXEL_RAW) as _)
+    let (scale, half) = (COORD_SCALE as u32, HALF_PIXEL_RAW as u32);
+    (pixel <= (DEVICE_RAW_LIMIT as u32 - half) / scale)
+        .then(|| (pixel * scale + half) as _)
 }
 
 /// Allocation-free, no-FPU linear gradient over a caller-provided encoded ramp.
@@ -86,11 +85,11 @@ impl<'a> LinearGradient<'a> {
     pub fn spread(&self) -> SpreadMode { self.spread }
 
     fn parameter_i64(&self, x: u32, y: u32) -> Option<i64> {
-        const HALF_PIXEL_RAW: i64 = 1 << 7;
-        const SUBPIXEL_SCALE: i64 = 1 << 8;
+        const HALF_PIXEL_RAW_I64: i64 = HALF_PIXEL_RAW as _;
+        const SUBPIXEL_SCALE: i64 = COORD_SCALE as _;
         let point = [
-            i64::from(x) * SUBPIXEL_SCALE + HALF_PIXEL_RAW - i64::from(self.from[0]),
-            i64::from(y) * SUBPIXEL_SCALE + HALF_PIXEL_RAW - i64::from(self.from[1]),
+            i64::from(x) * SUBPIXEL_SCALE + HALF_PIXEL_RAW_I64 - i64::from(self.from[0]),
+            i64::from(y) * SUBPIXEL_SCALE + HALF_PIXEL_RAW_I64 - i64::from(self.from[1]),
         ];
         point[0].checked_mul(self.delta[0])?
             .checked_add(point[1].checked_mul(self.delta[1])?)
@@ -102,11 +101,11 @@ impl<'a> LinearGradient<'a> {
                 (self.parameter_i64(x, y), i64::try_from(self.length_squared)) {
             return ramp_index_i64(parameter, denominator, self.ramp.len(), self.spread);
         }
-        const HALF_PIXEL_RAW: i128 = 1 << 7;
-        const SUBPIXEL_SCALE: i128 = 1 << 8;
+        const HALF_PIXEL_RAW_I128: i128 = HALF_PIXEL_RAW as _;
+        const SUBPIXEL_SCALE: i128 = COORD_SCALE as _;
         let point = [
-            x as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW - self.from[0] as i128,
-            y as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW - self.from[1] as i128,
+            x as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW_I128 - self.from[0] as i128,
+            y as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW_I128 - self.from[1] as i128,
         ];
         let parameter = point[0] * self.delta[0] as i128 +
                         point[1] * self.delta[1] as i128;
@@ -122,7 +121,7 @@ impl PaintSampler for LinearGradient<'_> {
     fn sample_span(&self, x: u32, y: u32, len: u32,
         mut emit: impl FnMut(PremulSRGBA8)) {
         if len == 0 { return; }
-        const SUBPIXEL_SCALE_I64: i64 = 1 << 8;
+        const SUBPIXEL_SCALE_I64: i64 = COORD_SCALE as _;
         let step = self.delta[0] * SUBPIXEL_SCALE_I64;
         if ramp_index_i64_supported(self.length_squared, self.ramp.len(), self.spread)
             && let (Some(mut parameter), Ok(denominator)) =
@@ -136,11 +135,11 @@ impl PaintSampler for LinearGradient<'_> {
             }
             return;
         }
-        const HALF_PIXEL_RAW: i128 = 1 << 7;
-        const SUBPIXEL_SCALE: i128 = 1 << 8;
+        const HALF_PIXEL_RAW_I128: i128 = HALF_PIXEL_RAW as _;
+        const SUBPIXEL_SCALE: i128 = COORD_SCALE as _;
         let point = [
-            x as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW - self.from[0] as i128,
-            y as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW - self.from[1] as i128,
+            x as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW_I128 - self.from[0] as i128,
+            y as i128 * SUBPIXEL_SCALE + HALF_PIXEL_RAW_I128 - self.from[1] as i128,
         ];
         let mut parameter = point[0] * self.delta[0] as i128 +
                             point[1] * self.delta[1] as i128;
@@ -241,7 +240,7 @@ impl<'a> RadialGradient<'a> {
 
     fn sample_concentric_span(&self, x: i64, y: i64, len: u32,
         emit: &mut impl FnMut(PremulSRGBA8)) {
-        const SUBPIXEL_SCALE: i64 = 1 << 8;
+        const SUBPIXEL_SCALE: i64 = COORD_SCALE as _;
         let (mut squared, mut step) = (
             x * x + y * y,
             2 * x * SUBPIXEL_SCALE + SUBPIXEL_SCALE * SUBPIXEL_SCALE,
@@ -340,7 +339,7 @@ impl PaintSampler for RadialGradient<'_> {
 
     fn sample_span(&self, x: u32, y: u32, len: u32,
         mut emit: impl FnMut(PremulSRGBA8)) {
-        const SUBPIXEL_SCALE: i64 = 1 << 8;
+        const SUBPIXEL_SCALE: i64 = COORD_SCALE as _;
         let last = len.checked_sub(1).and_then(|offset| x.checked_add(offset));
         let (start, end, row) = (device_pixel_center_raw(x),
             last.and_then(device_pixel_center_raw), device_pixel_center_raw(y));
@@ -464,7 +463,7 @@ fn ramp_index_i64(parameter: i64, denominator: i64, ramp_len: usize,
         }
     } as u64;
     let (scale, denominator) = ((ramp_len - 1) as u64, denominator as u64);
-    ((mapped * scale + denominator / 2) / denominator) as _
+    round_div_u64(mapped * scale, denominator) as _
 }
 
 /// Allocation-free, no-FPU conic gradient using a 16-step integer CORDIC.
@@ -513,7 +512,7 @@ impl<'a> ConicGradient<'a> {
         };
         let parameter = angle.wrapping_sub(self.start_angle.to_bits()) as u64;
         let scale = (self.ramp.len() - 1) as u64;
-        Some(((parameter * scale + FULL_TURN / 2) / FULL_TURN) as _)
+        Some(round_div_u64(parameter * scale, FULL_TURN) as _)
     }
 }
 

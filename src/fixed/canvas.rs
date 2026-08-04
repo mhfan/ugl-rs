@@ -10,8 +10,10 @@ use crate::{
         blend_sampled_pixel, blend_sampled_quad, map_dash_error,
         validate_coverage_dimensions},
         stroke::{StrokePathWorkspace, StrokeWorkspaceError}, SolidPaint},
-    fixed::{DEVICE_RAW_LIMIT, Scalar, dash::{Pattern as DashPattern, dash_polyline},
+    fixed::{COORD_SCALE, DEVICE_RAW_LIMIT, Scalar,
+        dash::{Pattern as DashPattern, dash_polyline},
         flatten::{Error as FlattenError, Options as FlattenOptions, build_fill_edges},
+        math::round_div_u32,
         raster::{CoverageStrips, Error as RasterError, Line, STRIP_HEIGHT,
             RenderError as RasterRenderError, Workspace, prepare_lines, rasterize_lines,
             rasterize_lines_region, strip_requirements},
@@ -49,7 +51,7 @@ fn blend_sampled_span<S: PaintSampler>(target: &mut Pixmap<'_>,
     }
 }
 
-const SUBPIXEL_SCALE: i64 = 256;
+const SUBPIXEL_SCALE: i64 = COORD_SCALE as _;
 
 fn fixed_rect_is_integer(rect: Rect<Scalar>) -> bool {
     [rect.left(), rect.top(), rect.right(), rect.bottom()]
@@ -152,7 +154,7 @@ impl<S: CoverageSink> CoverageSink for FixedRectClipSink<'_, S> {
         let (start, end) = (x.max(left), x.saturating_add(len).min(right));
         let quantize = |pixel| {
             let horizontal = overlap(self.rect.left(), self.rect.right(), pixel);
-            ((u32::from(coverage) * horizontal * vertical + 32_768) / 65_536) as u8
+            round_div_u32(u32::from(coverage) * horizontal * vertical, 65_536) as _
         };
         let mut cursor = start;
         while cursor < end {
@@ -394,7 +396,7 @@ pub(crate) struct DashedPreparedUsage {
 fn requirements_from_lines(edges: usize, lines: &[Line], dimensions: (u32, u32)) ->
     Result<RenderRequirements, RenderError> {
     let (width, height) = dimensions;
-    let limit = DEVICE_RAW_LIMIT as u32 / 256;
+    let limit = DEVICE_RAW_LIMIT as u32 / COORD_SCALE as u32;
     if width > limit || height > limit {
         return Err(RenderError::FixedRaster(RasterError::CoordinateOutOfRange));
     }
