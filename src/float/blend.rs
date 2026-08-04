@@ -49,7 +49,7 @@
     https://www.w3.org/TR/compositing-1
 ``` */
 
-use crate::{common::color::{PremulRGBA, RGBA}, float::{floor, sqrt}};
+use crate::{common::color::{PremulRGBA, PremulSRGBA8, RGBA}, float::{floor, sqrt}};
 
 /// Porter-Duff compositing operators and W3C blending modes.
 ///
@@ -108,28 +108,158 @@ use crate::{common::color::{PremulRGBA, RGBA}, float::{floor, sqrt}};
     //  ...
 }
 
-/* impl RGBA<u8> {
-    /// Composite: ao x Co = αs x Fa x Cs + αb x Fb x Cb, ao = αs x Fa + αb x Fb;
-    pub fn porter_duff(self, dest: Self, fa: u8, fb: u8) -> Self {
-        let (fa, fb) =  ((fa as u32 * self.a as u32 + 128) >> 8,
-                         (fb as u32 * dest.a as u32 + 128) >> 8);
-        let a = (fa + fb).min(255);     // XXX: make it non-premultiplied?
-        let r = (fa * self.r as u32 + fb * dest.r as u32 + 128) >> 8; // / a;
-        let g = (fa * self.g as u32 + fb * dest.g as u32 + 128) >> 8; // / a;
-        let b = (fa * self.b as u32 + fb * dest.b as u32 + 128) >> 8; // / a;
-        Self { r: r as _, g: g as _, b: b as _, a: a as _ }
+type Q15 = i32;
+const U8_MAX: u32 = u8::MAX as _;
+const FIXED_ONE: Q15 = i16::MAX as _;
+
+fn blend_channel(cb: Q15, cs: Q15, mode: CompositeMode) -> Q15 {
+    fn integer_sqrt(value: u32) -> u32 {
+        if value < 2 { return value; }
+        let mut root = 1_u32 << ((32 - value.leading_zeros()).div_ceil(2));
+        loop {
+            let next = (root + value / root) / 2;
+            if  next >= root { return  root }
+                root =  next;
+        }
     }
 
-    /// Apply the blend in place: Cs = (1 - αb) x Cs + αb x B(Cb, Cs)
-    pub fn blend(self, drop: Self, bop: impl Fn(u8, u8) -> u8) -> Self {
-        //lerp(self.r, bop(drop.r, self.r), drop.a);    // lerp for g, b as well
-        let (inv_a, da) = ((255 - drop.a) as u32, drop.a as u32);
-        let r = (inv_a * self.r as u32 + da * bop(drop.r, self.r) as u32 + 128) >> 8;
-        let g = (inv_a * self.g as u32 + da * bop(drop.g, self.g) as u32 + 128) >> 8;
-        let b = (inv_a * self.b as u32 + da * bop(drop.b, self.b) as u32 + 128) >> 8;
-        Self { r: r as _, g: g as _, b: b as _, a: self.a }
+    let round_mul = |left, right| (left * right + FIXED_ONE / 2) / FIXED_ONE;
+    let ratio = |num, den| (((num as u32 * FIXED_ONE as u32 +
+        den as u32 / 2) / den as u32) as Q15).min(FIXED_ONE);
+
+    let hard_light = |cb, cs| if cs <= FIXED_ONE / 2 { round_mul(2 * cb, cs) } else {
+        FIXED_ONE - round_mul(2 * (FIXED_ONE - cb), FIXED_ONE - cs) };
+    let soft_light = |cb: Q15, cs: Q15| {
+        let curve = if cb <= FIXED_ONE / 4 {
+            round_mul(round_mul(16 * cb - 12 * FIXED_ONE, cb) + 4 * FIXED_ONE, cb)
+        } else { integer_sqrt(cb as u32 * FIXED_ONE as u32) as _ };
+
+        let value = if cs <= FIXED_ONE / 2 {
+            cb - round_mul(round_mul(FIXED_ONE - 2 * cs, cb), FIXED_ONE - cb)
+        } else { cb + round_mul(2 * cs - FIXED_ONE, curve - cb) };
+            value.clamp(0, FIXED_ONE)
+    };  use CompositeMode::*;
+
+    match mode {
+        Normal      => cs,
+        Multiply    => round_mul(cb, cs),
+        Screen      => cb + cs - round_mul(cb, cs),
+        Overlay     => hard_light(cs, cb),
+        Darken      => cb.min(cs),
+        Lighten     => cb.max(cs),
+        ColorDodge  => if cs == FIXED_ONE { FIXED_ONE } else { ratio(cb, FIXED_ONE - cs) },
+        ColorBurn   => if cs == 0 { 0 } else { FIXED_ONE - ratio(FIXED_ONE - cb, cs) },
+        HardLight   => hard_light(cb, cs),
+        SoftLight   => soft_light(cb, cs),
+        Difference  => (cb - cs).abs(),
+        Exclusion   =>  cb + cs - 2 * round_mul(cb, cs),
+        _ => unreachable!("non-separable mode passed to blend_channel"),
     }
-} */
+}
+
+impl PremulSRGBA8 { // XXX: PremulRGBA<u8>
+    fn unpremul_rgb(self) -> [Q15; 3] {
+        let [r, g, b, alpha] = self.to_array();
+        if alpha == 0 { return [0; 3]; }
+        let divisor = alpha as u32;
+        let reciprocal = (((FIXED_ONE as u32) << 8) + divisor / 2) / divisor;
+        [r, g, b].map(|channel| if channel == alpha { FIXED_ONE } else {
+            ((channel as u32 * reciprocal + 128) >> 8) as _ })
+    }
+
+    fn blend_non_separable(self, drop: Self, mode: CompositeMode) -> [Q15; 3] {
+        let (cb, cs) = (drop.unpremul_rgb(), self.unpremul_rgb());
+
+        let lum = |color: [Q15; 3]|
+            (299 * color[0] + 587 * color[1] + 114 * color[2]) / 1000;
+        let sat = |color: [Q15; 3]| color[0].max(color[1]).max(color[2]) -
+                                    color[0].min(color[1]).min(color[2]);
+
+        let set_lum = |mut color: [Q15; 3], target| {
+            let delta = target - lum(color);
+            for channel in &mut color { *channel += delta; }
+            let l = lum(color);
+
+            let (n, x) = (*color.iter().min().unwrap(), *color.iter().max().unwrap());
+            if n < 0 { for channel in &mut color {
+                *channel = l + (*channel - l) * l / (l - n);
+            } }
+            if x > FIXED_ONE { for channel in &mut color {
+                *channel = l + (*channel - l) * (FIXED_ONE - l) / (x - l);
+            } } color
+        };
+        let set_sat = |mut color: [Q15; 3], target| {
+            let mut order = [0, 1, 2];
+            order.sort_unstable_by_key(|index| color[*index]);
+            let [min, mid, max] = order;
+            if  color[max] > color[min] {
+                color[mid] = (color[mid] - color[min]) * target /
+                             (color[max] - color[min]);
+                color[max] = target;
+            } else { color[mid] = 0; color[max] = 0; }
+                     color[min] = 0; color
+        };  use CompositeMode::*;
+
+        match mode {
+            Hue         => set_lum(set_sat(cs, sat(cb)), lum(cb)),
+            Saturation  => set_lum(set_sat(cb, sat(cs)), lum(cb)),
+            Color       => set_lum(cs, lum(cb)),
+            Luminosity  => set_lum(cb, lum(cs)),
+            _ => unreachable!("separable mode passed to blend_non_separable"),
+        }
+    }
+
+    /// Integer RGBA8 compositor for the encoded-sRGB compatibility target.
+    pub fn composite(self, drop: Self, mode: CompositeMode) -> Self {
+        let ([sr, sg, sb, sa], [dr, dg, db, da]) = (self.to_array(), drop.to_array());
+        let div_round = |val, div| (val + div / 2) / div;
+
+        if matches!(mode, Clear | Copy | Dest | SrcOver | SrcIn | SrcOut | SrcAtop |
+            DstOver | DstIn | DstOut | DstAtop | XOR | Lighter | Normal) {
+            let (fa, fb) = match mode {
+                SrcOver |
+                Normal  => (255, 255 - sa as u32),
+                Lighter => (255, 255),  Clear => (0, 0),
+                SrcIn   => (da as _, 0), Copy => (255, 0),
+                DstIn   => (0, sa as _), Dest => (0, 255),
+                SrcOut  => (255 - da as u32, 0),
+                DstOver => (255 - da as u32, 255),
+                SrcAtop => (da as _, 255 - sa as u32),
+                DstAtop => (255 - da as u32, sa as _),
+                XOR     => (255 - da as u32, 255 - sa as u32),
+                DstOut  => (0, 255 - sa as u32),
+                _ => unreachable!(),
+            };
+
+            let channel = |src, drop| div_round(fa * src as u32 + fb * drop as u32,
+                U8_MAX).min(U8_MAX) as u8;
+            return Self::new(channel(sr, dr), channel(sg, dg), channel(sb, db),
+                channel(sa, da)).expect("Porter-Duff preserves premultiplied channels");
+        }   use CompositeMode::*;
+
+        let blend = if matches!(mode, Hue | Saturation | Color | Luminosity) {
+            self.blend_non_separable(drop, mode)
+        } else {
+            let (src, drop) = (self.unpremul_rgb(), drop.unpremul_rgb());
+            core::array::from_fn(|index| blend_channel(drop[index], src[index], mode))
+        };
+
+        let alpha = div_round(sa as u32 *  U8_MAX +
+                              da as u32 * (U8_MAX - sa as u32), U8_MAX);
+        let channel = |src, drop, blend| {
+            debug_assert!((0..=FIXED_ONE).contains(&blend));
+            // Premultiplied inputs correlate the three terms; their sum plus
+            // rounding is at most 2_134_851_967, still within u32.
+            let value = src as u32 * (U8_MAX - da as u32) * FIXED_ONE as u32 +
+                       drop as u32 * (U8_MAX - sa as u32) * FIXED_ONE as u32 +
+                         sa as u32 * da as u32 * blend as u32;
+            div_round(value, U8_MAX * FIXED_ONE as u32).min(alpha) as u8
+        };
+        Self::new(channel(sr, dr, blend[0]), channel(sg, dg, blend[1]),
+                  channel(sb, db, blend[2]), alpha as _)
+            .expect("W3C compositing preserves premultiplied channels")
+    }
+}
 
 /** ```
     use ugl_rs::common::color::RGBA;
@@ -151,7 +281,7 @@ impl PremulRGBA<f32> {
     /// modes temporarily recover straight RGB for `B(Cb, Cs)`, then apply the W3C
     /// source-over formula. The caller decides whether the channels represent
     /// encoded sRGB or linear light.
-    pub(crate) fn composite(self, drop: Self, mode: CompositeMode) -> Self {
+    pub fn composite(self, drop: Self, mode: CompositeMode) -> Self {
         use CompositeMode::*; match mode {
             Clear   => self.clear(),
             Copy    => self.copy(drop),
@@ -177,6 +307,7 @@ impl PremulRGBA<f32> {
         let (src_channels, drop_channels) = (self.to_array(), drop.to_array());
         let (src_straight, drop_straight) = (self.unpremul(), drop.unpremul());
         let (sa, ba) = (self.alpha(), drop.alpha());
+
         let blended = match mode {
             Normal     => src_straight.normal(drop_straight),
             Screen     => src_straight.screen(drop_straight),
@@ -600,6 +731,55 @@ impl RGBA<f32> {    #![allow(unused)]
                 *channel >= 0.0 && *channel <= result[3]));
             assert!((0.0..=1.0).contains(&result[3]));
         }
+    }
+
+    #[test] fn integer_compositor_tracks_the_float_reference() {
+        let modes = [Clear, Copy, Dest, SrcOver, SrcIn, SrcOut, SrcAtop, DstOver, DstIn,
+            DstOut, DstAtop, XOR, Lighter, Normal, Multiply, Screen, Overlay, Darken,
+            Lighten, ColorDodge, ColorBurn, HardLight, SoftLight, Difference,
+            Exclusion, Hue, Saturation, Color, Luminosity];     use CompositeMode::*;
+        let mut state = 0x2c92_7613_5a1d_89e7_u64;
+        let mut random = || {
+            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            (state >> 32) as u8
+        };
+        let mut premul = || {
+            let alpha = random();
+            let channel = |value: u8| (value as u16 * (alpha as u16 + 1) / 256) as u8;
+            [channel(random()), channel(random()), channel(random()), alpha]
+        };
+        let normalize = |value: u8| value as f32 / u8::MAX as f32;
+        for mode in modes { for _ in 0..512 {
+            let (source, backdrop) = (premul(), premul());
+            let integer = PremulSRGBA8::from_array(source).unwrap().composite(
+                PremulSRGBA8::from_array(backdrop).unwrap(), mode).to_array();
+            let reference = |[r, g, b, a]: [u8; 4]|
+                PremulRGBA::from((normalize(r), normalize(g), normalize(b), normalize(a)));
+            let expected = reference(source).composite(reference(backdrop), mode).to_array()
+                .map(|value| (value * u8::MAX as f32 + 0.5) as u8);
+            // Intermediate fixed-point rounding may differ slightly from a
+            // single final f32 quantization, especially near Dodge/Burn limits.
+            for (actual, reference) in integer.into_iter().zip(expected) {
+                assert!(actual.abs_diff(reference) <= 3,
+                    "{mode:?}: {source:?} over {backdrop:?}: {integer:?} != {expected:?}");
+            }
+        } }
+    }
+
+    #[test] fn integer_compositor_accepts_the_maximum_accumulator() {
+        let white = PremulSRGBA8::new(255, 255, 255, 255).unwrap();
+        assert_eq!(white.composite(white, CompositeMode::Multiply), white);
+    }
+
+    #[test] fn q15_channel_blends_cover_polynomial_boundaries_without_overflow() {
+        let values = [0, 1, FIXED_ONE / 4, FIXED_ONE / 2,
+            FIXED_ONE / 2 + 1, FIXED_ONE - 1, FIXED_ONE];
+        let modes = [Normal, Multiply, Screen, Overlay, Darken, Lighten,
+            ColorDodge, ColorBurn, HardLight, SoftLight, Difference, Exclusion];
+        use CompositeMode::*;
+        for mode in modes { for cb in values { for cs in values {
+            assert!((0..=FIXED_ONE).contains(&blend_channel(cb, cs, mode)));
+        } } }
     }
 
     #[test] fn set_sat_preserves_channel_order_and_sets_range() {

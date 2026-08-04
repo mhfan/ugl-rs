@@ -941,6 +941,12 @@ premultiplied invariant.
 The f32 facade stores `CompositeMode` as drawing state. Porter-Duff operators act
 on premultiplied values; W3C color blend functions temporarily unpremultiply
 RGB in the target's explicit working space and premultiply the result again.
+The RGBA8888 compatibility target performs that work in an integer kernel: u8
+storage is widened to `i32` using a UNORM15 scale for unpremultiplication and
+blend evaluation, and is quantized only when the final premultiplied pixel is
+written.
+The f32 formulas remain the differential-test oracle rather than part of the
+per-pixel hot path.
 Coverage interpolates between the complete operator result and the original
 destination, which preserves antialiased semantics for operators such as
 `Clear`, `Copy`, and `DstIn`. `Pixmap` therefore blends in encoded-sRGB space,

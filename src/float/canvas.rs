@@ -5,7 +5,7 @@
 //! `render_*_sampled`.
 
 use core::convert::Infallible;
-use crate::{common::{color::{PremulRGBA, PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorkspace},
+use crate::{common::{color::{PremulSRGBA8, SRGBA}, dash::{DashContour, DashWorkspace},
     geometry::{Affine, Edge, Path, Point, Rect}, Pixmap, RenderError, SolidPaint,
     raster::{ClipMask, CoverageMask, CoverageMaskMut, CoverageSink, FillRule, MaskClipSink},
     render::{BYTES_PER_PIXEL, Clip, EdgeCapacity, EdgeSliceSink, blend_sampled_pixel,
@@ -69,21 +69,13 @@ impl Pixmap<'_> {
 
 fn composite_mode_pixel(pixel: &mut [u8], color: PremulSRGBA8,
     coverage: u8, mode: CompositeMode) {
-    let normalize = |value: u8| value as f32 / u8::MAX as f32;
-    let factor = normalize(coverage);
-    let [sr, sg, sb, sa] = color.to_array().map(normalize);
-    let  src = PremulRGBA::from((sr, sg, sb, sa));
-    let drop = PremulRGBA::from((normalize(pixel[0]), normalize(pixel[1]),
-                                 normalize(pixel[2]), normalize(pixel[3])));
-    let composed = src.composite(drop, mode).to_array();
-    let backdrop = drop.to_array();
-    let result: [f32; 4] = core::array::from_fn(|index|
-        backdrop[index] + factor * (composed[index] - backdrop[index]));
-    let alpha = (result[3] * u8::MAX as f32 + 0.5) as u8;
-    let channel = |value: f32| ((value * u8::MAX as f32 + 0.5) as u8).min(alpha);
-    pixel.copy_from_slice(&[
-        channel(result[0]), channel(result[1]), channel(result[2]), alpha,
-    ]);
+    let drop = PremulSRGBA8::from_array(pixel.try_into().expect("pixel has four channels"))
+        .expect("Pixmap stores valid premultiplied pixels");
+    let (composed, backdrop) = (color.composite(drop, mode).to_array(), drop.to_array());
+    let interpolate = |index| ((backdrop[index] as u16 * (255 - coverage) as u16 +
+        composed[index] as u16 * coverage as u16 + 127) / 255) as u8;
+    let result: [u8; 4] = core::array::from_fn(interpolate);
+    pixel.copy_from_slice(&result);
 }
 
 pub struct SampledRenderWorkspace<'a> {

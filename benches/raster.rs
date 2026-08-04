@@ -2,7 +2,8 @@
 use std::hint::black_box;
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput,
     criterion_group, criterion_main};
-use ugl_rs::{common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA, SRGBA as RGBA},
+use ugl_rs::{Canvas, CompositeMode, common::{color::{PremulSRGBA8, LinearPremulRGBA, SRGBA,
+        SRGBA as RGBA},
         dash::{DashContour, DashWorkspace},
         geometry::{Affine, Edge, Path, PathBuilder, Point},
         raster::{CoverageMask, CoverageSink, FillRule},
@@ -590,6 +591,26 @@ fn benchmark_f32(c: &mut Criterion) {
                 encoder).unwrap();
             black_box(&pixels);
         }));
+    group.finish();
+}
+
+fn benchmark_composite(c: &mut Criterion) {
+    let path = rectangle_scene();
+    let mut canvas = Canvas::new(WIDTH, HEIGHT).unwrap();
+    canvas.set_color(SRGBA::new(40, 120, 220, 192));
+    let mut group = c.benchmark_group("composite_rgba8888");
+    group.throughput(Throughput::Elements(WIDTH as u64 * HEIGHT as u64));
+    for (name, mode) in [("source_over", CompositeMode::SrcOver),
+                         ("multiply", CompositeMode::Multiply),
+                         ("soft_light", CompositeMode::SoftLight),
+                         ("color", CompositeMode::Color)] {
+        canvas.set_composite_mode(mode);
+        group.bench_function(name, |b| b.iter(|| {
+            canvas.target_mut().as_bytes_mut().fill(96);
+            canvas.fill(&path).unwrap();
+            black_box(canvas.target());
+        }));
+    }
     group.finish();
 }
 
@@ -2024,6 +2045,7 @@ fn benchmark_clip_masks(c: &mut Criterion) {
 fn  benchmarks(c: &mut Criterion) {
     #[cfg(feature = "fixed")] benchmark_fixed(c);
     benchmark_f32(c);
+    benchmark_composite(c);
     benchmark_linear_presentation(c);
     benchmark_active(c);
     benchmark_fill_stages(c);
